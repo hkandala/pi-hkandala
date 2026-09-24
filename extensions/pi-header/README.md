@@ -11,6 +11,7 @@ A minimal startup header for pi with the official pi logo.
 
 - **Collapsed** (default): shows resource counts.
 - **`ctrl+o`**: expands to list context files, skills, prompts, extensions, and themes by name.
+- **Click the logo**: toggles between color and white. The choice is saved to the config file below, so it carries over to future sessions. Requires pi's fullscreen TUI mode (`"tuiMode": "fullscreen"`); in regular mode the terminal owns the mouse.
 - **`/loaded`**: prints every loaded resource with its full path into the transcript (like `/hotkeys`). Saved in the session, never sent to the model.
 
 The logo is rendered pixel-accurately: each pixel is one row tall and exactly one cell-height wide, measured from the terminal's reported cell size. Edges are placed with 1/8-cell block characters, so pixels stay square in any font.
@@ -34,6 +35,8 @@ Optional file: `~/.pi/agent/extensions/pi-header.json`
 | Key    | Values               | Default   |
 | ------ | -------------------- | --------- |
 | `logo` | `"color"`, `"white"` | `"color"` |
+
+Clicking the logo updates `logo` for you; other keys are preserved.
 
 Recommended: hide pi's built-in resource listing so it isn't shown twice, in `~/.pi/agent/settings.json`:
 

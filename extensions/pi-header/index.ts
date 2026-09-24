@@ -1,6 +1,7 @@
 /**
  * pi-header: minimal startup header with the official pi logo.
  * Collapsed shows resource counts; ctrl+o expands the lists; /loaded prints full paths.
+ * Clicking the logo (fullscreen TUI mode) toggles color/white and saves the choice.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-header.json  →  { "logo": "color" | "white" }
  * Pair with "quietStartup": true in ~/.pi/agent/settings.json to hide pi's built-in listing.
@@ -25,7 +26,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 
@@ -223,12 +224,23 @@ function dropLoneStatus(tui: Node, header: Node) {
   if (spacer instanceof Spacer && text instanceof Text && rest.length === 0) chat!.clear();
 }
 
+const configPath = () => join(getAgentDir(), "extensions", "pi-header.json");
+
 function readConfig(): { logo?: string } {
   try {
-    return JSON.parse(readFileSync(join(getAgentDir(), "extensions", "pi-header.json"), "utf8"));
+    return JSON.parse(readFileSync(configPath(), "utf8"));
   } catch {
     return {};
   }
+}
+
+/** Persist the logo toggle into the config file, keeping any other keys. */
+function saveLogo(white: boolean) {
+  try {
+    mkdirSync(dirname(configPath()), { recursive: true });
+    const config = { ...readConfig(), logo: white ? "white" : "color" };
+    writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`);
+  } catch {} // unwritable config: the toggle still applies to this session
 }
 
 export default function (pi: ExtensionAPI) {
@@ -236,7 +248,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-    const white = readConfig().logo === "white";
+    let white = readConfig().logo === "white";
     const quiet =
       !process.argv.includes("--verbose") &&
       SettingsManager.create(ctx.cwd, getAgentDir(), {
@@ -257,6 +269,16 @@ export default function (pi: ExtensionAPI) {
           });
         },
         invalidate() {},
+        // Mouse events only arrive in fullscreen TUI mode; x/y are relative to the header.
+        handleMouse(event: { type: string; button: string; x: number; y: number }) {
+          if (event.type !== "click" || event.button !== "left") return undefined;
+          const top = quiet ? ROWS : ROWS - 1;
+          if (event.y < top || event.y >= top + LOGO.length) return undefined;
+          if (event.x >= renderLogo(white).column) return undefined;
+          white = !white;
+          saveLogo(white);
+          return { handled: true };
+        },
         render: (width: number) =>
           render(ctx.ui.theme, res, expanded, white, quiet, width).map((l) =>
             truncateToWidth(l, width),
