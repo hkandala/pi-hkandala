@@ -1,6 +1,6 @@
 # pi-hkandala
 
-My [pi](https://pi.dev) resources: extensions for now, with skills and more to come. Each one is its own pi package, so you can install one or all.
+My [pi](https://pi.dev) resources. Each one is its own pi package, so you can install one or all.
 
 ## Extensions
 
@@ -46,7 +46,6 @@ extensions/
     index.ts          # entry point
     README.md         # what it does + configuration
     LICENSE
-skills/               # later; also prompts/, themes/ (auto-discovered, no config needed)
 ```
 
 See [AGENTS.md](AGENTS.md) for adding and publishing extensions.

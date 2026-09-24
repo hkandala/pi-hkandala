@@ -40,11 +40,3 @@ Recommended: hide pi's built-in resource listing so it isn't shown twice, in `~/
 ```json
 { "quietStartup": true }
 ```
-
-Spacing stays the same with or without `quietStartup`.
-
-## Notes
-
-- Needs a truecolor terminal (Ghostty, kitty, iTerm2, WezTerm).
-- Pi doesn't expose its loaded extension list, so the extension count is resolved the way pi does it: CLI `-e` paths plus settings, packages, and auto-discovery.
-- Pressing `ctrl+o` before the first message would leave pi's "Tool output: …" status stuck under the header; the extension removes it while it's the chat's only content.
