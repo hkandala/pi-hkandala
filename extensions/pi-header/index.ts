@@ -1,0 +1,243 @@
+/**
+ * pi-header: minimal startup header with the official pi logo.
+ * Collapsed shows resource counts; ctrl+o expands the lists; /loaded prints full paths.
+ *
+ * Config (optional): ~/.pi/agent/extensions/pi-header.json  →  { "logo": "color" | "white" }
+ * Pair with "quietStartup": true in ~/.pi/agent/settings.json to hide pi's built-in listing.
+ */
+
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import {
+	DefaultPackageManager,
+	DynamicBorder,
+	getAgentDir,
+	getMarkdownTheme,
+	keyText,
+	SettingsManager,
+	VERSION,
+} from "@earendil-works/pi-coding-agent";
+import { Container, getCellDimensions, Markdown, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join, relative, resolve } from "node:path";
+
+type RGB = [number, number, number];
+const LOGO = ["SSS.", "B.S.", "BB.Y", "B..Y"];
+const COLORS: Record<string, RGB> = { S: [240, 144, 130], B: [78, 154, 191], Y: [241, 190, 88] }; // sRGB, measured from the official logo
+const WHITE: RGB = [255, 255, 255];
+const BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]; // left-aligned k/8 of a cell
+const SPACING = 1.5; // logo pixels left/right of the logo
+const ROWS = 2; // blank rows above/below (whole rows only; 2 is closest to SPACING)
+const SECTIONS = ["context", "skills", "prompts", "extensions", "themes"] as const;
+type Resources = Record<(typeof SECTIONS)[number], { name: string; path: string }[]>;
+
+const fg = (c: RGB) => `\x1b[38;2;${c.join(";")}m`;
+const bg = (c: RGB) => `\x1b[48;2;${c.join(";")}m`;
+
+/**
+ * Each logo pixel is one row tall and exactly one cell-height wide (measured via
+ * pi-tui's cell size), with edges placed in 1/8 cells. SPACING logo pixels of space
+ * on each side. Returns lines padded to the text column.
+ */
+function renderLogo(white: boolean) {
+	const { widthPx, heightPx } = getCellDimensions();
+	const px = (8 * heightPx) / widthPx;
+	const column = Math.round(((LOGO.length + 2 * SPACING) * px) / 8);
+	const offset = Math.round((column * 8 - LOGO.length * px) / 2);
+	const edges = [0, 1, 2, 3, 4].map((c) => offset + Math.round(c * px));
+	const colorAt = (row: string, e: number): RGB | undefined => {
+		if (e < edges[0] || e >= edges[4]) return undefined;
+		const color = COLORS[row[edges.findLastIndex((x) => x <= e)]];
+		return color && white ? WHITE : color;
+	};
+
+	const lines = LOGO.map((row) => {
+		let line = "";
+		for (let cell = 0; cell < column; cell++) {
+			const start = cell * 8;
+			const split = edges.find((e) => e > start && e < start + 8); // pixels ≥ 1 cell, so at most one
+			const l = colorAt(row, start);
+			const r = split === undefined ? l : colorAt(row, split);
+			const glyph = split === undefined ? "" : BLOCKS[split - start];
+			if (!l && !r) line += " ";
+			else if (l === r) line += `${fg(l!)}█\x1b[39m`;
+			else if (!r) line += `${fg(l!)}${glyph}\x1b[39m`;
+			else if (!l) line += `\x1b[7m${fg(r)}${glyph}\x1b[27;39m`; // reverse: glyph takes the terminal background
+			else line += `${fg(l)}${bg(r)}${glyph}\x1b[39;49m`;
+		}
+		return line;
+	});
+	return { lines, pad: Math.floor(offset / 8), column };
+}
+
+function render(theme: Theme, res: Resources, expanded: boolean, white: boolean, quiet: boolean, width: number): string[] {
+	const dim = (s: string) => theme.fg("dim", s);
+	const muted = (s: string) => theme.fg("muted", s);
+	const dot = dim(" · ");
+	const key = (id: string) => keyText(id).replace("escape", "esc");
+	const hint = (pairs: string[][]) => pairs.map(([k, d]) => `${muted(k)} ${dim(d)}`).join(dot);
+
+	const hints = hint([
+		[key("app.interrupt"), "interrupt"],
+		["/", "commands"],
+		["!", "bash"],
+		[key("app.tools.expand"), expanded ? "collapse" : "expand"],
+	]);
+	const counts = SECTIONS.filter((s) => res[s].length)
+		.map((s) => `${theme.fg("text", String(res[s].length))} ${dim(res[s].length === 1 ? s.replace(/s$/, "") : s)}`)
+		.join(dot);
+
+	const logo = renderLogo(white);
+	const info = [theme.bold("pi") + dim(` v${VERSION}`), hints, "", counts];
+	// Without quietStartup pi adds a blank row above the header and two below (after it, and before [Context]).
+	const top = Array<string>(quiet ? ROWS : ROWS - 1).fill("");
+	const bottom = Array<string>(quiet ? ROWS : ROWS - 2).fill("");
+	const out = [...top, ...logo.lines.map((line, i) => line + info[i])];
+	if (!expanded) return [...out, ...bottom];
+
+	// Lists: label under the logo, items in the text column, packed so " · " never ends a line.
+	out.push(...Array<string>(ROWS).fill(""));
+	for (const s of SECTIONS) {
+		const lines: string[] = [];
+		for (const item of res[s].map((i) => dim(i.name))) {
+			const last = lines.at(-1);
+			if (last !== undefined && visibleWidth(last + dot + item) <= width - logo.column) lines[lines.length - 1] += dot + item;
+			else lines.push(item);
+		}
+		lines.forEach((line, i) =>
+			out.push((i ? " ".repeat(logo.column) : " ".repeat(logo.pad) + muted(s.padEnd(logo.column - logo.pad - 1)) + " ") + line),
+		);
+	}
+	out.push("", " ".repeat(logo.column) + hint([["/hotkeys", "all shortcuts"], ["/loaded", "full paths"]]));
+	return [...out, ...bottom];
+}
+
+const tilde = (path: string) => (path.startsWith(homedir()) ? `~${path.slice(homedir().length)}` : path);
+const displayPath = (path: string, cwd: string) => {
+	const rel = relative(cwd, path);
+	return rel.startsWith("..") ? tilde(path) : rel;
+};
+const extensionName = (p: string) => (/^index\.[jt]s$/.test(basename(p)) ? basename(dirname(p)) : basename(p)).replace(/\.[jt]s$/, "");
+
+function readResources(pi: ExtensionAPI, ctx: ExtensionContext, extensions: string[]): Resources {
+	const byName = (items: { name: string; path: string }[]) => items.sort((a, b) => a.name.localeCompare(b.name));
+	const commands = (source: string) => pi.getCommands().filter((c) => c.source === source);
+	return {
+		context: [...ctx.getSystemPrompt().matchAll(/<project_instructions path="([^"]+)">/g)].map(([, path]) => ({ name: displayPath(path, ctx.cwd), path })),
+		skills: byName(commands("skill").map((c) => ({ name: c.name.replace(/^skill:/, ""), path: c.sourceInfo.path }))),
+		prompts: byName(commands("prompt").map((c) => ({ name: `/${c.name}`, path: c.sourceInfo.path }))),
+		extensions: byName(extensions.map((path) => ({ name: extensionName(path), path }))),
+		themes: byName(
+			ctx.ui
+				.getAllThemes()
+				.filter((t) => t.path && t.name !== "dark" && t.name !== "light")
+				.map((t) => ({ name: t.name, path: t.path! })),
+		),
+	};
+}
+
+/** Pi doesn't expose loaded extensions, so resolve them like pi does: CLI -e paths + settings/packages/auto-discovery. */
+async function resolveExtensions(ctx: ExtensionContext): Promise<string[]> {
+	const argv = process.argv;
+	const paths = argv.flatMap((a, i) => ((a === "-e" || a === "--extension") && argv[i + 1] ? [resolve(ctx.cwd, argv[i + 1])] : []));
+	const agentDir = getAgentDir();
+	const settingsManager = SettingsManager.create(ctx.cwd, agentDir, { projectTrusted: ctx.isProjectTrusted() });
+	const resolved = await new DefaultPackageManager({ cwd: ctx.cwd, agentDir, settingsManager }).resolve(async () => "skip");
+	paths.push(...resolved.extensions.filter((e) => e.enabled).map((e) => e.path));
+	return [...new Set(paths)];
+}
+
+type Node = { children?: Node[] };
+const parentOf = (node: Node, target: Node): Node | undefined => {
+	for (const child of node.children ?? []) {
+		if (child === target) return node;
+		const found = parentOf(child, target);
+		if (found) return found;
+	}
+	return undefined;
+};
+
+/**
+ * Ctrl+O also makes pi post "Tool output: …" (a spacer + text) to the chat. Pressed before the first
+ * message, that line stays wedged between the header and the conversation, so drop it while it is the
+ * chat's only content; the header changing is feedback enough.
+ * ponytail: relies on pi's layout (document = [header, loaded resources, chat]); a no-op if that changes.
+ */
+function dropLoneStatus(tui: Node, header: Node) {
+	const headerContainer = parentOf(tui, header);
+	const document = headerContainer && parentOf(tui, headerContainer);
+	const chat = document?.children?.[document.children.indexOf(headerContainer!) + 2] as Container | undefined;
+	const [spacer, text, ...rest] = chat?.children ?? [];
+	if (spacer instanceof Spacer && text instanceof Text && rest.length === 0) chat!.clear();
+}
+
+function readConfig(): { logo?: string } {
+	try {
+		return JSON.parse(readFileSync(join(getAgentDir(), "extensions", "pi-header.json"), "utf8"));
+	} catch {
+		return {};
+	}
+}
+
+export default function (pi: ExtensionAPI) {
+	let res: Resources = { context: [], skills: [], prompts: [], extensions: [], themes: [] };
+
+	pi.on("session_start", async (_event, ctx) => {
+		if (ctx.mode !== "tui") return;
+		const white = readConfig().logo === "white";
+		const quiet =
+			!process.argv.includes("--verbose") &&
+			SettingsManager.create(ctx.cwd, getAgentDir(), { projectTrusted: ctx.isProjectTrusted() }).getQuietStartup();
+		res = readResources(pi, ctx, []);
+		let expanded = false;
+		let requestRender = () => {};
+
+		ctx.ui.setHeader((tui) => {
+			requestRender = () => tui.requestRender();
+			const header = {
+				setExpanded(value: boolean) {
+					expanded = value; // pi calls this on ctrl+o
+					queueMicrotask(() => {
+						dropLoneStatus(tui, header);
+						requestRender();
+					});
+				},
+				invalidate() {},
+				render: (width: number) => render(ctx.ui.theme, res, expanded, white, quiet, width).map((l) => truncateToWidth(l, width)),
+			};
+			return header;
+		});
+
+		// ponytail: one re-read when extensions resolve; also picks up skills added by resources_discover.
+		resolveExtensions(ctx)
+			.then((extensions) => {
+				res = readResources(pi, ctx, extensions);
+				requestRender();
+			})
+			.catch(() => {}); // session was replaced meanwhile
+	});
+
+	// Full paths, printed into the transcript like /hotkeys. Saved in the session, never sent to the model.
+	pi.registerCommand("loaded", {
+		description: "Show loaded context files, skills, prompts, extensions, and themes with full paths",
+		handler: async () => {
+			const sections = SECTIONS.filter((s) => res[s].length).map((s) => [s, res[s].map((i) => tilde(i.path))]);
+			pi.appendEntry("pi-header-loaded", { sections });
+		},
+	});
+
+	pi.registerEntryRenderer("pi-header-loaded", (entry, _options, theme) => {
+		const { sections } = entry.data as { sections: [string, string[]][] };
+		const markdown = sections
+			.map(([s, paths]) => `**${s[0].toUpperCase()}${s.slice(1)}**\n\n${paths.map((p) => `- \`${p}\``).join("\n")}`)
+			.join("\n\n");
+		const box = new Container();
+		box.addChild(new Spacer(1));
+		box.addChild(new DynamicBorder());
+		box.addChild(new Text(theme.bold(theme.fg("accent", "Loaded Resources")), 1, 0));
+		box.addChild(new Spacer(1));
+		box.addChild(new Markdown(markdown, 1, 1, getMarkdownTheme()));
+		box.addChild(new DynamicBorder());
+		return box;
+	});
+}
