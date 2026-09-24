@@ -2,7 +2,7 @@
   "name": "pi-hkandala",
   "version": "0.1.0",
   "private": true,
-  "description": "All of hkandala's pi extensions",
+  "description": "hkandala's pi extensions, skills, and more",
   "keywords": [
     "pi-package"
   ],
@@ -16,10 +16,5 @@
   "devDependencies": {
     "oxfmt": "^0.70.0",
     "oxlint": "^1.85.0"
-  },
-  "pi": {
-    "extensions": [
-      "./extensions"
-    ]
   }
 }

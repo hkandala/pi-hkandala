@@ -1,6 +1,8 @@
 # AGENTS.md
 
-Personal pi extensions. Each `extensions/<name>/` is a standalone pi package; the root package loads them all and is never published.
+Personal pi resources: extensions now, skills/prompts/themes later. Each `extensions/<name>/` is a standalone pi package; the root package loads everything and is never published.
+
+The root `package.json` intentionally has no `pi` manifest: pi then auto-discovers top-level `extensions/`, `skills/`, `prompts/`, and `themes/`. Adding a manifest would stop new folders from loading.
 
 ## Adding an extension
 

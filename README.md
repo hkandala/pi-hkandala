@@ -1,6 +1,8 @@
 # pi-hkandala
 
-My [pi](https://pi.dev) extensions. Each extension is its own pi package, so you can install one or all.
+My [pi](https://pi.dev) resources: extensions for now, with skills and more to come. Each one is its own pi package, so you can install one or all.
+
+## Extensions
 
 | Extension                                   | Description                                      |
 | ------------------------------------------- | ------------------------------------------------ |
@@ -18,7 +20,7 @@ pi install npm:@hkandala/pi-header
 
 ```bash
 git clone https://github.com/hkandala/pi-hkandala ~/code/pi-hkandala
-pi install ~/code/pi-hkandala                        # all extensions
+pi install ~/code/pi-hkandala                        # everything
 pi install ~/code/pi-hkandala/extensions/pi-header   # or just one
 ```
 
@@ -37,13 +39,14 @@ Remove with `pi remove <source>`, or toggle single extensions with `pi config`.
 ## Layout
 
 ```
-package.json          # root package: loads every extension (private, not published)
+package.json          # root package: loads everything below (private, not published)
 extensions/
   <name>/
     package.json      # standalone pi package, publishable to npm
     index.ts          # entry point
     README.md         # what it does + configuration
     LICENSE
+skills/               # later; also prompts/, themes/ (auto-discovered, no config needed)
 ```
 
 See [AGENTS.md](AGENTS.md) for adding and publishing extensions.
