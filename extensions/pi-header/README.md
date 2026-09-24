@@ -15,6 +15,14 @@ A minimal startup header for pi with the official pi logo.
 
 The logo is rendered pixel-accurately: each pixel is one row tall and exactly one cell-height wide, measured from the terminal's reported cell size. Edges are placed with 1/8-cell block characters, so pixels stay square in any font.
 
+## Install
+
+```bash
+pi install npm:@hkandala/pi-header
+```
+
+Or from a checkout of [pi-hkandala](../../README.md): `pi install <checkout>/extensions/pi-header`.
+
 ## Configuration
 
 Optional file: `~/.pi/agent/extensions/pi-header.json`

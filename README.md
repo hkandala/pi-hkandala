@@ -1,27 +1,50 @@
 # pi-hkandala
 
-My personal [pi](https://pi.dev) extensions, packaged as a single pi package.
+My [pi](https://pi.dev) extensions. Each extension is its own pi package, so you can install one or all.
 
-| Extension                                  | Description                                          |
-| ------------------------------------------ | ---------------------------------------------------- |
+| Extension                                  | Description                                      |
+| ------------------------------------------ | ------------------------------------------------ |
 | [pi-header](extensions/pi-header/README.md) | Minimal startup header with the official pi logo |
 
 ## Install
 
+**One extension** (see each extension's README for its package name):
+
 ```bash
-pi install ~/code/pi-hkandala          # local checkout, loaded in place
-pi install git:github.com/<user>/pi-hkandala     # or from git, once pushed
+pi install npm:@hkandala/pi-header
 ```
 
-Local installs aren't copied: edit files here and run `/reload` in pi. Remove with `pi remove ~/code/pi-hkandala`, or toggle single extensions with `pi config`.
+**Everything**, from a local checkout (loaded in place: edit, then `/reload`):
+
+```bash
+git clone <repo-url> ~/code/pi-hkandala
+pi install ~/code/pi-hkandala                        # all extensions
+pi install ~/code/pi-hkandala/extensions/pi-header   # or just one
+```
+
+**From git without npm**, pick extensions with a filter in `~/.pi/agent/settings.json`:
+
+```json
+{
+  "packages": [
+    { "source": "git:github.com/<user>/pi-hkandala", "extensions": ["extensions/pi-header/**"] }
+  ]
+}
+```
+
+Remove with `pi remove <source>`, or toggle single extensions with `pi config`.
 
 ## Layout
 
 ```
+package.json          # root package: loads every extension (private, not published)
 extensions/
   <name>/
-    index.ts     # extension entry point
-    README.md    # what it does + configuration
+    package.json      # standalone pi package, publishable to npm
+    index.ts          # entry point
+    README.md         # what it does + configuration
 ```
 
-To add an extension, create `extensions/<name>/index.ts`. `package.json` loads everything under `extensions/`, so no other changes are needed.
+**Add an extension:** copy `extensions/pi-header/package.json` into `extensions/<name>/`, change `name` and `description`, add `index.ts` and `README.md`. The root package picks it up automatically.
+
+**Publish one:** `cd extensions/<name> && npm publish`.

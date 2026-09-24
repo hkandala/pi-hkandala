@@ -2,13 +2,14 @@
   "name": "pi-hkandala",
   "version": "0.1.0",
   "private": true,
+  "description": "All of hkandala's pi extensions",
   "type": "module",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "pi": {
-    "extensions": ["./extensions"]
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "extensions": [
+      "./extensions"
+    ]
   }
 }
