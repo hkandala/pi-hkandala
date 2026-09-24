@@ -31,8 +31,8 @@ Optional file: `~/.pi/agent/extensions/pi-header.json`
 { "logo": "color" }
 ```
 
-| Key    | Values              | Default   |
-| ------ | ------------------- | --------- |
+| Key    | Values               | Default   |
+| ------ | -------------------- | --------- |
 | `logo` | `"color"`, `"white"` | `"color"` |
 
 Recommended: hide pi's built-in resource listing so it isn't shown twice, in `~/.pi/agent/settings.json`:

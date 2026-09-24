@@ -3,10 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "description": "All of hkandala's pi extensions",
-  "type": "module",
   "keywords": [
     "pi-package"
   ],
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "fmt": "oxfmt",
+    "lint": "oxlint",
+    "check": "oxfmt --check && oxlint"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.70.0",
+    "oxlint": "^1.85.0"
+  },
   "pi": {
     "extensions": [
       "./extensions"
