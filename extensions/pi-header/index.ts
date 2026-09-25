@@ -81,6 +81,16 @@ function renderLogo(white: boolean) {
   return { lines, pad: Math.floor(offset / 8), column };
 }
 
+/** Text halfway between the theme's muted and text colors (muted when they aren't 24-bit). */
+function soft(theme: Theme): (s: string) => string {
+  const rgb = (color: "muted" | "text") =>
+    /38;2;(\d+);(\d+);(\d+)/.exec(theme.getFgAnsi(color))?.slice(1).map(Number);
+  const [from, to] = [rgb("muted"), rgb("text")];
+  if (!from || !to) return (s) => theme.fg("muted", s);
+  const mix = from.map((v, i) => Math.round((v + to[i]!) / 2)).join(";");
+  return (s) => `\x1b[38;2;${mix}m${s}\x1b[39m`;
+}
+
 function render(
   theme: Theme,
   res: Resources,
@@ -88,12 +98,12 @@ function render(
   white: boolean,
   quiet: boolean,
   width: number,
+  blanksBelow: number,
 ): string[] {
-  const dim = (s: string) => theme.fg("dim", s);
-  const muted = (s: string) => theme.fg("muted", s);
-  const dot = dim(" · ");
+  const gray = soft(theme);
+  const dot = theme.fg("dim", " · ");
   const key = (id: string) => keyText(id).replace("escape", "esc");
-  const hint = (pairs: string[][]) => pairs.map(([k, d]) => `${muted(k)} ${dim(d)}`).join(dot);
+  const hint = (pairs: string[][]) => pairs.map(([k, d]) => gray(`${k} ${d}`)).join(dot);
 
   const hints = hint([
     [key("app.interrupt"), "interrupt"],
@@ -102,17 +112,15 @@ function render(
     [key("app.tools.expand"), expanded ? "collapse" : "expand"],
   ]);
   const counts = SECTIONS.filter((s) => res[s].length)
-    .map(
-      (s) =>
-        `${theme.fg("text", String(res[s].length))} ${dim(res[s].length === 1 ? s.replace(/s$/, "") : s)}`,
-    )
+    .map((s) => gray(`${res[s].length} ${res[s].length === 1 ? s.replace(/s$/, "") : s}`))
     .join(dot);
 
   const logo = renderLogo(white);
-  const info = [theme.bold("pi") + dim(` v${VERSION}`), hints, "", counts];
-  // Without quietStartup pi adds a blank row above the header and two below (after it, and before [Context]).
+  const info = [theme.bold("pi") + gray(` v${VERSION}`), hints, "", counts];
+  // Without quietStartup pi adds a blank row above the header and two below (after it, and before
+  // [Context]). Blank lines the content below already starts with count toward the gap.
   const top = Array<string>(quiet ? ROWS : ROWS - 1).fill("");
-  const bottom = Array<string>(quiet ? ROWS : ROWS - 2).fill("");
+  const bottom = Array<string>(Math.max(0, (quiet ? ROWS : ROWS - 2) - blanksBelow)).fill("");
   const out = [...top, ...logo.lines.map((line, i) => line + info[i])];
   if (!expanded) return [...out, ...bottom];
 
@@ -120,7 +128,7 @@ function render(
   out.push(...Array<string>(ROWS).fill(""));
   for (const s of SECTIONS) {
     const lines: string[] = [];
-    for (const item of res[s].map((i) => dim(i.name))) {
+    for (const item of res[s].map((i) => gray(i.name))) {
       const last = lines.at(-1);
       if (last !== undefined && visibleWidth(last + dot + item) <= width - logo.column)
         lines[lines.length - 1] += dot + item;
@@ -130,7 +138,7 @@ function render(
       out.push(
         (i
           ? " ".repeat(logo.column)
-          : " ".repeat(logo.pad) + muted(s.padEnd(logo.column - logo.pad - 1)) + " ") + line,
+          : " ".repeat(logo.pad) + gray(s.padEnd(logo.column - logo.pad - 1)) + " ") + line,
       ),
     );
   }
@@ -214,15 +222,10 @@ const parentOf = (node: Node, target: Node): Node | undefined => {
  * pi posts status lines ("Thinking level: xhigh", "Tool output: collapsed", …) to the chat as a
  * Spacer + Text pair. Before the first message they would sit wedged under the header, so drop them
  * there; errors and warnings (same shape) stay. Returns false once the conversation has started.
- * ponytail: relies on pi's layout (document = [header, loaded resources, chat]) and Text's private
- * `text` field; a no-op if the layout changes.
+ * ponytail: relies on Text's private `text` field; a no-op if it changes.
  */
-function dropEarlyStatuses(tui: Node, header: Node): boolean {
-  const headerContainer = parentOf(tui, header);
-  const document = headerContainer && parentOf(tui, headerContainer);
-  const chat = document?.children?.[document.children.indexOf(headerContainer!) + 2] as
-    | Container
-    | undefined;
+function dropEarlyStatuses(below: Node[]): boolean {
+  const chat = below[1] as Container | undefined;
   if (!chat) return false;
   const c = chat.children;
   let i = 0;
@@ -232,6 +235,28 @@ function dropEarlyStatuses(tui: Node, header: Node): boolean {
     else c.splice(i, 2);
   }
   return i === c.length;
+}
+
+/**
+ * What follows the header in pi's document: the loaded resources, then the chat.
+ * ponytail: relies on pi's layout (document = [header, loaded resources, chat]).
+ */
+function containersBelow(tui: Node, header: Node): Node[] {
+  const headerContainer = parentOf(tui, header);
+  const document = headerContainer && parentOf(tui, headerContainer);
+  return document?.children?.slice(document.children.indexOf(headerContainer!) + 1) ?? [];
+}
+
+/** Blank lines (up to ROWS) the content below the header starts with: a spacer, or a block's own. */
+function leadingBlanks(below: Node[], width: number): number {
+  let n = 0;
+  for (const container of below)
+    for (const child of container.children ?? [])
+      for (const line of (child as unknown as Container).render(width)) {
+        if (n === ROWS || visibleWidth(line.replaceAll(" ", ""))) return n;
+        n++;
+      }
+  return n;
 }
 
 const configPath = () => join(getAgentDir(), "extensions", "pi-header.json");
@@ -267,6 +292,7 @@ export default function (pi: ExtensionAPI) {
     res = readResources(pi, ctx, []);
     let expanded = false;
     let shown: string[] = []; // the last rendered lines, to tell text rows from blank ones
+    let below: Node[] = [];
     let requestRender = () => {};
     // Until the first message (resumed sessions start with their history).
     let fresh = !ctx.sessionManager.getEntries().some((e) => e.type === "message");
@@ -292,8 +318,10 @@ export default function (pi: ExtensionAPI) {
         },
         render: (width: number) => {
           // The header renders before the chat, so dropped lines never reach the screen.
-          if (fresh) fresh = dropEarlyStatuses(tui, header);
-          shown = render(ctx.ui.theme, res, expanded, white, quiet, width).map((l) =>
+          below = below.length ? below : containersBelow(tui, header);
+          if (fresh) fresh = dropEarlyStatuses(below);
+          const blanks = leadingBlanks(below, width);
+          shown = render(ctx.ui.theme, res, expanded, white, quiet, width, blanks).map((l) =>
             truncateToWidth(l, width),
           );
           return shown;

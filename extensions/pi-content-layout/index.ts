@@ -37,7 +37,6 @@ import {
   Box,
   Container,
   Markdown,
-  Spacer,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
@@ -508,15 +507,11 @@ export default function (pi: ExtensionAPI) {
       return { render: () => [], invalidate() {} };
     });
     ctx.ui.setWidget("pi-content-layout", undefined);
-    // pi opens the chat without a spacer before a first user message, as the header ends with its
-    // own blank lines; the same for anything else first (a resumed session's compaction summary).
     // When a group ends the chat, its dense tree rows would sit tight against the prompt, so the
     // chat gets one more blank line then. Inside the chat, so it scrolls with the content; text
     // and status lines keep just pi's own spacer.
     if (chat)
       override(chat, (orig, width) => {
-        const [first] = chat!.children;
-        if (first instanceof Spacer) override(first, () => []);
         const lines = orig(width);
         return neighbor(chat!.children, chat!.children.length, -1) === "item"
           ? [...lines, ""]
