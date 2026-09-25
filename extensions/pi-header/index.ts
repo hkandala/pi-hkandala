@@ -2,6 +2,7 @@
  * pi-header: minimal startup header with the official pi logo.
  * Collapsed shows resource counts; ctrl+o expands the lists; /loaded prints full paths.
  * Clicking the logo (fullscreen TUI mode) toggles color/white and saves the choice.
+ * Status lines pi posts before the first message are hidden so nothing sits under the header.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-header.json  →  { "logo": "color" | "white" }
  * Pair with "quietStartup": true in ~/.pi/agent/settings.json to hide pi's built-in listing.
@@ -209,19 +210,27 @@ const parentOf = (node: Node, target: Node): Node | undefined => {
 };
 
 /**
- * Ctrl+O also makes pi post "Tool output: …" (a spacer + text) to the chat. Pressed before the first
- * message, that line stays wedged between the header and the conversation, so drop it while it is the
- * chat's only content; the header changing is feedback enough.
- * ponytail: relies on pi's layout (document = [header, loaded resources, chat]); a no-op if that changes.
+ * pi posts status lines ("Thinking level: xhigh", "Tool output: collapsed", …) to the chat as a
+ * Spacer + Text pair. Before the first message they would sit wedged under the header, so drop them
+ * there; errors and warnings (same shape) stay. Returns false once the conversation has started.
+ * ponytail: relies on pi's layout (document = [header, loaded resources, chat]) and Text's private
+ * `text` field; a no-op if the layout changes.
  */
-function dropLoneStatus(tui: Node, header: Node) {
+function dropEarlyStatuses(tui: Node, header: Node): boolean {
   const headerContainer = parentOf(tui, header);
   const document = headerContainer && parentOf(tui, headerContainer);
   const chat = document?.children?.[document.children.indexOf(headerContainer!) + 2] as
     | Container
     | undefined;
-  const [spacer, text, ...rest] = chat?.children ?? [];
-  if (spacer instanceof Spacer && text instanceof Text && rest.length === 0) chat!.clear();
+  if (!chat) return false;
+  const c = chat.children;
+  let i = 0;
+  while (c[i] instanceof Spacer && c[i + 1] instanceof Text) {
+    const text = (c[i + 1] as unknown as { text: string }).text;
+    if (/(Error|Warning): /.test(text)) i += 2;
+    else c.splice(i, 2);
+  }
+  return i === c.length;
 }
 
 const configPath = () => join(getAgentDir(), "extensions", "pi-header.json");
@@ -257,16 +266,14 @@ export default function (pi: ExtensionAPI) {
     res = readResources(pi, ctx, []);
     let expanded = false;
     let requestRender = () => {};
+    // Until the first message (resumed sessions start with their history).
+    let fresh = !ctx.sessionManager.getEntries().some((e) => e.type === "message");
 
     ctx.ui.setHeader((tui) => {
       requestRender = () => tui.requestRender();
       const header = {
         setExpanded(value: boolean) {
-          expanded = value; // pi calls this on ctrl+o
-          queueMicrotask(() => {
-            dropLoneStatus(tui, header);
-            requestRender();
-          });
+          expanded = value; // pi calls this on ctrl+o, then renders
         },
         invalidate() {},
         // Mouse events only arrive in fullscreen TUI mode; x/y are relative to the header.
@@ -279,10 +286,13 @@ export default function (pi: ExtensionAPI) {
           saveLogo(white);
           return { handled: true };
         },
-        render: (width: number) =>
-          render(ctx.ui.theme, res, expanded, white, quiet, width).map((l) =>
+        render: (width: number) => {
+          // The header renders before the chat, so dropped lines never reach the screen.
+          if (fresh) fresh = dropEarlyStatuses(tui, header);
+          return render(ctx.ui.theme, res, expanded, white, quiet, width).map((l) =>
             truncateToWidth(l, width),
-          ),
+          );
+        },
       };
       return header;
     });
