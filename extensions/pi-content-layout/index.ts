@@ -16,7 +16,8 @@
  *   user bash happened, and how long tool calls took, in a column on the right.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-content-layout.json
- *   { "diffs": true, "timestamps": "off" | "relative" | "absolute", "collapseGroups": false }
+ *   { "autoExpandedTools": ["edit"], "maxExpandedLines": 0, "collapseGroups": false,
+ *     "timestamps": "off" | "relative" | "absolute", "timestampFormat": "24h" | "12h" }
  *
  * pi has no public API for restyling its own tool rows or messages, so this patches
  * methods of pi's exported components (restored on shutdown, and falling back to pi's own on any
@@ -51,7 +52,13 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 type Stamps = "off" | "relative" | "absolute";
-type Config = { diffs?: boolean; timestamps?: Stamps; collapseGroups?: boolean };
+type Config = {
+  autoExpandedTools?: string[];
+  maxExpandedLines?: number;
+  collapseGroups?: boolean;
+  timestamps?: Stamps;
+  timestampFormat?: "24h" | "12h";
+};
 
 type Node = { children?: Node[] };
 type Proto = Record<string, any>; // oxlint-disable-line no-explicit-any
@@ -145,8 +152,9 @@ function readConfig(): Config {
 
 const STAMPS: Stamps[] = ["off", "relative", "absolute"];
 let stamps: Stamps = "off";
-/** Columns text gives up for the time column: its widest time ("11mo ago", "Sep 24 14:02") + 1. */
-const RESERVE: Record<Stamps, number> = { off: 0, relative: 9, absolute: 13 };
+let twelveHour = false;
+/** Columns text gives up for the time column: its widest time + 1 ("11mo ago", "Sep 24 14:02 pm"). */
+const reserve = () => (stamps === "off" ? 0 : stamps === "relative" ? 9 : twelveHour ? 16 : 13);
 
 /** Saves toggles into the config file, keeping any other keys. */
 function saveConfig(change: Config) {
@@ -164,7 +172,10 @@ const UNITS: [string, number][] = [
   ["h", 3600],
   ["m", 60],
 ];
-/** "12m ago", or the shortest clear clock time: "14:02:31" today, "Sep 24 14:02", "Sep 24 2025". */
+/**
+ * "12m ago", or the shortest clear clock time: "14:02:31" today, "Sep 24 14:02", "Sep 24 2025"
+ * ("2:02:31 pm", "Sep 24 2:02 pm" in 12-hour format).
+ */
 function clock(ms: number | undefined): string {
   if (!ms || stamps === "off") return "";
   const now = new Date();
@@ -175,10 +186,13 @@ function clock(ms: number | undefined): string {
   }
   const d = new Date(ms);
   const two = (n: number) => String(n).padStart(2, "0");
-  const time = `${two(d.getHours())}:${two(d.getMinutes())}`;
-  if (d.toDateString() === now.toDateString()) return `${time}:${two(d.getSeconds())}`;
+  const h = d.getHours();
+  const time = `${twelveHour ? h % 12 || 12 : two(h)}:${two(d.getMinutes())}`;
+  const ampm = twelveHour ? (h < 12 ? " am" : " pm") : "";
+  if (d.toDateString() === now.toDateString()) return `${time}:${two(d.getSeconds())}${ampm}`;
   const day = `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
-  return d.getFullYear() === now.getFullYear() ? `${day} ${time}` : `${day} ${d.getFullYear()}`;
+  if (d.getFullYear() === now.getFullYear()) return `${day} ${time}${ampm}`;
+  return `${day} ${d.getFullYear()}`;
 }
 
 const duration = (s: number) =>
@@ -384,9 +398,9 @@ function describe(t: Tool): [target: string, result: string] {
   }
 }
 
-/** Whether a row shows its content: edits open with their diff; ctrl+o sets all; a click, its own. */
+/** Whether a row shows its content: autoExpandedTools open; ctrl+o sets all; a click, its own. */
 const isOpen = (t: Tool & Proto, config: Config): boolean =>
-  t.clOpen ?? (t.expanded || (t.toolName === "edit" && config.diffs !== false));
+  t.clOpen ?? (t.expanded || config.autoExpandedTools!.includes(t.toolName));
 
 /** Lines shown under an open row: the diff, written content, or output (red for failures). */
 function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
@@ -505,6 +519,8 @@ function parentOf(node: Node, target: Node, depth = 4): Node | undefined {
 
 /** Whether groups start collapsed to their summary line (ctrl+shift+o); a click sets one's own. */
 let collapseGroups = false;
+/** The most lines open content shows (0: no limit). */
+let maxLines = 0;
 
 /** The member that opens the group `list[i]` belongs to (it keeps the group's collapsed state). */
 function groupStart(list: unknown[], i: number): Proto {
@@ -615,9 +631,11 @@ function groupLines(
     // rows, and a blank line follows it unless the group ends (a spacer follows then).
     // Wrapped to fit, so nothing open is cut off: 3 columns in, 2 of rail, 2 for the └, 3 after.
     const fit = Math.max(1, width - (alone ? 8 : 10));
-    const wrapped = rowBody.flatMap((l) =>
-      visibleWidth(l) > fit ? wrapTextWithAnsi(l, fit) : [l],
-    );
+    let wrapped = rowBody.flatMap((l) => (visibleWidth(l) > fit ? wrapTextWithAnsi(l, fit) : [l]));
+    if (maxLines > 0 && wrapped.length > maxLines) {
+      const more = plural(wrapped.length - maxLines, "more line");
+      wrapped = [...wrapped.slice(0, maxLines), theme.fg("dim", `… ${more}`)];
+    }
     const hung = wrapped.map((l, j) => (j ? "  " : `${theme.fg("dim", "└")} `) + l);
     if (hung.length && !last) hung.push("");
     let lines: string[];
@@ -664,7 +682,7 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
   const name = t.toolName.padEnd(5);
   const tail = result ? ` · ${result}` : "";
   // The target's room: 5 columns of tree before the row, 3 after, and the time column.
-  const room = Math.max(1, width - 8 - visibleWidth(name) - 1 - RESERVE[stamps]);
+  const room = Math.max(1, width - 8 - visibleWidth(name) - 1 - reserve());
   // Closed, a long target gives way to the result and ends in … (pi's truncation resets colors
   // before it, so it gets its own). Open, it wraps in full under its start (a bash command with its
   // own line breaks), the result after it, or on a line of its own when it doesn't fit.
@@ -742,7 +760,10 @@ export default function (pi: ExtensionAPI) {
     if (ctx.mode !== "tui" || restores.length) return;
     const config = readConfig();
     collapseGroups = config.collapseGroups === true;
+    maxLines = Math.max(0, Math.floor(Number(config.maxExpandedLines) || 0));
+    if (!Array.isArray(config.autoExpandedTools)) config.autoExpandedTools = ["edit"];
     stamps = STAMPS.includes(config.timestamps!) ? config.timestamps! : "off";
+    twelveHour = config.timestampFormat === "12h";
     session = ctx.sessionManager as unknown as Session;
     const theme = () => ctx.ui.theme;
     // pi calls widget factories right away with the TUI; that is all this widget is for.
@@ -879,9 +900,7 @@ export default function (pi: ExtensionAPI) {
       () =>
         function (this: Proto, width: number) {
           // The output follows the command without pi's blank line.
-          const raw: string[] = this.contentContainer.render(
-            Math.max(1, width - 4 - RESERVE[stamps]),
-          );
+          const raw: string[] = this.contentContainer.render(Math.max(1, width - 4 - reserve()));
           const stamp = pairedStamp(this);
           return memo(this, "clBash", [raw, theme(), stamp, width], () => {
             const lines = tidy(raw);
@@ -983,7 +1002,7 @@ export default function (pi: ExtensionAPI) {
           const th = theme();
           // Assistant text sits at column 3 like tree row content (pi pads it by 1, this adds 2)
           // and keeps the same 3 columns free on the right, plus the time column.
-          this.clInner = Math.max(1, width - 4 - RESERVE[stamps]);
+          this.clInner = Math.max(1, width - 4 - reserve());
           const lines: string[] = orig.call(this, this.clInner);
           this.clHeight = lines.length;
           this.clRowY = undefined;

@@ -36,7 +36,7 @@ A compact, minimal transcript for pi: tool calls and thinking collapse into a su
 - **Special messages:** compaction and branch summaries, skill invocations, and extension messages pi draws itself, in a dashed rounded border with their label in the top edge (`╭┄┄ compaction ┄┄╮`). Click a summary or skill to open it.
 - **User bash and info panels:** `!cmd` runs and panels between horizontal rules, pi's (`/changelog`, `/hotkeys`, update notices) or an extension's (pi-header's `/loaded`), read like assistant text, a `●` and column 3, without pi's horizontal rules. The `●` is white for assistant text, pi's bash green for `!cmd` (dim for `!!cmd`, which stays out of the context), and accent for panels, like their heading.
 
-Click a row (fullscreen TUI mode) to open or close it within the tree: its content hangs off a `└` under the row, followed by a blank line. Edits open with their diff, other tools show their output (live while running; write: the content), and thinking shows its text. An open row also shows its full input: a target cut off with `…` wraps in full under it (a bash command with its own line breaks), and content wraps too, so nothing open is cut off. `ctrl+o` opens or closes all tool rows, clicked ones too, and `ctrl+t` all thinking. Rows and text keep a 3-column margin on both sides, and a group at the end of the transcript gets an extra blank line before the prompt.
+Click a row (fullscreen TUI mode) to open or close it within the tree: its content hangs off a `└` under the row, followed by a blank line. Tools listed in `autoExpandedTools` (edits, by default) start open. Edits show their diff, other tools their output (live while running; write: the content), and thinking shows its text. An open row also shows its full input: a target cut off with `…` wraps in full under it (a bash command with its own line breaks), and content wraps too, so nothing open is cut off, up to `maxExpandedLines` if set (then `… N more lines`). `ctrl+o` opens or closes all tool rows, clicked ones too, and `ctrl+t` all thinking. Rows and text keep a 3-column margin on both sides, and a group at the end of the transcript gets an extra blank line before the prompt.
 
 | Shortcut       | Does                                                               |
 | -------------- | ------------------------------------------------------------------ |
@@ -65,7 +65,7 @@ pi has no public API for restyling its own messages, so this extension patches t
  ● The test run fails on the new case.  · · · · · · · · · ·  14:02:41
 ```
 
-- **Messages, summary lines, user bash:** when they happened: user and assistant messages, compaction and branch summaries, skills, extension messages pi draws itself, group summary lines, `!cmd` runs (when they finished), and info panels like `/hotkeys` and `/loaded` (when they opened; they aren't restored from history). Boxed messages carry the time in their top edge. Relative: `now`, `12m ago`, `3h ago`, `2d ago`, … Absolute: `14:02:31` today, `Sep 24 14:02` earlier this year, `Sep 24 2025` before that.
+- **Messages, summary lines, user bash:** when they happened: user and assistant messages, compaction and branch summaries, skills, extension messages pi draws itself, group summary lines, `!cmd` runs (when they finished), and info panels like `/hotkeys` and `/loaded` (when they opened; they aren't restored from history). Boxed messages carry the time in their top edge. Relative: `now`, `12m ago`, `3h ago`, `2d ago`, … Absolute: `14:02:31` today, `Sep 24 14:02` earlier this year, `Sep 24 2025` before that (`2:02:31 pm`, `Sep 24 2:02 pm` with `"timestampFormat": "12h"`).
 - **Tool rows:** how long the call took. pi saves the results of parallel calls only once the whole batch finishes, so for history those rows show the batch's time as an upper bound (`≤0.1s`); single calls and live runs are exact.
 
 While timestamps show, assistant text and `!cmd` output wrap a little narrower to leave room for the column. Status lines and notices have no saved time, so they show none.
@@ -80,14 +80,22 @@ Or from a checkout of [pi-hkandala](../../README.md): `pi install <checkout>/ext
 
 ## Configuration
 
-Optional file: `~/.pi/agent/extensions/pi-content-layout.json`
+Optional file: `~/.pi/agent/extensions/pi-content-layout.json`. Every key has a default; `/reload` after editing.
 
 ```json
-{ "diffs": true, "timestamps": "off", "collapseGroups": false }
+{
+  "autoExpandedTools": ["edit"],
+  "maxExpandedLines": 0,
+  "collapseGroups": false,
+  "timestamps": "off",
+  "timestampFormat": "24h"
+}
 ```
 
-| Key              | Values                              | Default | Notes                                                |
-| ---------------- | ----------------------------------- | ------- | ---------------------------------------------------- |
-| `diffs`          | `true`, `false`                     | `true`  | `false` starts edits closed too                      |
-| `collapseGroups` | `true`, `false`                     | `false` | Set by `ctrl+shift+o`                                |
-| `timestamps`     | `"off"`, `"relative"`, `"absolute"` | `"off"` | Set by `ctrl+shift+t`; see [Timestamps](#timestamps) |
+| Key                 | Values                              | Default    | Notes                                                                  |
+| ------------------- | ----------------------------------- | ---------- | ---------------------------------------------------------------------- |
+| `autoExpandedTools` | tool names                          | `["edit"]` | Tools whose rows start open, e.g. `["edit", "write"]`; `[]` for none   |
+| `maxExpandedLines`  | a number                            | `0`        | Most lines open content shows, then `… N more lines`; `0` for no limit |
+| `collapseGroups`    | `true`, `false`                     | `false`    | Groups start collapsed; set by `ctrl+shift+o`                          |
+| `timestamps`        | `"off"`, `"relative"`, `"absolute"` | `"off"`    | Set by `ctrl+shift+t`; see [Timestamps](#timestamps)                   |
+| `timestampFormat`   | `"24h"`, `"12h"`                    | `"24h"`    | Clock for absolute timestamps                                          |
