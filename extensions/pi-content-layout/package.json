@@ -1,0 +1,26 @@
+{
+  "name": "@hkandala/pi-content-layout",
+  "version": "0.1.0",
+  "description": "Compact pi transcript: tool calls and thinking in a summarized tree, boxed user messages",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
