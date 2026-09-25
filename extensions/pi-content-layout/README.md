@@ -29,7 +29,7 @@ A compact, minimal transcript for pi: tool calls and thinking collapse into a su
 ```
 
 - **Groups:** tool calls and thinking between two pieces of assistant text form one group: a summary line ("Read 2 files, ran 1 command", failures in red) with a tree of one-row calls under it.
-- **Tool rows:** name, target (file, command, or pattern), and result (line or match counts, `+added -removed` in the diff's colors, duration from 1s up). Long targets shorten so the result stays visible. Running calls show `running Xs` and failures are red.
+- **Tool rows:** name, target (file, command, or pattern), and result (line or match counts, `+added -removed` in the diff's colors, duration from 1s up; with [timestamps](#timestamps) on, in their column). Long targets shorten so the result stays visible. Running calls show `running Xs` and failures are red.
 - **Thinking:** a tree row, `thinking…` while it streams, then `thought for Xs`: `thought briefly` under a second, and `thought for some time` for messages loaded from history, since pi saves no thinking time. Thinking with no tool calls around it is a single `Thought for Xs` line.
 - **Assistant text:** every piece starts with a `●`.
 - **User messages:** in a rounded border matching [pi-footer](../pi-footer/README.md)'s prompt box, without pi's background.
@@ -39,6 +39,28 @@ A compact, minimal transcript for pi: tool calls and thinking collapse into a su
 Click a row (fullscreen TUI mode) to open or close it within the tree: its content hangs off a `└` under the row, followed by a blank line. Edits open with their diff, other tools show their output (live while running; write: the content), and thinking shows its text. An open row also shows its full input: a target cut off with `…` wraps in full under it (a bash command with its own line breaks), and content wraps too, so nothing open is cut off. `ctrl+o` opens or closes all tool rows, clicked ones too, and `ctrl+t` all thinking. Rows and text keep a 3-column margin on both sides, and a group at the end of the transcript gets an extra blank line before the prompt.
 
 pi has no public API for restyling its own messages, so this extension patches the rendering of pi's message and tool components (restored on shutdown, and falling back to pi's own rendering on any error). It doesn't combine with other extensions that restyle the same components.
+
+## Timestamps
+
+`ctrl+shift+t` cycles timestamps: off → relative → absolute → off. The mode is saved to the config file, so it carries over to future sessions. Times sit in a dim column on the right, each traced to its line by a faint dotted leader (boxed messages carry theirs in the top edge):
+
+```
+╭─────────────────────────────────────────────────────────── 14:02:31 ─╮
+│ add a sub function to math.js and run the tests                      │
+╰──────────────────────────────────────────────────────────────────────╯
+
+   Read 2 files, ran 1 command  · · · · · · · · · · · · · ·  14:02:33
+   ├ read  math.js · 3 lines  · · · · · · · · · · · · · · · · · ≤0.1s
+   ├ read  README.md · 1 line · · · · · · · · · · · · · · · · · ≤0.1s
+   └ bash  npm test · exit 1  · · · · · · · · · · · · · · · · ·  1.4s
+
+ ● The test run fails on the new case.  · · · · · · · · · ·  14:02:41
+```
+
+- **Messages, summary lines, user bash:** when they happened: user and assistant messages, compaction and branch summaries, skills, extension messages pi draws itself, group summary lines, `!cmd` runs (when they finished), and info panels like `/hotkeys` and `/loaded` (when they opened; they aren't restored from history). Boxed messages carry the time in their top edge. Relative: `now`, `12m ago`, `3h ago`, `2d ago`, … Absolute: `14:02:31` today, `Sep 24 14:02` earlier this year, `Sep 24 2025` before that.
+- **Tool rows:** how long the call took. pi saves the results of parallel calls only once the whole batch finishes, so for history those rows show the batch's time as an upper bound (`≤0.1s`); single calls and live runs are exact.
+
+While timestamps show, assistant text and `!cmd` output wrap a little narrower to leave room for the column. Status lines and notices have no saved time, so they show none.
 
 ## Install
 
@@ -53,9 +75,10 @@ Or from a checkout of [pi-hkandala](../../README.md): `pi install <checkout>/ext
 Optional file: `~/.pi/agent/extensions/pi-content-layout.json`
 
 ```json
-{ "diffs": true }
+{ "diffs": true, "timestamps": "off" }
 ```
 
-| Key     | Values          | Default | Notes                           |
-| ------- | --------------- | ------- | ------------------------------- |
-| `diffs` | `true`, `false` | `true`  | `false` starts edits closed too |
+| Key          | Values                              | Default | Notes                                                |
+| ------------ | ----------------------------------- | ------- | ---------------------------------------------------- |
+| `diffs`      | `true`, `false`                     | `true`  | `false` starts edits closed too                      |
+| `timestamps` | `"off"`, `"relative"`, `"absolute"` | `"off"` | Set by `ctrl+shift+t`; see [Timestamps](#timestamps) |
