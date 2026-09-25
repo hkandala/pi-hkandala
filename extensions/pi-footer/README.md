@@ -3,14 +3,14 @@
 A minimal one-line footer for pi, inside a rounded prompt box, that expands into a dashboard.
 
 ```
-╭── ⠋ Working ─────────────────────────────────────────────────────────────────────────────────────────╮
-│ fix the footer so the cache goes cold after compaction                                               │
-│                                                                                                      │
-│  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · 󰪟 47k/200k · opus-5.5 · high │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ╭── ⠋ Working ─────────────────────────────────────────────────────────────────────────────────────────╮
+ │ fix the footer so the cache goes cold after compaction                                               │
+ │                                                                                                      │
+ │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · 󰪟 47k/200k · opus-5.5 · high │
+ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
-The box is pi's own editor (same keys, spinner, and autocomplete) drawn with rounded borders and the footer as its last row. Set `"promptEditor": "default"` to keep pi's editor and show the footer below it. The box replaces pi's editor, so it doesn't combine with other extensions that replace the editor (e.g. vim mode).
+The box is pi's own editor (same keys, spinner, and autocomplete) drawn with rounded borders and the footer as its last row, set a column in on each side so your text lines up with the transcript's (as in [pi-content-layout](../pi-content-layout/README.md)). Set `"promptEditor": "default"` to keep pi's editor and show the footer below it. The box replaces pi's editor, so it doesn't combine with other extensions that replace the editor (e.g. vim mode).
 
 | Piece                    | Shows                                                                                                                                                            |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -32,24 +32,24 @@ On narrow terminals whole sections drop in this order: usage, cost, git, context
 Click the footer (fullscreen TUI mode) or run `/dashboard` to expand or collapse it. It opens below the box:
 
 ```
-  path       ~/code/pi-hkandala
-  repo       https://github.com/hkandala/pi-hkandala
-  worktree   pi-hkandala (main) · 1 other: fix-footer
-  branch     master → origin/master · 2 to push · fetched 12m ago
-  commit     8252543 pi-header: toggle logo color on click… · 3 hours ago
-  changes    7 files · +42 -7
-             M  extensions/pi-footer/index.ts   +30 -5
-             …
-             +2 more
+   path       ~/code/pi-hkandala
+   repo       https://github.com/hkandala/pi-hkandala
+   worktree   pi-hkandala (main) · 1 other: fix-footer
+   branch     master → origin/master · 2 to push · fetched 12m ago
+   commit     8252543 pi-header: toggle logo color on click… · 3 hours ago
+   changes    7 files · +42 -7
+              M  extensions/pi-footer/index.ts   +30 -5
+              …
+              +2 more
 
-  model      anthropic/claude-opus-5-5 · thinking high
-  context    47k / 200k (23%) · compacted 2×
-  tokens     ↑116 input · ↓29.6k output · cache 2.7M read, 249k write · $1.24
-  cache      99% last hit · expires in 4m · next message ~$0.05
-  speed      58 t/s last · 61 t/s avg
+   model      anthropic/claude-opus-5-5 · thinking high
+   context    47k / 200k (23%) · compacted 2×
+   tokens     ↑116 input · ↓29.6k output · cache 2.7M read, 249k write · $1.24
+   cache      99% last hit · expires in 4m · next message ~$0.05
+   speed      58 t/s last · 61 t/s avg
 
-  session    fix footer · 12 user · 51 assistant · 87 tool calls
-  time       42m working · 2h 10m since start
+   session    fix footer · 12 user · 51 assistant · 87 tool calls
+   time       42m working · 2h 10m since start
 ```
 
 Git info refreshes one second after tool calls, `!` commands, agent runs, and branch changes, plus on a poll; `git fetch` runs on its own poll (and at start when the last fetch is older than that). Git only runs in trusted projects, with fsmonitor off, and fetch never prompts for credentials. Remote URLs are shown without any embedded credentials.

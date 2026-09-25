@@ -2,11 +2,11 @@
  * pi-footer: minimal one-line footer inside a rounded input box; click it (fullscreen mode)
  * or run /dashboard to expand the dashboard below the box.
  *
- *   ╭── ⠋ Working ──────────────────────────────────────────────────────────────────────────────────────╮
- *   │ prompt                                                                                             │
- *   │                                                                                                    │
- *   │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · 󰪟 47k/200k · opus-5.5 · high │
- *   ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ *    ╭── ⠋ Working ──────────────────────────────────────────────────────────────────────────────────────╮
+ *    │ prompt                                                                                             │
+ *    │                                                                                                    │
+ *    │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · 󰪟 47k/200k · opus-5.5 · high │
+ *    ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  *
  * Narrow terminals drop whole sections: usage, cost, git, context. Folder and model always stay.
  * Config (optional): ~/.pi/agent/extensions/pi-footer.json
@@ -485,8 +485,8 @@ function render(
   const val = (s: string) => paint("text", s);
   const LABEL = 11;
   const row = (label: string, value: string) =>
-    truncateToWidth(`  ${paint("muted", label.padEnd(LABEL))}${value}`, width, "…");
-  const indent = " ".repeat(LABEL + 2);
+    truncateToWidth(`   ${paint("muted", label.padEnd(LABEL))}${value}`, width, "…");
+  const indent = " ".repeat(LABEL + 3);
   const blocks: string[][] = [];
 
   const where = [row("path", val(tilde(ctx.cwd)))];
@@ -534,7 +534,7 @@ function render(
       const shown = g.files.slice(0, MAX_FILES);
       const pathWidth = Math.min(
         Math.max(...shown.map((f) => f.path.length)),
-        Math.max(10, width - LABEL - 16),
+        Math.max(10, width - LABEL - 17),
       );
       const statusColor: Record<string, Color> = { A: "success", D: "error", "?": "muted" };
       for (const f of shown) {
@@ -652,7 +652,8 @@ function render(
 type MouseEvent = { type: string; button: string; x: number; y: number; width: number };
 
 /**
- * pi's editor drawn four columns narrower inside a rounded box, with the footer as its last row.
+ * pi's editor drawn six columns narrower inside a rounded box set a column in on each side (so
+ * the text lines up with the transcript's), with the footer as its last row.
  * Assumes pi's editor layout: top border, text rows, bottom border, then the autocomplete list.
  */
 class BoxEditor extends CustomEditor {
@@ -677,27 +678,28 @@ class BoxEditor extends CustomEditor {
   }
 
   render(width: number): string[] {
-    if (width < 8) return super.render(width);
-    const inner = width - 4;
+    if (width < 10) return super.render(width);
+    const inner = width - 6;
     const lines = super.render(inner);
     const bottom = this.rows + 1;
     const b = (s: string) => this.borderColor(s);
-    const side = (line: string) => `${b("│")} ${line} ${b("│")}`;
+    const side = (line: string) => ` ${b("│")} ${line} ${b("│")} `;
     const footer = truncateToWidth(this.footer(inner), inner, "…");
     return [
-      b("╭─") + lines[0] + b("─╮"),
+      b(" ╭─") + lines[0] + b("─╮ "),
       ...lines.slice(1, bottom).map(side),
       side(" ".repeat(inner)),
       side(footer + " ".repeat(Math.max(0, inner - visibleWidth(footer)))),
-      b("╰─") + lines[bottom] + b("─╯"),
-      ...lines.slice(bottom + 1).map((line) => `  ${line}  `), // autocomplete list, below the box
+      b(" ╰─") + lines[bottom] + b("─╯ "),
+      ...lines.slice(bottom + 1).map((line) => `   ${line}   `), // autocomplete list, below the box
     ];
   }
 
-  // Map clicks back onto pi's editor: two columns for border + padding, two rows for the footer.
+  // Map clicks back onto pi's editor: three columns for margin, border and padding, two rows for
+  // the footer.
   handleMouse(event: MouseEvent) {
-    if (event.width < 8) return super.handleMouse(event);
-    const shifted = { ...event, x: event.x - 2, width: event.width - 4 };
+    if (event.width < 10) return super.handleMouse(event);
+    const shifted = { ...event, x: event.x - 3, width: event.width - 6 };
     if (event.y <= this.rows) return super.handleMouse(shifted);
     if (event.y === this.rows + 2 && event.type === "click" && event.button === "left") {
       this.onFooterClick();
