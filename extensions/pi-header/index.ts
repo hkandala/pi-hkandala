@@ -306,7 +306,10 @@ export default function (pi: ExtensionAPI) {
       .catch(() => {}); // session was replaced meanwhile
   });
 
-  // Full paths, printed into the transcript like /hotkeys. Saved in the session, never sent to the model.
+  // Full paths, printed into the transcript like /hotkeys. Saved in the session (the only way into
+  // the transcript) but never sent to the model, and, like /hotkeys, gone from a resumed or
+  // reloaded session: the renderer skips entries from before this extension loaded.
+  const loadedAt = Date.now();
   pi.registerCommand("loaded", {
     description:
       "Show loaded context files, skills, prompts, extensions, and themes with full paths",
@@ -320,6 +323,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerEntryRenderer("pi-header-loaded", (entry, _options, theme) => {
+    if (Date.parse(entry.timestamp) < loadedAt) return undefined;
     const { sections } = entry.data as { sections: [string, string[]][] };
     const markdown = sections
       .map(
