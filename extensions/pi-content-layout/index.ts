@@ -3,8 +3,8 @@
  * - Tool calls and thinking between two pieces of assistant text form one group: a summary line
  *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it.
  *   Running calls show a live timer, edits show their diff, failures are red.
- *   Click a row (fullscreen TUI mode) to open or close its content within the tree; ctrl+o opens
- *   all tool rows.
+ *   Click a row (fullscreen TUI mode) to open or close its content, which hangs off a └ under it;
+ *   ctrl+o opens all tool rows.
  * - Thinking is a tree row: "thinking…" while it streams, then "thought for Xs" (click to open).
  * - User messages sit in a rounded border like pi-footer's prompt box.
  * - Each piece of assistant text starts with a ● bullet; summary lines align with its text.
@@ -86,7 +86,7 @@ function readConfig(): Config {
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
-const lineCount = (s: string) => (s ? s.split("\n").length : 0);
+const lineCount = (s: string) => (s ? s.replace(/\n$/, "").split("\n").length : 0);
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const stateOf = (t: Tool): State =>
   t.result?.isError ? "error" : t.result && !t.isPartial ? "done" : "running";
@@ -107,9 +107,13 @@ const outputOf = cached((r) =>
     .trimEnd(),
 );
 const output = (t: Tool) => (t.result ? outputOf(t.result) : "");
-const linesOf = cached((r) => outputOf(r).replace(/\t/g, "   ").split("\n"));
+const untab = (s: string) => s.replace(/\t/g, "   ");
+const linesOf = cached((r) => untab(outputOf(r)).split("\n"));
+// pi marks skipped lines with "..."; only the ones between hunks say something.
 // ponytail: cached with the theme's colors at the time; a theme switch keeps them.
-const diffOf = cached((r) => renderDiff(r.details?.diff ?? "").split("\n"));
+const diffOf = cached((r) =>
+  renderDiff((r.details?.diff ?? "").replace(/^\s*\.\.\.\n|\n\s*\.\.\.$/g, "")).split("\n"),
+);
 
 function shortPath(path: string, cwd: string) {
   if (path.startsWith(`${cwd}/`)) return path.slice(cwd.length + 1);
@@ -178,9 +182,9 @@ const isOpen = (t: Tool & Proto, config: Config): boolean =>
 function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
   const open = isOpen(t, config);
   if (open && t.toolName === "write")
-    return str(t.args?.content)
+    return untab(str(t.args?.content).trimEnd())
       .split("\n")
-      .map((l) => theme.fg("muted", l.replace(/\t/g, "   ")));
+      .map((l) => theme.fg("muted", l));
   if (!open || !t.result) return [];
   if (t.toolName === "edit" && t.result.details?.diff) return diffOf(t.result);
   const color = t.result.isError ? "error" : "muted";
@@ -204,9 +208,9 @@ function frame(lines: string[], width: number, theme: Theme): string[] {
 
 // --- Groups -------------------------------------------------------------------------------------
 // Each chat child renders its own part of a group, so pi's click routing (by child height) holds.
-// A child is a group "item" (tool row, or an assistant message that opens with collapsed
-// thinking), an item that "closes" the group (that thinking is followed by text), "skip" (renders
-// nothing, e.g. an assistant message with only tool calls), or a "boundary".
+// A child is a group "item" (tool row, or an assistant message that opens with thinking), an item
+// that "closes" the group (that thinking is followed by text), "skip" (renders nothing, e.g. an
+// assistant message with only tool calls), or a "boundary".
 
 type Kind = "item" | "closes" | "skip" | "boundary";
 
@@ -326,10 +330,13 @@ function groupLines(
   const first = neighbor(list, i, -1) !== "item";
   const last = kindOf(node) === "closes" || !["item", "closes"].includes(neighbor(list, i, 1));
   const lines: string[] = [];
-  // Open content gets a blank line above, and below unless the group ends (a spacer follows).
-  if (rowBody.length) rowBody = ["", ...rowBody, ...(last ? [] : [""])];
-  if (first && last && solo) {
-    lines.push("", `   ${solo}`, ...rowBody.map((l) => `       ${l}`));
+  const alone = first && last && solo;
+  // Open content hangs off a └ under the row's name (column 5), one space before it like the rows,
+  // and a blank line follows it unless the group ends (a spacer follows then).
+  rowBody = rowBody.map((l, j) => (j ? "  " : `${theme.fg("dim", "└")} `) + l);
+  if (rowBody.length && !last) rowBody.push("");
+  if (alone) {
+    lines.push("", `   ${solo}`, ...rowBody.map((l) => `   ${l}`)); // └ under the line's start
     node.clRowY = 1;
   } else {
     if (first) {
@@ -346,7 +353,7 @@ function groupLines(
     const rail = last ? " " : theme.fg("dim", "│");
     lines.push(
       `   ${theme.fg("dim", last ? "└" : "├")} ${row}`,
-      ...rowBody.map((l) => `   ${rail}   ${l}`),
+      ...rowBody.map((l) => `   ${rail} ${l}`),
     );
   }
   // Right margin matches the left indent of the row text.
@@ -377,7 +384,14 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
     theme.italic(theme.fg(color, name)) +
     // pi's truncation resets colors before the ellipsis, so it gets its own.
     ` ${theme.fg(color, truncateToWidth(target, Math.max(1, room), theme.fg(color, "…")))}` +
-    theme.fg(state === "error" ? "error" : "dim", tail);
+    theme
+      .fg(state === "error" ? "error" : "dim", tail)
+      // An edit's line counts in the diff's colors.
+      .replace(
+        /\+(\d+) -(\d+)/,
+        (_, added, removed) =>
+          `${theme.fg("toolDiffAdded", `+${added}`)} ${theme.fg("toolDiffRemoved", `-${removed}`)}${theme.getFgAnsi("dim")}`,
+      );
   return groupLines(t, row, body(t, theme, config), width, theme);
 }
 
