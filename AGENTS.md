@@ -6,7 +6,7 @@ The root `package.json` intentionally has no `pi` manifest: pi then auto-discove
 
 ## Adding an extension
 
-- Create `extensions/<name>/` with `index.ts`, `README.md`, `LICENSE` (copy from root), and a `package.json` modeled on `extensions/pi-header/package.json` (npm name `@hkandala/<name>`).
+- Create `extensions/<name>/` with `index.ts`, `README.md`, and a `package.json` modeled on `extensions/pi-header/package.json` (npm name `@hkandala/<name>`).
 - Add a row to the table in the root `README.md`.
 - Each extension README covers what it does, install, and configuration.
 

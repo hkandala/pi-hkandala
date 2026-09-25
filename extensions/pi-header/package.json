@@ -8,8 +8,7 @@
   "license": "MIT",
   "files": [
     "index.ts",
-    "README.md",
-    "LICENSE"
+    "README.md"
   ],
   "type": "module",
   "publishConfig": {

@@ -4,9 +4,10 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 
 ## Extensions
 
-| Extension                                   | Description                                      |
-| ------------------------------------------- | ------------------------------------------------ |
-| [pi-header](extensions/pi-header/README.md) | Minimal startup header with the official pi logo |
+| Extension                                   | Description                                           |
+| ------------------------------------------- | ----------------------------------------------------- |
+| [pi-header](extensions/pi-header/README.md) | Minimal startup header with the official pi logo      |
+| [pi-footer](extensions/pi-footer/README.md) | Minimal one-line footer that expands into a dashboard |
 
 ## Install
 
@@ -45,7 +46,6 @@ extensions/
     package.json      # standalone pi package, publishable to npm
     index.ts          # entry point
     README.md         # what it does + configuration
-    LICENSE
 ```
 
 See [AGENTS.md](AGENTS.md) for adding and publishing extensions.
