@@ -6,22 +6,22 @@ A minimal one-line footer for pi, inside a rounded prompt box, that expands into
 ╭── ⠋ Working ─────────────────────────────────────────────────────────────────────────────────────────╮
 │ fix the footer so the cache goes cold after compaction                                               │
 │                                                                                                      │
-│  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · ◔ 47k/200k · opus-5.5 · high │
+│  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · 󰪟 47k/200k · opus-5.5 · high │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 The box is pi's own editor (same keys, spinner, and autocomplete) drawn with rounded borders and the footer as its last row. Set `"promptEditor": "default"` to keep pi's editor and show the footer below it. The box replaces pi's editor, so it doesn't combine with other extensions that replace the editor (e.g. vim mode).
 
-| Piece                    | Shows                                                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------- |
-| folder                   | folder pi runs in                                                                     |
-| 󰊢 / 󰙅 repo               | repo name, when it differs from the folder (󰊢) or you are in a linked worktree (󰙅)    |
-| 󰘬 branch `󰁝2 󰁅1`         | git branch, commits to push / pull                                                    |
-| `+42 -7`                 | pending line changes vs HEAD, including untracked files                               |
-| `↑116 ↓29.6k (99% · 4m)` | session input / output tokens, cache hit rate and time left (see below)               |
-| `$1.24`                  | session cost, hidden at $0                                                            |
-| `◔ 47k/200k`             | context used / window, hidden at 0; the pie fills up, yellow above 75%, red above 90% |
-| `opus-5.5 · high`        | model and thinking level                                                              |
+| Piece                    | Shows                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| folder                   | folder pi runs in                                                                             |
+| 󰊢 / 󰙅 repo               | repo name, when it differs from the folder (󰊢) or you are in a linked worktree (󰙅)            |
+| 󰘬 branch `󰁝2 󰁅1`         | git branch, commits to push / pull                                                            |
+| `+42 -7`                 | pending line changes vs HEAD, including untracked files                                       |
+| `↑116 ↓29.6k (99% · 4m)` | session input / output tokens, cache hit rate and time left (see below)                       |
+| `$1.24`                  | session cost, hidden at $0                                                                    |
+| `󰪟 47k/200k`             | context used / window, hidden at 0; the pie fills in eighths, yellow above 75%, red above 90% |
+| `opus-5.5 · high`        | model and thinking level                                                                      |
 
 **Cache:** `(99% · 4m)` is the last response's cache hit rate (yellow below 90%) and the time until the prompt cache expires. Once it expires, you switch models, or the session is compacted, it shows `(cold · ~$0.46)` with `cold` in yellow: the next message re-bills the full context (the estimate appears when the model has pricing). The lifetime comes from the model (`promptCache`, honoring `PI_CACHE_RETENTION=long`), else pi's 5-minute default; refreshes from pi's `cacheWarming` setting extend it.
 

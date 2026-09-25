@@ -41,7 +41,12 @@ const ICON = {
   ahead: "\u{f005d}", // 󰁝 md-arrow-up-bold (commits to push)
   behind: "\u{f0045}", // 󰁅 md-arrow-down-bold (commits to pull)
 };
-const PIE = ["○", "◔", "◑", "◕", "●"];
+// Context pie in eighths: md-circle_outline, then md-circle_slice_1..8. Nerd Font glyphs, so they
+// match in size (Unicode's ○ ◔ ◑ ◕ ● mix fonts).
+const PIE = [
+  "\u{f0766}",
+  ...Array.from({ length: 8 }, (_, i) => String.fromCodePoint(0xf0a9e + i)),
+];
 const MAX_FILES = 5; // changes listed in the dashboard
 const DEFAULT_CACHE_TTL_S = 300; // pi's own default when a model declares no prompt-cache lifetime
 const MAX_UNTRACKED_BYTES = 1_000_000; // untracked files larger than this count as 0 lines
@@ -411,12 +416,11 @@ function render(
   const costPiece = s.cost > 0 ? dim(`$${s.cost.toFixed(2)}`) : undefined;
   const pct = ctxUsage?.percent ?? undefined;
   const window = ctxUsage?.contextWindow ?? model?.contextWindow ?? 0;
-  const ctxColor: Color =
-    pct === undefined ? "dim" : pct > 90 ? "error" : pct > 75 ? "warning" : "muted";
+  const ctxColor: Color = (pct ?? 0) > 90 ? "error" : (pct ?? 0) > 75 ? "warning" : "dim";
   const contextPiece = ctxUsage?.tokens
     ? paint(
         ctxColor,
-        `${PIE[Math.min(4, Math.round((pct ?? 0) / 25))]} ${fmt(ctxUsage.tokens)}/${fmt(window)}`,
+        `${PIE[Math.min(8, Math.round((pct ?? 0) / 12.5))]} ${fmt(ctxUsage.tokens)}/${fmt(window)}`,
       )
     : undefined;
   const level = pi.getThinkingLevel();
@@ -625,6 +629,7 @@ function render(
   blocks.push(session);
 
   for (const block of blocks) lines.push("", ...block);
+  lines.push(""); // matches the blank row above it
   return lines;
 }
 
