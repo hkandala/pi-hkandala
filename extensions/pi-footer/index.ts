@@ -1,16 +1,30 @@
 /**
- * pi-footer: minimal one-line footer; click it (fullscreen mode) or run /dashboard to expand.
+ * pi-footer: minimal one-line footer inside a rounded input box; click it (fullscreen mode)
+ * or run /dashboard to expand the dashboard below the box.
  *
- *    pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7    ↑116 ↓29.6k (99% · 4m) · $1.24 · ◔ 47k/200k · opus-5.5 · high
+ *   ╭── ⠋ Working ──────────────────────────────────────────────────────────────────────────────────────╮
+ *   │ prompt                                                                                             │
+ *   │                                                                                                    │
+ *   │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · ◔ 47k/200k · opus-5.5 · high │
+ *   ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  *
  * Narrow terminals drop whole sections: usage, cost, git, context. Folder and model always stay.
  * Config (optional): ~/.pi/agent/extensions/pi-footer.json
- *   { "style": "color" | "white", "iconColor": "accent", "gitStatusPollMins": 0.5, "gitFetchPollMins": 30 }
+ *   { "promptEditor": "box" | "default", "disableEffortColors": true, "style": "color" | "white",
+ *     "iconColor": "accent", "gitStatusPollMins": 0.5, "gitFetchPollMins": 30 }
+ *   promptEditor "default" keeps pi's editor with the footer below it; disableEffortColors false
+ *   lets the prompt border follow pi's thinking-level colors instead of staying gray;
  *   iconColor: a theme color name or "#rrggbb"; a poll of 0 disables it.
  */
 
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  KeybindingsManager,
+  Theme,
+} from "@earendil-works/pi-coding-agent";
+import { CustomEditor, getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -36,6 +50,8 @@ const MAX_UNTRACKED_FILES = 500;
 
 type Color = Parameters<Theme["fg"]>[0];
 type Config = {
+  promptEditor?: "box" | "default";
+  disableEffortColors?: boolean;
   style?: "color" | "white";
   iconColor?: string;
   gitStatusPollMins?: number;
@@ -612,8 +628,68 @@ function render(
   return lines;
 }
 
-type Node = { children?: Node[]; isShowingAutocomplete?: () => boolean };
-// ponytail: finds pi's editor by duck typing; if pi's layout changes the gap just disappears.
+type MouseEvent = { type: string; button: string; x: number; y: number; width: number };
+
+/**
+ * pi's editor drawn four columns narrower inside a rounded box, with the footer as its last row.
+ * ponytail: relies on pi's editor layout (top border, text rows, bottom border, autocomplete list).
+ */
+class BoxEditor extends CustomEditor {
+  footer: (width: number) => string;
+  onFooterClick: () => void;
+
+  constructor(
+    tui: TUI,
+    theme: EditorTheme,
+    keybindings: KeybindingsManager,
+    footer: (width: number) => string,
+    onFooterClick: () => void,
+  ) {
+    super(tui, theme, keybindings, { embedWorkingStatus: true });
+    this.footer = footer;
+    this.onFooterClick = onFooterClick;
+  }
+
+  // Text rows pi's editor rendered last frame (private in pi, but set on every render).
+  private get rows(): number {
+    return (this as unknown as { renderedVisibleLineCount: number }).renderedVisibleLineCount;
+  }
+
+  render(width: number): string[] {
+    if (width < 8) return super.render(width);
+    const inner = width - 4;
+    const lines = super.render(inner);
+    const bottom = this.rows + 1;
+    const b = (s: string) => this.borderColor(s);
+    const side = (line: string) => `${b("│")} ${line} ${b("│")}`;
+    const footer = truncateToWidth(this.footer(inner), inner, "…");
+    return [
+      b("╭─") + lines[0] + b("─╮"),
+      ...lines.slice(1, bottom).map(side),
+      side(" ".repeat(inner)),
+      side(footer + " ".repeat(Math.max(0, inner - visibleWidth(footer)))),
+      b("╰─") + lines[bottom] + b("─╯"),
+      ...lines.slice(bottom + 1).map((line) => `  ${line}  `), // autocomplete list, below the box
+    ];
+  }
+
+  // Map clicks back onto pi's editor: two columns for border + padding, two rows for the footer.
+  handleMouse(event: MouseEvent) {
+    if (event.width < 8) return super.handleMouse(event);
+    const shifted = { ...event, x: event.x - 2, width: event.width - 4 };
+    if (event.y <= this.rows) return super.handleMouse(shifted);
+    if (event.y === this.rows + 2 && event.type === "click" && event.button === "left") {
+      this.onFooterClick();
+      return { handled: true };
+    }
+    if (event.y <= this.rows + 2) return { handled: true, focus: true };
+    return super.handleMouse({ ...shifted, y: event.y - 2 });
+  }
+}
+
+type Node = { children?: Node[]; isShowingAutocomplete?: () => boolean; getText?: () => string };
+// ponytail: finds pi's editor by duck typing; if pi's layout changes, the autocomplete gap and
+// border pinning just stop applying.
 const findEditor = (node: Node): Node | undefined => {
   if (typeof node.isShowingAutocomplete === "function") return node;
   for (const child of node.children ?? []) {
@@ -622,6 +698,15 @@ const findEditor = (node: Node): Node | undefined => {
   }
   return undefined;
 };
+
+// ponytail: pi reassigns editor.borderColor on thinking-level changes; pin it with a no-op setter.
+const pinBorderColor = (editor: Node, theme: Theme) =>
+  Object.defineProperty(editor, "borderColor", {
+    configurable: true,
+    get: () => (s: string) =>
+      theme.fg(editor.getText?.().trimStart().startsWith("!") ? "bashMode" : "muted", s),
+    set: () => {},
+  });
 
 export default function (pi: ExtensionAPI) {
   const config = readConfig();
@@ -680,6 +765,8 @@ export default function (pi: ExtensionAPI) {
     timers = [];
     clearTimeout(debounce);
   };
+  const box = config.promptEditor !== "default";
+  let footerLine: (width: number) => string = () => "";
   const toggle = () => {
     expanded = !expanded;
     requestRender();
@@ -698,29 +785,42 @@ export default function (pi: ExtensionAPI) {
         dispose: unsubscribe,
         invalidate() {},
         // Mouse events only arrive in fullscreen TUI mode.
-        handleMouse(event: { type: string; button: string }) {
+        handleMouse(event: MouseEvent) {
           if (event.type !== "click" || event.button !== "left") return undefined;
           toggle();
           return { handled: true };
         },
         render: (width: number) => {
-          editor ??= findEditor(tui);
-          const lines = render(
-            pi,
-            ctx,
-            theme,
-            config,
-            expanded,
-            footerData.getGitBranch(),
-            g,
-            footerData.getExtensionStatuses(),
-            width,
-          );
-          // Keep a blank row between pi's autocomplete list (drawn under the editor) and the footer.
-          return editor?.isShowingAutocomplete?.() ? ["", ...lines] : lines;
+          if (!editor) {
+            editor = findEditor(tui);
+            if (editor && config.disableEffortColors !== false) pinBorderColor(editor, theme);
+          }
+          const draw = (w: number, open: boolean) =>
+            render(
+              pi,
+              ctx,
+              theme,
+              config,
+              open,
+              footerData.getGitBranch(),
+              g,
+              footerData.getExtensionStatuses(),
+              w,
+            );
+          footerLine = (w) => draw(w, false)[0];
+          // In box mode the collapsed line lives in the editor; the rest stays down here.
+          const lines = box ? draw(width, expanded).slice(1) : draw(width, expanded);
+          // Keep one blank row between pi's autocomplete list (drawn under the editor) and the
+          // footer; the dashboard already starts with one.
+          return lines[0] && editor?.isShowingAutocomplete?.() ? ["", ...lines] : lines;
         },
       };
     });
+    if (box)
+      ctx.ui.setEditorComponent(
+        (tui, theme, keybindings) =>
+          new BoxEditor(tui, theme, keybindings, (w) => footerLine(w), toggle),
+      );
     await refresh();
     timers.push(setInterval(() => requestRender(), 10_000)); // keeps the cache countdown current
     if (statusPollMs > 0) timers.push(setInterval(refresh, statusPollMs));

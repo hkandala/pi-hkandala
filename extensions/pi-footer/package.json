@@ -1,7 +1,7 @@
 {
   "name": "@hkandala/pi-footer",
   "version": "0.1.0",
-  "description": "Minimal one-line pi footer that expands into a dashboard",
+  "description": "Minimal one-line pi footer in a rounded prompt box that expands into a dashboard",
   "keywords": [
     "pi-package"
   ],

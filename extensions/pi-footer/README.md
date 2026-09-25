@@ -1,10 +1,16 @@
 # pi-footer
 
-A minimal one-line footer for pi that expands into a dashboard.
+A minimal one-line footer for pi, inside a rounded prompt box, that expands into a dashboard.
 
 ```
- pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7     ↑116 ↓29.6k (99% · 4m) · $1.24 · ◔ 47k/200k · opus-5.5 · high
+╭── ⠋ Working ─────────────────────────────────────────────────────────────────────────────────────────╮
+│ fix the footer so the cache goes cold after compaction                                               │
+│                                                                                                      │
+│  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · ◔ 47k/200k · opus-5.5 · high │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
+
+The box is pi's own editor (same keys, spinner, and autocomplete) drawn with rounded borders and the footer as its last row. Set `"promptEditor": "default"` to keep pi's editor and show the footer below it. The box replaces pi's editor, so it doesn't combine with other extensions that replace the editor (e.g. vim mode).
 
 | Piece                    | Shows                                                                                 |
 | ------------------------ | ------------------------------------------------------------------------------------- |
@@ -19,11 +25,11 @@ A minimal one-line footer for pi that expands into a dashboard.
 
 **Cache:** `(99% · 4m)` is the last response's cache hit rate (yellow below 90%) and the time until the prompt cache expires. Once it expires, you switch models, or the session is compacted, it shows `(cold · ~$0.46)` with `cold` in yellow: the next message re-bills the full context (the estimate appears when the model has pricing). The lifetime comes from the model (`promptCache`, honoring `PI_CACHE_RETENTION=long`), else pi's 5-minute default; refreshes from pi's `cacheWarming` setting extend it.
 
-On narrow terminals whole sections drop in this order: usage, cost, git, context. Folder and model always stay. Statuses from other extensions appear right-aligned on a second line. Yellow and red use the theme's `warning` and `error` colors.
+On narrow terminals whole sections drop in this order: usage, cost, git, context. Folder and model always stay. Statuses from other extensions appear right-aligned on their own line below. Yellow and red use the theme's `warning` and `error` colors.
 
 ## Dashboard
 
-Click the footer (fullscreen TUI mode) or run `/dashboard` to expand or collapse it:
+Click the footer (fullscreen TUI mode) or run `/dashboard` to expand or collapse it. It opens below the box:
 
 ```
   path       ~/code/pi-hkandala
@@ -63,12 +69,21 @@ Or from a checkout of [pi-hkandala](../../README.md): `pi install <checkout>/ext
 Optional file: `~/.pi/agent/extensions/pi-footer.json`
 
 ```json
-{ "style": "color", "iconColor": "accent", "gitStatusPollMins": 0.5, "gitFetchPollMins": 30 }
+{
+  "promptEditor": "box",
+  "disableEffortColors": true,
+  "style": "color",
+  "iconColor": "accent",
+  "gitStatusPollMins": 0.5,
+  "gitFetchPollMins": 30
+}
 ```
 
-| Key                 | Values                          | Default    | Notes                                                                                    |
-| ------------------- | ------------------------------- | ---------- | ---------------------------------------------------------------------------------------- |
-| `style`             | `"color"`, `"white"`            | `"color"`  | `white` draws everything in the theme's text color                                       |
-| `iconColor`         | theme color name or `"#rrggbb"` | `"accent"` | color of the folder, repo, and branch icons; e.g. `"border"`, `"mdHeading"`, `"#F05032"` |
-| `gitStatusPollMins` | minutes                         | `0.5`      | line-change poll; `0` disables                                                           |
-| `gitFetchPollMins`  | minutes                         | `30`       | `git fetch` poll; `0` disables                                                           |
+| Key                   | Values                          | Default    | Notes                                                                                                         |
+| --------------------- | ------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
+| `promptEditor`        | `"box"`, `"default"`            | `"box"`    | `default` keeps pi's editor with the footer below it                                                          |
+| `disableEffortColors` | `true`, `false`                 | `true`     | keep the prompt border gray (theme `muted`) instead of pi's thinking-level colors (bash mode still colors it) |
+| `style`               | `"color"`, `"white"`            | `"color"`  | `white` draws everything in the theme's text color                                                            |
+| `iconColor`           | theme color name or `"#rrggbb"` | `"accent"` | color of the folder, repo, and branch icons; e.g. `"border"`, `"mdHeading"`, `"#F05032"`                      |
+| `gitStatusPollMins`   | minutes                         | `0.5`      | line-change poll; `0` disables                                                                                |
+| `gitFetchPollMins`    | minutes                         | `30`       | `git fetch` poll; `0` disables                                                                                |

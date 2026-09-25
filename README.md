@@ -4,10 +4,10 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 
 ## Extensions
 
-| Extension                                   | Description                                           |
-| ------------------------------------------- | ----------------------------------------------------- |
-| [pi-header](extensions/pi-header/README.md) | Minimal startup header with the official pi logo      |
-| [pi-footer](extensions/pi-footer/README.md) | Minimal one-line footer that expands into a dashboard |
+| Extension                                   | Description                                                                   |
+| ------------------------------------------- | ----------------------------------------------------------------------------- |
+| [pi-header](extensions/pi-header/README.md) | Minimal startup header with the official pi logo                              |
+| [pi-footer](extensions/pi-footer/README.md) | Minimal one-line footer in a rounded prompt box that expands into a dashboard |
 
 ## Install
 
