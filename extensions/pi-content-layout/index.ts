@@ -153,7 +153,7 @@ function readConfig(): Config {
 const STAMPS: Stamps[] = ["off", "relative", "absolute"];
 let stamps: Stamps = "off";
 let twelveHour = false;
-/** Columns text gives up for the time column: its widest time + 1 ("11mo ago", "Sep 24 14:02 pm"). */
+/** Columns text gives up for the time column: its widest time + 1 ("11mo ago", "Sep 24 12:02 pm"). */
 const reserve = () => (stamps === "off" ? 0 : stamps === "relative" ? 9 : twelveHour ? 16 : 13);
 
 /** Saves toggles into the config file, keeping any other keys. */
