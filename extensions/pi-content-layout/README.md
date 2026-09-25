@@ -3,9 +3,9 @@
 A compact, minimal transcript for pi: tool calls and thinking collapse into a summarized tree, and user messages sit in a rounded box.
 
 ```
-╭───────────────────────────────────────────────────────────────────────────────╮
-│ add a sub function to math.js and run the tests                               │
-╰───────────────────────────────────────────────────────────────────────────────╯
+ ╭─────────────────────────────────────────────────────────────────────────────╮
+ │ add a sub function to math.js and run the tests                             │
+ ╰─────────────────────────────────────────────────────────────────────────────╯
 
    Read 2 files, ran 1 command
    ├ thought for 4s
@@ -32,7 +32,7 @@ A compact, minimal transcript for pi: tool calls and thinking collapse into a su
 - **Tool rows:** name, target (file, command, or pattern), and result (line or match counts, `+added -removed` in the diff's colors, duration from 1s up; with [timestamps](#timestamps) on, in their column). Long targets shorten so the result stays visible. Running calls show `running Xs` and failures are red.
 - **Thinking:** a tree row, `thinking…` while it streams, then `thought for Xs`: `thought briefly` under a second, and `thought for some time` for messages loaded from history, since pi saves no thinking time. Thinking with no tool calls around it is a single `Thought for Xs` line.
 - **Assistant text:** every piece starts with a `●`.
-- **User messages:** in a rounded border matching [pi-footer](../pi-footer/README.md)'s prompt box, without pi's background.
+- **User messages:** in a rounded border like [pi-footer](../pi-footer/README.md)'s prompt box, without pi's background, set in a column on each side so the text lines up with assistant text.
 - **Special messages:** compaction and branch summaries, skill invocations, and extension messages pi draws itself, in a dashed rounded border with their label in the top edge (`╭┄┄ compaction ┄┄╮`). Click a summary or skill to open it.
 - **User bash and info panels:** `!cmd` runs and panels between horizontal rules, pi's (`/changelog`, `/hotkeys`, update notices) or an extension's (pi-header's `/loaded`), read like assistant text, a `●` and column 3, without pi's horizontal rules. The `●` is white for assistant text, pi's bash green for `!cmd` (dim for `!!cmd`, which stays out of the context), and accent for panels, like their heading.
 
@@ -53,9 +53,9 @@ pi has no public API for restyling its own messages, so this extension patches t
 `ctrl+shift+t` cycles timestamps: off → relative → absolute → off. The mode is saved to the config file, so it carries over to future sessions. Times sit in a dim column on the right, each traced to its line by a faint dotted leader (boxed messages carry theirs in the top edge):
 
 ```
-╭─────────────────────────────────────────────────────────── 14:02:31 ─╮
-│ add a sub function to math.js and run the tests                      │
-╰──────────────────────────────────────────────────────────────────────╯
+ ╭───────────────────────────────────────────────────────── 14:02:31 ─╮
+ │ add a sub function to math.js and run the tests                    │
+ ╰────────────────────────────────────────────────────────────────────╯
 
    Read 2 files, ran 1 command  · · · · · · · · · · · · · ·  14:02:33
    ├ read  math.js · 3 lines  · · · · · · · · · · · · · · · · · ≤0.1s

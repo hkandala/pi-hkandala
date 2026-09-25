@@ -432,9 +432,10 @@ function frame(
   theme: Theme,
   title?: string,
   stamp = "",
+  margin = "",
 ) {
-  return memo(node, "clFrame", [lines, width, theme, title, stamp], () =>
-    boxed(lines, width, theme, title, stamp),
+  return memo(node, "clFrame", [lines, width, theme, title, stamp, margin], () =>
+    boxed(lines, width - 2 * margin.length, theme, title, stamp).map((l) => margin + l + margin),
   );
 }
 function boxed(lines: string[], width: number, theme: Theme, title?: string, stamp = "") {
@@ -825,8 +826,8 @@ export default function (pi: ExtensionAPI) {
     );
 
     /** A box's content without its background and padding, to fit a frame. */
-    const inner = (box: Proto, width: number): string[] =>
-      Container.prototype.render.call(box, Math.max(1, width - 4));
+    const inner = (box: Proto, width: number, margin = 4): string[] =>
+      Container.prototype.render.call(box, Math.max(1, width - margin));
 
     // User messages: take the text out of pi's background box and draw a rounded border instead.
     // Done at render time so messages created before the extension loaded are covered too.
@@ -841,7 +842,9 @@ export default function (pi: ExtensionAPI) {
             for (const child of box.children) this.addChild(child);
           }
           const stamp = pairedStamp(this);
-          const lines = [...frame(this, inner(this, width), width, theme(), undefined, stamp)];
+          // A column in on each side, so the text lines up with assistant text.
+          const body = inner(this, width, 6);
+          const lines = [...frame(this, body, width, theme(), undefined, stamp, " ")];
           // pi's prompt marks stay at column 0 of the first and last lines, as pi places them:
           // terminals like Ghostty start a fresh line at the opening mark when it isn't.
           lines[0] = mark("A") + lines[0];
