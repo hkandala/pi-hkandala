@@ -5,7 +5,7 @@
  *   ╭── ⠋ Working ──────────────────────────────────────────────────────────────────────────────────────╮
  *   │ prompt                                                                                             │
  *   │                                                                                                    │
- *   │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · ◔ 47k/200k · opus-5.5 · high │
+ *   │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · 󰪟 47k/200k · opus-5.5 · high │
  *   ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
  *
  * Narrow terminals drop whole sections: usage, cost, git, context. Folder and model always stay.
@@ -50,8 +50,7 @@ const PIE = [
 const MAX_FILES = 5; // changes listed in the dashboard
 const DEFAULT_CACHE_TTL_S = 300; // pi's own default when a model declares no prompt-cache lifetime
 const MAX_UNTRACKED_BYTES = 1_000_000; // untracked files larger than this count as 0 lines
-// ponytail: line counts for the first 500 untracked files only; the rest count as 0.
-const MAX_UNTRACKED_FILES = 500;
+const MAX_UNTRACKED_FILES = 500; // untracked files counted; the rest count as 0 lines
 
 type Color = Parameters<Theme["fg"]>[0];
 type Config = {
@@ -208,7 +207,7 @@ function sessionStats(ctx: ExtensionContext) {
       s.toolCalls += e.message.content.filter((c) => c?.type === "toolCall").length;
     const prompt = usage.input + usage.cacheRead + usage.cacheWrite;
     if (prompt > 0) s.cacheHit = (usage.cacheRead / prompt) * 100;
-    // ponytail: t/s spans message start → saved, so it includes time to first token.
+    // Tokens per second from message start to saved, so it includes the time to first token.
     const ms = ts !== undefined && e.message.timestamp ? ts - e.message.timestamp : 0;
     if (ms > 0 && usage.output > 0) {
       s.lastSpeed = usage.output / (ms / 1000);
@@ -291,7 +290,7 @@ async function readGit(cwd: string): Promise<Git> {
     else if (line.startsWith("? "))
       untracked.push({ status: "?", path: line.slice(2), added: 0, removed: 0 });
     else if (/^[12u] /.test(line)) {
-      // ponytail: renames match numstat by new path only, so their line counts may read 0.
+      // Renames match numstat by new path only, so their line counts may read 0.
       const path = f
         .slice(f[0] === "1" ? 8 : f[0] === "2" ? 9 : 10)
         .join(" ")
@@ -654,7 +653,7 @@ type MouseEvent = { type: string; button: string; x: number; y: number; width: n
 
 /**
  * pi's editor drawn four columns narrower inside a rounded box, with the footer as its last row.
- * ponytail: relies on pi's editor layout (top border, text rows, bottom border, autocomplete list).
+ * Assumes pi's editor layout: top border, text rows, bottom border, then the autocomplete list.
  */
 class BoxEditor extends CustomEditor {
   footer: (width: number) => string;
@@ -710,8 +709,8 @@ class BoxEditor extends CustomEditor {
 }
 
 type Node = { children?: Node[]; isShowingAutocomplete?: () => boolean; getText?: () => string };
-// ponytail: finds pi's editor by duck typing; if pi's layout changes, the autocomplete gap and
-// border pinning just stop applying.
+// Found by duck typing; if pi's layout changes, the autocomplete gap and border pinning just stop
+// applying.
 const findEditor = (node: Node): Node | undefined => {
   if (typeof node.isShowingAutocomplete === "function") return node;
   for (const child of node.children ?? []) {
@@ -721,7 +720,7 @@ const findEditor = (node: Node): Node | undefined => {
   return undefined;
 };
 
-// ponytail: pi reassigns editor.borderColor on thinking-level changes; pin it with a no-op setter.
+// pi reassigns editor.borderColor on thinking-level changes; a no-op setter pins it.
 const pinBorderColor = (editor: Node, theme: Theme) =>
   Object.defineProperty(editor, "borderColor", {
     configurable: true,

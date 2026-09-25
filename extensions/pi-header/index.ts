@@ -221,8 +221,8 @@ const parentOf = (node: Node, target: Node): Node | undefined => {
 /**
  * pi posts status lines ("Thinking level: xhigh", "Tool output: collapsed", …) to the chat as a
  * Spacer + Text pair. Before the first message they would sit wedged under the header, so drop them
- * there; errors and warnings (same shape) stay. Returns false once the conversation has started.
- * ponytail: relies on Text's private `text` field; a no-op if it changes.
+ * there; errors and warnings (same shape) stay, told apart by Text's private `text` field.
+ * Returns false once the conversation has started.
  */
 function dropEarlyStatuses(below: Node[]): boolean {
   const chat = below[1] as Container | undefined;
@@ -237,10 +237,7 @@ function dropEarlyStatuses(below: Node[]): boolean {
   return i === c.length;
 }
 
-/**
- * What follows the header in pi's document: the loaded resources, then the chat.
- * ponytail: relies on pi's layout (document = [header, loaded resources, chat]).
- */
+/** What follows the header in pi's document (header, loaded resources, chat). */
 function containersBelow(tui: Node, header: Node): Node[] {
   const headerContainer = parentOf(tui, header);
   const document = headerContainer && parentOf(tui, headerContainer);
@@ -330,7 +327,7 @@ export default function (pi: ExtensionAPI) {
       return header;
     });
 
-    // ponytail: one re-read when extensions resolve; also picks up skills added by resources_discover.
+    // Re-read once extensions resolve, which also picks up skills added by resources_discover.
     resolveExtensions(ctx)
       .then((extensions) => {
         res = readResources(pi, ctx, extensions);
@@ -339,9 +336,9 @@ export default function (pi: ExtensionAPI) {
       .catch(() => {}); // session was replaced meanwhile
   });
 
-  // Full paths, printed into the transcript like /hotkeys. Saved in the session (the only way into
-  // the transcript) but never sent to the model, and, like /hotkeys, gone from a resumed or
-  // reloaded session: the renderer skips entries from before this extension loaded.
+  // Full paths, printed like /hotkeys. A session entry is an extension's only way into the
+  // transcript; it is never sent to the model, and the renderer skips entries from before this load,
+  // so like /hotkeys it is gone after a restart or /reload.
   const loadedAt = Date.now();
   pi.registerCommand("loaded", {
     description:

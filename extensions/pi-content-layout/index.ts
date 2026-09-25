@@ -14,7 +14,7 @@
  * Config (optional): ~/.pi/agent/extensions/pi-content-layout.json
  *   { "diffs": true }
  *
- * ponytail: pi has no public API for restyling its own tool rows or messages, so this patches
+ * pi has no public API for restyling its own tool rows or messages, so this patches
  * methods of pi's exported components (restored on shutdown, and falling back to pi's own on any
  * error). It may need updates when pi's components change, and it conflicts with other extensions
  * that patch the same components.
@@ -194,7 +194,7 @@ function describe(t: Tool): [target: string, result: string] {
   }
   if (t.toolName === "write") return [target, plural(lineCount(str(a.content)), "line")];
   if (state === "running") return [target, ""];
-  // ponytail: counts output lines, so pi's truncation notes count too.
+  // Counts output lines, so pi's truncation notes count too.
   switch (t.toolName) {
     case "read":
       return [target, plural(lineCount(out), "line")];
@@ -308,7 +308,7 @@ function kindOf(node: unknown): Kind {
 
 /**
  * pi's chat container: the third in its document (header, loaded resources, chat), which is the
- * first child of the TUI root. ponytail: assumes pi's layout.
+ * first child of the TUI root.
  */
 let chat: Proto | undefined;
 function parentOf(node: Node, target: Node, depth = 4): Node | undefined {
@@ -674,7 +674,7 @@ export default function (pi: ExtensionAPI) {
     // "thought for Xs", or "thought briefly" under a second. Timed from the message's start, since
     // some providers deliver thinking in one burst. pi saves no thinking time, so messages loaded
     // from history show "thought for some time".
-    // ponytail: one label per message, and ctrl+t only toggles messages that already exist.
+    // One label per message; ctrl+t only toggles messages that already exist.
     patch(
       assistant,
       "updateContent",
