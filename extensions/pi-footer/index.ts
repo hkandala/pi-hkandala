@@ -1,7 +1,7 @@
 /**
  * pi-footer: minimal one-line footer; click it (fullscreen mode) or run /dashboard to expand.
  *
- *    pi-hkandala · 󰘬 master ⇡2 ⇣1 · +42 -7       ↑116 ↓29.6k (99%) · $1.24 · ◔ 47k/200k · opus-5.5 · high
+ *    pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7    ↑116 ↓29.6k (99% · 4m) · $1.24 · ◔ 47k/200k · opus-5.5 · high
  *
  * Narrow terminals drop whole sections: usage, cost, git, context. Folder and model always stay.
  * Config (optional): ~/.pi/agent/extensions/pi-footer.json
@@ -24,9 +24,12 @@ const ICON = {
   repo: "\u{f02a2}", // 󰊢 md-git
   worktree: "\u{f0645}", // 󰙅 md-file-tree
   branch: "\u{f062c}", // 󰘬 md-source-branch
+  ahead: "\u{f005d}", // 󰁝 md-arrow-up-bold (commits to push)
+  behind: "\u{f0045}", // 󰁅 md-arrow-down-bold (commits to pull)
 };
 const PIE = ["○", "◔", "◑", "◕", "●"];
 const MAX_FILES = 5; // changes listed in the dashboard
+const DEFAULT_CACHE_TTL_S = 300; // pi's own default when a model declares no prompt-cache lifetime
 const MAX_UNTRACKED_BYTES = 1_000_000; // untracked files larger than this count as 0 lines
 // ponytail: line counts for the first 500 untracked files only; the rest count as 0.
 const MAX_UNTRACKED_FILES = 500;
@@ -47,9 +50,21 @@ type Usage = {
 };
 type Entry = {
   type: string;
+  kind?: string; // "cache_warm" on usage entries written by pi's cache warming
   timestamp?: string;
   usage?: Usage;
-  message?: { role: string; usage?: Usage; timestamp?: number; content?: unknown };
+  message?: {
+    role: string;
+    usage?: Usage;
+    timestamp?: number;
+    content?: unknown;
+    provider?: string;
+    model?: string;
+  };
+};
+type CacheModel = {
+  cost?: { cacheRead: number; cacheWrite: number }; // $ per million tokens
+  promptCache?: { short?: number; long?: number }; // lifetimes in seconds
 };
 type FileChange = { status: string; path: string; added: number; removed: number };
 type Git = {
@@ -127,6 +142,9 @@ function sessionStats(ctx: ExtensionContext) {
     streamOutput: 0,
     workingMs: 0,
     startedAt: undefined as number | undefined,
+    cachedAt: undefined as number | undefined, // last response or warm refresh that used the cache
+    lastCached: false, // last response read or wrote the prompt cache
+    lastModel: undefined as string | undefined, // provider/model of the last response
   };
   let runStart: number | undefined;
   let runEnd = 0;
@@ -154,7 +172,11 @@ function sessionStats(ctx: ExtensionContext) {
     s.cacheRead += usage.cacheRead;
     s.cacheWrite += usage.cacheWrite;
     s.cost += usage.cost?.total ?? 0;
+    if (e.type === "usage" && e.kind === "cache_warm") s.cachedAt = ts ?? s.cachedAt; // refresh extends the cache
     if (e.message?.role !== "assistant") continue;
+    s.lastCached = usage.cacheRead + usage.cacheWrite > 0;
+    if (s.lastCached) s.cachedAt = ts ?? s.cachedAt;
+    s.lastModel = `${e.message.provider}/${e.message.model}`;
     s.responses++;
     if (Array.isArray(e.message.content))
       s.toolCalls += e.message.content.filter((c) => c?.type === "toolCall").length;
@@ -318,7 +340,10 @@ function render(
       g.worktree || (repoName && repoName !== folder)
         ? `${icon(g.worktree ? ICON.worktree : ICON.repo)} ${paint("text", repoName ?? "")}${dot}`
         : "";
-    const sync = [g.ahead ? `⇡${g.ahead}` : "", g.behind ? `⇣${g.behind}` : ""]
+    const sync = [
+      g.ahead ? `${ICON.ahead}${g.ahead}` : "",
+      g.behind ? `${ICON.behind}${g.behind}` : "",
+    ]
       .filter(Boolean)
       .join(" ");
     const diff = [
@@ -330,17 +355,41 @@ function render(
       (sync ? ` ${dim(sync)}` : "") +
       (diff.length ? dot + diff.join(" ") : "");
   }
+  // Prompt cache: alive for its lifetime after the last cached response (or warm refresh);
+  // cold once that passes or the model changed, so the next message re-bills the full context.
+  const model = ctx.model;
+  const cacheModel = (model ?? {}) as CacheModel;
+  const ctxUsage = ctx.getContextUsage();
+  const ttlMs =
+    (cacheModel.promptCache?.[process.env.PI_CACHE_RETENTION === "long" ? "long" : "short"] ??
+      DEFAULT_CACHE_TTL_S) * 1000;
+  const cacheAge = s.cachedAt !== undefined ? Date.now() - s.cachedAt : 0;
+  const expired = cacheAge > ttlMs;
+  const modelChanged = !!model && !!s.lastModel && s.lastModel !== `${model.provider}/${model.id}`;
+  const cold = s.lastCached && (expired || modelChanged);
+  const perToken = (price = 0) => ((ctxUsage?.tokens ?? 0) * price) / 1e6;
+  const coldExtra = perToken(
+    (cacheModel.cost?.cacheWrite ?? 0) - (cacheModel.cost?.cacheRead ?? 0),
+  );
+  const cacheState = !s.lastCached
+    ? undefined
+    : cold
+      ? paint("warning", "cold") + (coldExtra >= 0.01 ? dim(` · ~$${coldExtra.toFixed(2)}`) : "")
+      : dim(`· ${duration(ttlMs - cacheAge)}`);
+  const hit =
+    s.cacheHit !== undefined && !cold
+      ? paint(s.cacheHit < 90 ? "warning" : "dim", `${Math.round(s.cacheHit)}%`)
+      : undefined;
   const usagePiece =
     s.input || s.output
       ? dim(`↑${fmt(s.input)} ↓${fmt(s.output)}`) +
-        (s.cacheHit !== undefined
-          ? ` ${paint(s.cacheHit < 75 ? "error" : s.cacheHit < 90 ? "warning" : "dim", `(${Math.round(s.cacheHit)}%)`)}`
+        (hit || cacheState
+          ? ` ${dim("(")}${[hit, cacheState].filter(Boolean).join(" ")}${dim(")")}`
           : "")
       : undefined;
   const costPiece = s.cost > 0 ? dim(`$${s.cost.toFixed(2)}`) : undefined;
-  const ctxUsage = ctx.getContextUsage();
   const pct = ctxUsage?.percent ?? undefined;
-  const window = ctxUsage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
+  const window = ctxUsage?.contextWindow ?? model?.contextWindow ?? 0;
   const ctxColor: Color =
     pct === undefined ? "dim" : pct > 90 ? "error" : pct > 75 ? "warning" : "muted";
   const contextPiece = ctxUsage?.tokens
@@ -349,7 +398,6 @@ function render(
         `${PIE[Math.min(4, Math.round((pct ?? 0) / 25))]} ${fmt(ctxUsage.tokens)}/${fmt(window)}`,
       )
     : undefined;
-  const model = ctx.model;
   const level = pi.getThinkingLevel();
   const levelColor = `thinking${level[0].toUpperCase()}${level.slice(1)}` as Color;
   const modelPiece =
@@ -493,7 +541,6 @@ function render(
           `↑${fmt(s.input)} input`,
           `↓${fmt(s.output)} output`,
           `cache ${fmt(s.cacheRead)} read, ${fmt(s.cacheWrite)} write`,
-          s.cacheHit !== undefined ? `last hit ${Math.round(s.cacheHit)}%` : "",
           s.cost > 0 ? `$${s.cost.toFixed(2)}` : "",
         ]
           .filter(Boolean)
@@ -501,6 +548,24 @@ function render(
           .join(dot),
       ),
     );
+  if (s.lastCached) {
+    const next = perToken(cold ? cacheModel.cost?.cacheWrite : cacheModel.cost?.cacheRead);
+    brain.push(
+      row(
+        "cache",
+        [
+          s.cacheHit !== undefined ? `${Math.round(s.cacheHit)}% last hit` : "",
+          cold
+            ? `cold${expired ? ` · expired ${duration(cacheAge - ttlMs)} ago` : ""}`
+            : `expires in ${duration(ttlMs - cacheAge)}`,
+          next >= 0.01 ? `next message ~$${next.toFixed(2)}` : "",
+        ]
+          .filter(Boolean)
+          .map(val)
+          .join(dot),
+      ),
+    );
+  }
   if (s.lastSpeed !== undefined)
     brain.push(
       row(
@@ -652,6 +717,7 @@ export default function (pi: ExtensionAPI) {
       };
     });
     await refresh();
+    timers.push(setInterval(() => requestRender(), 10_000)); // keeps the cache countdown current
     if (statusPollMs > 0) timers.push(setInterval(refresh, statusPollMs));
     if (fetchPollMs > 0) {
       timers.push(setInterval(gitFetch, fetchPollMs));

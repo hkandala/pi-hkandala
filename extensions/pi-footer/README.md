@@ -3,19 +3,21 @@
 A minimal one-line footer for pi that expands into a dashboard.
 
 ```
- pi-hkandala · 󰘬 master ⇡2 ⇣1 · +42 -7          ↑116 ↓29.6k (99%) · $1.24 · ◔ 47k/200k · opus-5.5 · high
+ pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7     ↑116 ↓29.6k (99% · 4m) · $1.24 · ◔ 47k/200k · opus-5.5 · high
 ```
 
-| Piece               | Shows                                                                                           |
-| ------------------- | ----------------------------------------------------------------------------------------------- |
-| folder              | folder pi runs in                                                                               |
-| 󰊢 / 󰙅 repo          | repo name, when it differs from the folder (󰊢) or you are in a linked worktree (󰙅)              |
-| 󰘬 branch `⇡2 ⇣1`    | git branch, commits to push / pull                                                              |
-| `+42 -7`            | pending line changes vs HEAD, including untracked files                                         |
-| `↑116 ↓29.6k (99%)` | session input / output tokens, last response's cache hit rate (yellow below 90%, red below 75%) |
-| `$1.24`             | session cost, hidden at $0                                                                      |
-| `◔ 47k/200k`        | context used / window, hidden at 0; the pie fills up, yellow above 75%, red above 90%           |
-| `opus-5.5 · high`   | model and thinking level                                                                        |
+| Piece                    | Shows                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| folder                   | folder pi runs in                                                                     |
+| 󰊢 / 󰙅 repo               | repo name, when it differs from the folder (󰊢) or you are in a linked worktree (󰙅)    |
+| 󰘬 branch `󰁝2 󰁅1`         | git branch, commits to push / pull                                                    |
+| `+42 -7`                 | pending line changes vs HEAD, including untracked files                               |
+| `↑116 ↓29.6k (99% · 4m)` | session input / output tokens, cache hit rate and time left (see below)               |
+| `$1.24`                  | session cost, hidden at $0                                                            |
+| `◔ 47k/200k`             | context used / window, hidden at 0; the pie fills up, yellow above 75%, red above 90% |
+| `opus-5.5 · high`        | model and thinking level                                                              |
+
+**Cache:** `(99% · 4m)` is the last response's cache hit rate (yellow below 90%) and the time until the prompt cache expires. Once it expires or you switch models it shows `(cold · ~$0.46)` with `cold` in yellow: the next message re-bills the full context (the estimate appears when the model has pricing). The lifetime comes from the model (`promptCache`, honoring `PI_CACHE_RETENTION=long`), else pi's 5-minute default; refreshes from pi's `cacheWarming` setting extend it.
 
 On narrow terminals whole sections drop in this order: usage, cost, git, context. Folder and model always stay. Statuses from other extensions appear right-aligned on a second line. Yellow and red use the theme's `warning` and `error` colors.
 
@@ -36,7 +38,8 @@ Click the footer (fullscreen TUI mode) or run `/dashboard` to expand or collapse
 
   model      anthropic/claude-opus-5-5 · thinking high
   context    47k / 200k (23%) · compacted 2×
-  tokens     ↑116 input · ↓29.6k output · cache 2.7M read, 249k write · last hit 99%
+  tokens     ↑116 input · ↓29.6k output · cache 2.7M read, 249k write · $1.24
+  cache      99% last hit · expires in 4m · next message ~$0.05
   speed      58 t/s last · 61 t/s avg
 
   session    fix footer · 12 user · 51 assistant · 87 tool calls
