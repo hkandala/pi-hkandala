@@ -1,7 +1,8 @@
 /**
  * pi-header: minimal startup header with the official pi logo.
  * Collapsed shows resource counts; ctrl+o expands the lists; /loaded prints full paths.
- * Clicking the logo (fullscreen TUI mode) toggles color/white and saves the choice.
+ * Clicking the logo (fullscreen TUI mode) toggles color/white and saves the choice; clicking the
+ * text expands or collapses the header, like ctrl+o.
  * Status lines pi posts before the first message are hidden so nothing sits under the header.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-header.json  →  { "logo": "color" | "white" }
@@ -265,6 +266,7 @@ export default function (pi: ExtensionAPI) {
       }).getQuietStartup();
     res = readResources(pi, ctx, []);
     let expanded = false;
+    let shown: string[] = []; // the last rendered lines, to tell text rows from blank ones
     let requestRender = () => {};
     // Until the first message (resumed sessions start with their history).
     let fresh = !ctx.sessionManager.getEntries().some((e) => e.type === "message");
@@ -280,18 +282,21 @@ export default function (pi: ExtensionAPI) {
         handleMouse(event: { type: string; button: string; x: number; y: number }) {
           if (event.type !== "click" || event.button !== "left") return undefined;
           const top = quiet ? ROWS : ROWS - 1;
-          if (event.y < top || event.y >= top + LOGO.length) return undefined;
-          if (event.x >= renderLogo(white).column) return undefined;
-          white = !white;
-          saveLogo(white);
+          const onLogo = event.y >= top && event.y < top + LOGO.length;
+          if (onLogo && event.x < renderLogo(white).column) {
+            white = !white;
+            saveLogo(white);
+          } else if (visibleWidth(shown[event.y] ?? "")) expanded = !expanded;
+          else return undefined; // the blank rows around it
           return { handled: true };
         },
         render: (width: number) => {
           // The header renders before the chat, so dropped lines never reach the screen.
           if (fresh) fresh = dropEarlyStatuses(tui, header);
-          return render(ctx.ui.theme, res, expanded, white, quiet, width).map((l) =>
+          shown = render(ctx.ui.theme, res, expanded, white, quiet, width).map((l) =>
             truncateToWidth(l, width),
           );
+          return shown;
         },
       };
       return header;

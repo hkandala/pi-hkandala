@@ -12,6 +12,7 @@ A minimal startup header for pi with the official pi logo.
 - **Collapsed** (default): shows resource counts.
 - **`ctrl+o`**: expands to list context files, skills, prompts, extensions, and themes by name.
 - **Click the logo**: toggles between color and white. The choice is saved to the config file below, so it carries over to future sessions. Requires pi's fullscreen TUI mode (`"tuiMode": "fullscreen"`); in regular mode the terminal owns the mouse.
+- **Click the text**: expands or collapses the header, like ctrl+o (fullscreen mode too).
 - **`/loaded`**: prints every loaded resource with its full path into the transcript (like `/hotkeys`). Never sent to the model, and gone after a restart or `/reload`, like `/hotkeys`.
 
 Status lines pi would post under the header before your first message (e.g. `Thinking level: xhigh`, `TUI mode: fullscreen`, `Tool output: expanded`) are hidden, so nothing sits between the header and the chat. Errors and warnings still show.
