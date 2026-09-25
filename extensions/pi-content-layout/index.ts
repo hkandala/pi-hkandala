@@ -10,11 +10,13 @@
  *   summaries, skills, and extension messages in a dashed one, labeled in its top edge.
  * - User bash (!cmd) and info panels (pi's or extensions') read like assistant text, without rules.
  * - Each piece of assistant text starts with a ● bullet; summary lines align with its text.
+ * - ctrl+shift+o collapses or expands all groups to their summary line (saved); click a summary
+ *   line for its own group.
  * - ctrl+shift+t cycles timestamps (off, relative, absolute; saved): when messages, groups, and
  *   user bash happened, and how long tool calls took, in a column on the right.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-content-layout.json
- *   { "diffs": true, "timestamps": "off" | "relative" | "absolute" }
+ *   { "diffs": true, "timestamps": "off" | "relative" | "absolute", "collapseGroups": false }
  *
  * pi has no public API for restyling its own tool rows or messages, so this patches
  * methods of pi's exported components (restored on shutdown, and falling back to pi's own on any
@@ -49,7 +51,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 type Stamps = "off" | "relative" | "absolute";
-type Config = { diffs?: boolean; timestamps?: Stamps };
+type Config = { diffs?: boolean; timestamps?: Stamps; collapseGroups?: boolean };
 
 type Node = { children?: Node[] };
 type Proto = Record<string, any>; // oxlint-disable-line no-explicit-any
@@ -146,12 +148,12 @@ let stamps: Stamps = "off";
 /** Columns text gives up for the time column: its widest time ("11mo ago", "Sep 24 14:02") + 1. */
 const RESERVE: Record<Stamps, number> = { off: 0, relative: 9, absolute: 13 };
 
-function saveStamps() {
+/** Saves toggles into the config file, keeping any other keys. */
+function saveConfig(change: Config) {
   try {
     mkdirSync(dirname(configPath()), { recursive: true });
-    const config = { ...readConfig(), timestamps: stamps };
-    writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`);
-  } catch {} // unwritable config: the mode still applies to this session
+    writeFileSync(configPath(), `${JSON.stringify({ ...readConfig(), ...change }, null, 2)}\n`);
+  } catch {} // unwritable config: the toggle still applies to this session
 }
 
 const UNITS: [string, number][] = [
@@ -501,6 +503,20 @@ function parentOf(node: Node, target: Node, depth = 4): Node | undefined {
   return undefined;
 }
 
+/** Whether groups start collapsed to their summary line (ctrl+shift+o); a click sets one's own. */
+let collapseGroups = false;
+
+/** The member that opens the group `list[i]` belongs to (it keeps the group's collapsed state). */
+function groupStart(list: unknown[], i: number): Proto {
+  let first = i;
+  for (let j = i - 1; j >= 0; j--) {
+    const kind = kindOf(list[j]);
+    if (kind === "item") first = j;
+    else if (kind !== "skip") break;
+  }
+  return list[first] as Proto;
+}
+
 /** Kind of the nearest non-skipped sibling in `dir`. */
 function neighbor(list: unknown[], i: number, dir: 1 | -1): Kind {
   for (i += dir; i >= 0 && i < list.length; i += dir) {
@@ -557,7 +573,8 @@ function summary(members: unknown[], theme: Theme): string {
  * A member's lines: the summary line if it opens the group, its ├/└ row (wrapped onto more lines
  * when open), and its body. A member alone in its group shows `solo` instead, when given, as the
  * summary line with no tree. The summary line shows when the group started, the row `stamp`.
- * Sets node.clRowY to the row's line, for click handling.
+ * A collapsed group shows only its summary line.
+ * Sets node.clHeadY and node.clRowY to the summary line's and the row's lines, for click handling.
  */
 function groupLines(
   node: Proto,
@@ -587,9 +604,13 @@ function groupLines(
     }
     head = summary(members, theme);
   }
-  const rowY = (node.clRowY = alone ? 1 : head ? 2 : 0);
-  const deps = [row, rowBody, width, theme, last, alone, head, started, stamp];
+  const collapsed = !alone && ((first ? node : groupStart(list, i)).clCollapsed ?? collapseGroups);
+  node.clHeadY = head ? 1 : undefined;
+  node.clGroupCollapsed = collapsed;
+  const rowY = (node.clRowY = collapsed ? Infinity : alone ? 1 : head ? 2 : 0);
+  const deps = [row, rowBody, width, theme, last, alone, head, started, stamp, collapsed];
   return memo(node, "clGroup", deps, () => {
+    if (collapsed) return head ? ["", stamped(`   ${head}`, started, width, theme)] : [];
     // Open content hangs off a └ under the row's name (column 5), one space before it like the
     // rows, and a blank line follows it unless the group ends (a spacer follows then).
     // Wrapped to fit, so nothing open is cut off: 3 columns in, 2 of rail, 2 for the └, 3 after.
@@ -693,15 +714,34 @@ export default function (pi: ExtensionAPI) {
     description: "Cycle timestamps: off, relative, absolute",
     handler: async (ctx) => {
       stamps = STAMPS[(STAMPS.indexOf(stamps) + 1) % STAMPS.length]!;
-      saveStamps();
+      saveConfig({ timestamps: stamps });
       ctx.ui.notify(`Timestamps: ${stamps}`, "info");
       requestRender();
     },
   });
 
+  // Like ctrl+o for rows, it sets every group, clicked ones too.
+  pi.registerShortcut(Key.ctrlShift("o"), {
+    description: "Collapse or expand tool groups",
+    handler: async (ctx) => {
+      collapseGroups = !collapseGroups;
+      saveConfig({ collapseGroups });
+      for (const c of chat?.children ?? []) delete c.clCollapsed;
+      ctx.ui.notify(`Tool groups: ${collapseGroups ? "collapsed" : "expanded"}`, "info");
+      requestRender();
+    },
+  });
+  /** A click on a group's summary line (on the member that opens it) collapses or expands it. */
+  const toggleGroup = (lead: Proto) => {
+    lead.clCollapsed = !lead.clGroupCollapsed;
+    requestRender();
+    return { handled: true };
+  };
+
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui" || restores.length) return;
     const config = readConfig();
+    collapseGroups = config.collapseGroups === true;
     stamps = STAMPS.includes(config.timestamps!) ? config.timestamps! : "off";
     session = ctx.sessionManager as unknown as Session;
     const theme = () => ctx.ui.theme;
@@ -754,8 +794,9 @@ export default function (pi: ExtensionAPI) {
       (orig) =>
         function (this: Tool & Proto, event: Mouse) {
           if (kindOf(this) !== "item") return orig.call(this, event);
-          if (event.type !== "click" || event.button !== "left" || event.y < this.clRowY)
-            return undefined;
+          if (event.type !== "click" || event.button !== "left") return undefined;
+          if (event.y === this.clHeadY) return toggleGroup(this);
+          if (event.y < this.clRowY) return undefined;
           this.clOpen = !isOpen(this, config);
           this.ui.requestRender();
           return { handled: true };
@@ -968,9 +1009,11 @@ export default function (pi: ExtensionAPI) {
               thinking = this.clThinking.md.render(Math.max(1, width - 10)); // 7 in, 3 margin
             }
             group = [...groupLines(this, [row], thinking, width, th, solo)];
-            group[group.length - 1] = marksOf(label) + group[group.length - 1];
-            group[0] = spacer + group[0];
             text = rest;
+            if (group.length) {
+              group[group.length - 1] = marksOf(label) + group[group.length - 1];
+              group[0] = spacer + group[0];
+            } else if (text.length) text[0] = spacer + marksOf(label) + text[0]; // collapsed group
           }
           const body = text;
           const stamp = clock(this.lastMessage?.timestamp);
@@ -993,9 +1036,11 @@ export default function (pi: ExtensionAPI) {
       (orig) =>
         function (this: Proto, event: Mouse) {
           const rowY: number | undefined = this.clRowY;
+          const click = event.type === "click" && event.button === "left";
+          if (click && event.y === this.clHeadY) return toggleGroup(this);
           if (rowY !== undefined) {
             const onThinking = event.y >= rowY && event.y < this.clTextY;
-            if (onThinking && event.type === "click" && event.button === "left") {
+            if (onThinking && click) {
               this.thinkingVisibilityOverrides.set(0, this.clThinkOpen); // hidden if it was open
               this.updateContent(this.lastMessage);
               return { handled: true };

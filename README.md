@@ -4,11 +4,11 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 
 ## Extensions
 
-| Extension                                                   | Description                                                                           |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| [pi-header](extensions/pi-header/README.md)                 | Minimal startup header with the official pi logo                                      |
-| [pi-footer](extensions/pi-footer/README.md)                 | Minimal one-line footer in a rounded prompt box that expands into a dashboard         |
-| [pi-content-layout](extensions/pi-content-layout/README.md) | Compact transcript: tool calls and thinking in a summarized tree, boxed user messages |
+| Extension                                                   | Description                                                                                                            |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| [pi-header](extensions/pi-header/README.md)                 | Minimal startup header with the official pi logo                                                                       |
+| [pi-footer](extensions/pi-footer/README.md)                 | Minimal one-line footer in a rounded prompt box that expands into a dashboard                                          |
+| [pi-content-layout](extensions/pi-content-layout/README.md) | Compact transcript: tool calls and thinking in collapsible summarized groups, boxed user messages, optional timestamps |
 
 ## Install
 
