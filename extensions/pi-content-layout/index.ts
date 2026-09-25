@@ -3,8 +3,8 @@
  * - Tool calls and thinking between two pieces of assistant text form one group: a summary line
  *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it.
  *   Running calls show a live timer, edits show their diff, failures are red.
- *   Click a row (fullscreen TUI mode) to open or close its content, which hangs off a └ under it;
- *   ctrl+o opens all tool rows.
+ *   Click a row (fullscreen TUI mode) to open or close its content, which hangs off a └ under it,
+ *   and its full input; ctrl+o opens or closes all tool rows, clicked ones too.
  * - Thinking is a tree row: "thinking…" while it streams, then "thought for Xs" (click to open).
  * - User messages sit in a rounded border like pi-footer's prompt box; compaction and branch
  *   summaries, skills, and extension messages in a dashed one, labeled in its top edge.
@@ -40,6 +40,7 @@ import {
   Spacer,
   truncateToWidth,
   visibleWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -216,7 +217,7 @@ function describe(t: Tool): [target: string, result: string] {
   }
 }
 
-/** Whether a row shows its content: edits open with their diff; ctrl+o opens all; clicks win. */
+/** Whether a row shows its content: edits open with their diff; ctrl+o sets all; a click, its own. */
 const isOpen = (t: Tool & Proto, config: Config): boolean =>
   t.clOpen ?? (t.expanded || (t.toolName === "edit" && config.diffs !== false));
 
@@ -374,13 +375,14 @@ function summary(members: unknown[], theme: Theme): string {
 }
 
 /**
- * A member's lines: the summary line if it opens the group, its ├/└ row, and its body. A member
- * alone in its group shows `solo` instead, when given, as the summary line with no tree.
+ * A member's lines: the summary line if it opens the group, its ├/└ row (wrapped onto more lines
+ * when open), and its body. A member alone in its group shows `solo` instead, when given, as the
+ * summary line with no tree.
  * Sets node.clRowY to the row's line, for click handling.
  */
 function groupLines(
   node: Proto,
-  row: string,
+  row: string[],
   rowBody: string[],
   width: number,
   theme: Theme,
@@ -408,7 +410,12 @@ function groupLines(
   return memo(node, "clGroup", [row, rowBody, width, theme, last, alone, head], () => {
     // Open content hangs off a └ under the row's name (column 5), one space before it like the
     // rows, and a blank line follows it unless the group ends (a spacer follows then).
-    const hung = rowBody.map((l, j) => (j ? "  " : `${theme.fg("dim", "└")} `) + l);
+    // Wrapped to fit, so nothing open is cut off: 3 columns in, 2 of rail, 2 for the └, 3 after.
+    const fit = Math.max(1, width - (alone ? 8 : 10));
+    const wrapped = rowBody.flatMap((l) =>
+      visibleWidth(l) > fit ? wrapTextWithAnsi(l, fit) : [l],
+    );
+    const hung = wrapped.map((l, j) => (j ? "  " : `${theme.fg("dim", "└")} `) + l);
     if (hung.length && !last) hung.push("");
     let lines: string[];
     if (alone) lines = ["", `   ${solo}`, ...hung.map((l) => `   ${l}`)]; // └ under the line's start
@@ -416,7 +423,11 @@ function groupLines(
       const rail = last ? " " : theme.fg("dim", "│");
       lines = [
         ...(head ? ["", `   ${head}`] : []), // aligned with assistant text
-        `   ${theme.fg("dim", last ? "└" : "├")} ${row}`,
+        `   ${theme.fg("dim", last ? "└" : "├")} ${row[0]}`,
+        // A wrapped row's └ hangs from the row through a │ down its lines.
+        ...row
+          .slice(1)
+          .map((l) => `   ${rail} ${hung.length ? theme.fg("dim", "│") + l.slice(1) : l}`),
         ...hung.map((l) => `   ${rail} ${l}`),
       ];
     }
@@ -441,20 +452,33 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
   const color = state === "error" ? "error" : state === "done" ? "muted" : "dim";
   const name = t.toolName.padEnd(5);
   const tail = result ? ` · ${result}` : "";
-  // The target gives way so the result stays visible: 5 columns of tree before the row, 3 after.
-  const room = width - 8 - visibleWidth(name) - 1 - visibleWidth(tail);
-  const row =
-    theme.italic(theme.fg(color, name)) +
-    // pi's truncation resets colors before the ellipsis, so it gets its own.
-    ` ${theme.fg(color, truncateToWidth(target, Math.max(1, room), theme.fg(color, "…")))}` +
-    theme
-      .fg(state === "error" ? "error" : "dim", tail)
-      // An edit's line counts in the diff's colors.
-      .replace(
-        /\+(\d+) -(\d+)/,
-        (_, added, removed) =>
-          `${theme.fg("toolDiffAdded", `+${added}`)} ${theme.fg("toolDiffRemoved", `-${removed}`)}${theme.getFgAnsi("dim")}`,
-      );
+  // The target's room: 5 columns of tree before the row, 3 after.
+  const room = Math.max(1, width - 8 - visibleWidth(name) - 1);
+  // Closed, a long target gives way to the result and ends in … (pi's truncation resets colors
+  // before it, so it gets its own). Open, it wraps in full under its start (a bash command with its
+  // own line breaks), the result after it, or on a line of its own when it doesn't fit.
+  let lines: string[];
+  if (isOpen(t, config)) {
+    const full = t.toolName === "bash" ? untab(str(t.args?.command).trim()) : target;
+    lines = full.split("\n").flatMap((l) => wrapTextWithAnsi(l, room));
+    if (tail && visibleWidth(lines.at(-1)! + tail) > room) lines.push("");
+  } else {
+    const fit = Math.max(1, room - visibleWidth(tail));
+    lines = [truncateToWidth(target, fit, theme.fg(color, "…"))];
+  }
+  const row = lines.map(
+    (l, i) =>
+      (i ? " ".repeat(visibleWidth(name) + 1) : `${theme.italic(theme.fg(color, name))} `) +
+      theme.fg(color, l),
+  );
+  row[row.length - 1] += theme
+    .fg(state === "error" ? "error" : "dim", lines.at(-1) ? tail : tail.slice(1))
+    // An edit's line counts in the diff's colors.
+    .replace(
+      /\+(\d+) -(\d+)/,
+      (_, added, removed) =>
+        `${theme.fg("toolDiffAdded", `+${added}`)} ${theme.fg("toolDiffRemoved", `-${removed}`)}${theme.getFgAnsi("dim")}`,
+    );
   return groupLines(t, row, body(t, theme, config), width, theme);
 }
 
@@ -508,6 +532,16 @@ export default function (pi: ExtensionAPI) {
           return kindOf(this) === "item"
             ? renderTool(this, width, theme(), config)
             : orig.call(this, width);
+        },
+    );
+    // ctrl+o sets every row, clicked ones too, like the header.
+    patch(
+      tool,
+      "setExpanded",
+      (orig) =>
+        function (this: Tool & Proto, expanded: boolean) {
+          this.clOpen = undefined;
+          return orig.call(this, expanded);
         },
     );
     // pi routes clicks by its own layout; a click on a row or its content opens or closes it.
@@ -720,7 +754,7 @@ export default function (pi: ExtensionAPI) {
               }
               thinking = this.clThinking.md.render(Math.max(1, width - 10)); // 7 in, 3 margin
             }
-            group = [...groupLines(this, row, thinking, width, th, solo)];
+            group = [...groupLines(this, [row], thinking, width, th, solo)];
             group[group.length - 1] = marksOf(label) + group[group.length - 1];
             group[0] = spacer + group[0];
             text = rest;
