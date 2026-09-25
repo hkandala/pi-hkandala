@@ -2,11 +2,12 @@
  * pi-content-layout: a compact, minimal transcript.
  * - Tool calls and thinking between two pieces of assistant text form one group: a summary line
  *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it.
- *   Edits keep their diff, a running bash shows its last lines, failures show the error.
+ *   Running calls show a live timer, edits keep their diff, failures show the error.
  *   Click a row (fullscreen TUI mode) or press ctrl+o for pi's full view.
- * - Thinking is a tree row: "thinking…" while it streams, then "thought for Xs" (click to open).
+ * - Thinking is a tree row, "thought for Xs" (click to open). While waiting for the model,
+ *   "thinking… Xs" shows at the bottom of the transcript.
  * - User messages sit in a rounded border like pi-footer's prompt box.
- * - Each summary line and piece of assistant text starts with a ● bullet.
+ * - Each piece of assistant text starts with a ● bullet; summary lines align with its text.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-content-layout.json
  *   { "diffs": true }
@@ -176,18 +177,16 @@ function describe(t: Tool): [target: string, result: string] {
 }
 const described = new WeakMap<Result, [string, string]>();
 
-/** Lines shown under a row: the error, a running command's latest output, or an edit's diff. */
+/** Lines shown under a row: the error, or an edit's diff. */
 function body(t: Tool, theme: Theme, config: Config): string[] {
-  const state = stateOf(t);
-  const lines = t.result && state !== "done" ? previewOf(t.result) : [];
-  if (state === "error") {
+  if (!t.result || t.isPartial) return [];
+  if (t.result.isError) {
+    const lines = previewOf(t.result);
     const shown =
       t.toolName === "bash" ? lines.slice(-PREVIEW_LINES) : lines.slice(0, PREVIEW_LINES);
     return shown.map((l) => theme.fg("error", l));
   }
-  if (state === "running")
-    return t.toolName === "bash" ? lines.slice(-PREVIEW_LINES).map((l) => theme.fg("dim", l)) : [];
-  if (t.toolName !== "edit" || !t.result?.details?.diff || config.diffs === false) return [];
+  if (t.toolName !== "edit" || !t.result.details?.diff || config.diffs === false) return [];
   return diffOf(t.result);
 }
 
@@ -284,9 +283,6 @@ function summary(members: unknown[], theme: Theme): string {
     : line;
 }
 
-/** Marks each assistant block: a group's summary line and every piece of assistant text. */
-const bullet = (theme: Theme) => theme.fg("text", "●");
-
 /**
  * A member's lines: the summary line if it opens the group, its ├/└ row, and its body.
  * Sets node.clRowY to the row's line, for click handling.
@@ -307,7 +303,7 @@ function groupLines(node: Proto, row: string, rowBody: string[], width: number, 
       if (kind !== "skip") members.push(list[j]);
       if (kind === "closes") break;
     }
-    lines.push("", ` ${bullet(theme)} ${summary(members, theme)}`);
+    lines.push("", `   ${summary(members, theme)}`); // aligned with assistant text
   }
   node.clRowY = lines.length;
   const rail = last ? " " : theme.fg("dim", "│");
@@ -329,11 +325,12 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
     if (t.result) described.set(t.result, info);
   }
   const [target, detail] = info;
-  const seconds = t.clEnd ? (t.clEnd - t.clStart) / 1000 : 0;
-  const result =
-    state === "error"
-      ? detail
-      : [detail, seconds >= 1 ? `${seconds.toFixed(1)}s` : ""].filter(Boolean).join(" · ");
+  const seconds = t.clStart ? ((t.clEnd ?? Date.now()) - t.clStart) / 1000 : 0;
+  let time = seconds >= 1 ? `${seconds.toFixed(1)}s` : "";
+  // While running, a live timer (pi's spinner keeps frames coming) shows the call is in progress.
+  if (state === "running")
+    time = t.clStart ? `running${seconds >= 1 ? ` ${Math.floor(seconds)}s` : ""}` : "";
+  const result = state === "error" ? detail : [detail, time].filter(Boolean).join(" · ");
   const color = state === "error" ? "error" : state === "done" ? "muted" : "dim";
   const row =
     theme.italic(theme.fg(color, t.toolName.padEnd(5))) +
@@ -344,6 +341,16 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
 
 export default function (pi: ExtensionAPI) {
   const restores: (() => void)[] = [];
+  let waitingSince: number | undefined; // a model request is out and no reply has arrived yet
+  pi.on("turn_start", () => {
+    waitingSince = Date.now();
+  });
+  pi.on("message_start", (event) => {
+    if (event.message.role === "assistant") waitingSince = undefined;
+  });
+  pi.on("agent_end", () => {
+    waitingSince = undefined;
+  });
   // Patched methods fall back to pi's own on any error: a layout bug must never crash pi.
   const patch = (proto: Proto, key: string, wrap: (orig: any) => unknown) => {
     const orig = proto[key];
@@ -362,12 +369,21 @@ export default function (pi: ExtensionAPI) {
     if (ctx.mode !== "tui" || restores.length) return;
     const config = readConfig();
     const theme = () => ctx.ui.theme;
-    // pi calls widget factories right away with the TUI; that is all this widget is for.
+    // Above the editor: "thinking… Xs" while waiting for the model (pi only shows a reply once it
+    // starts arriving), then an empty line to keep the chat off the prompt. pi calls widget
+    // factories right away, which is also how this gets the TUI.
     ctx.ui.setWidget("pi-content-layout", (root) => {
       tui = root as unknown as Node;
-      return { render: () => [], invalidate() {} };
+      return {
+        render: () => {
+          if (waitingSince === undefined) return [""];
+          const secs = Math.floor((Date.now() - waitingSince) / 1000);
+          const label = `thinking…${secs ? ` ${secs}s` : ""}`;
+          return [`   ${theme().italic(theme().fg("muted", label))}`, ""];
+        },
+        invalidate() {},
+      };
     });
-    ctx.ui.setWidget("pi-content-layout", undefined);
 
     const tool = ToolExecutionComponent.prototype as unknown as Proto;
     patch(
@@ -481,7 +497,7 @@ export default function (pi: ExtensionAPI) {
           let first = true;
           text = text.map((l) => {
             if (!visibleWidth(l)) return l;
-            const prefix = first ? ` ${bullet(th)}` : "  ";
+            const prefix = first ? ` ${th.fg("text", "●")}` : "  ";
             first = false;
             return indent(l, prefix);
           });

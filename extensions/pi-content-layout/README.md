@@ -7,7 +7,7 @@ A compact, minimal transcript for pi: tool calls and thinking collapse into a su
 │ add a sub function to math.js and run the tests                               │
 ╰───────────────────────────────────────────────────────────────────────────────╯
 
- ● Read 2 files, ran 1 command
+   Read 2 files, ran 1 command
    ├ thought for 4s
    ├ read  math.js · 3 lines
    ├ read  README.md · 1 line
@@ -15,7 +15,7 @@ A compact, minimal transcript for pi: tool calls and thinking collapse into a su
 
  ● Adding sub now.
 
- ● Edited 1 file, ran 1 command, 1 failed
+   Edited 1 file, ran 1 command, 1 failed
    ├ edit  math.js · +4 -0
    │    3 }
    │   +4
@@ -29,12 +29,12 @@ A compact, minimal transcript for pi: tool calls and thinking collapse into a su
 ```
 
 - **Groups:** tool calls and thinking between two pieces of assistant text form one group: a summary line ("Read 2 files, ran 1 command", failures in red) with a tree of one-row calls under it.
-- **Tool rows:** name, target (file, command, or pattern), and result (line or match counts, `+added -removed`, duration from 1s up). Edits keep their full diff, a running bash shows its last 3 output lines, and failures show the error.
-- **Thinking:** a tree row, `thinking…` while it streams, then `thought for Xs` (`thought briefly` under a second; messages loaded from history show just `thought`, since pi saves no thinking time).
+- **Tool rows:** name, target (file, command, or pattern), and result (line or match counts, `+added -removed`, duration from 1s up). Running calls show `running Xs`, edits keep their full diff, and failures show the error.
+- **Thinking:** `thinking… Xs` at the bottom of the transcript while waiting for the model, then a tree row: `thinking…` while it streams, `thought for Xs` (`thought briefly` under a second; messages loaded from history show just `thought`, since pi saves no thinking time).
 - **Assistant text:** every piece starts with a `●`.
 - **User messages:** in a rounded border matching [pi-footer](../pi-footer/README.md)'s prompt box, without pi's background.
 
-Click a tool row or the thinking row (fullscreen TUI mode) to open pi's full view of it, or press `ctrl+o` to expand all tool output. Rows and text keep a 3-column margin on both sides.
+Click a tool row or the thinking row (fullscreen TUI mode) to open pi's full view of it, or press `ctrl+o` to expand all tool output. Rows and text keep a 3-column margin on both sides, and an extra blank line keeps the transcript off the prompt.
 
 pi has no public API for restyling its own messages, so this extension patches the rendering of pi's message and tool components (restored on shutdown, and falling back to pi's own rendering on any error). It doesn't combine with other extensions that restyle the same components.
 
