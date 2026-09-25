@@ -760,7 +760,7 @@ export default function (pi: ExtensionAPI) {
           return [...group, ...text];
         },
     );
-    // Clicking the thinking row opens or closes it.
+    // Clicking the thinking row or its open text opens or closes it, like a tool row.
     patch(
       assistant,
       "handleMouse",
@@ -768,7 +768,8 @@ export default function (pi: ExtensionAPI) {
         function (this: Proto, event: Mouse) {
           const rowY: number | undefined = this.clRowY;
           if (rowY !== undefined) {
-            if (event.y === rowY && event.type === "click" && event.button === "left") {
+            const onThinking = event.y >= rowY && event.y < this.clTextY;
+            if (onThinking && event.type === "click" && event.button === "left") {
               this.thinkingVisibilityOverrides.set(0, this.clThinkOpen); // hidden if it was open
               this.updateContent(this.lastMessage);
               return { handled: true };
