@@ -23,18 +23,17 @@ A compact, minimal transcript for pi: tool calls and thinking collapse into a su
    │   +6   return a - b;
    │   +7 }
    └ bash  npm test · exit 1
-         FAIL math.test.js › sub
 
  ● I added sub(a, b) after add in math.js; the test run fails on the new case.
 ```
 
 - **Groups:** tool calls and thinking between two pieces of assistant text form one group: a summary line ("Read 2 files, ran 1 command", failures in red) with a tree of one-row calls under it.
-- **Tool rows:** name, target (file, command, or pattern), and result (line or match counts, `+added -removed`, duration from 1s up). Long targets shorten so the result stays visible. Running calls show `running Xs`, edits keep their full diff, and failures show the error.
+- **Tool rows:** name, target (file, command, or pattern), and result (line or match counts, `+added -removed`, duration from 1s up). Long targets shorten so the result stays visible. Running calls show `running Xs` and failures are red.
 - **Thinking:** a tree row, `thinking…` while it streams, then `thought for Xs`: `thought briefly` under a second, and `thought for some time` for messages loaded from history, since pi saves no thinking time. Thinking with no tool calls around it is a single `Thought for Xs` line.
 - **Assistant text:** every piece starts with a `●`.
 - **User messages:** in a rounded border matching [pi-footer](../pi-footer/README.md)'s prompt box, without pi's background.
 
-Click a tool row or the thinking row (fullscreen TUI mode) to open pi's full view of it, or press `ctrl+o` to expand all tool output. Rows and text keep a 3-column margin on both sides, and a group at the end of the transcript gets an extra blank line before the prompt.
+Click a row (fullscreen TUI mode) to open or close it within the tree: edits open with their diff, other tools show their output (write: the content), and thinking shows its text. `ctrl+o` opens all tool rows and `ctrl+t` all thinking. Rows and text keep a 3-column margin on both sides, and a group at the end of the transcript gets an extra blank line before the prompt.
 
 pi has no public API for restyling its own messages, so this extension patches the rendering of pi's message and tool components (restored on shutdown, and falling back to pi's own rendering on any error). It doesn't combine with other extensions that restyle the same components.
 
@@ -54,6 +53,6 @@ Optional file: `~/.pi/agent/extensions/pi-content-layout.json`
 { "diffs": true }
 ```
 
-| Key     | Values          | Default | Notes                                           |
-| ------- | --------------- | ------- | ----------------------------------------------- |
-| `diffs` | `true`, `false` | `true`  | `false` hides edit diffs (click a row for them) |
+| Key     | Values          | Default | Notes                           |
+| ------- | --------------- | ------- | ------------------------------- |
+| `diffs` | `true`, `false` | `true`  | `false` starts edits closed too |

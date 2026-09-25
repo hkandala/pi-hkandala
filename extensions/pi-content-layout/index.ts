@@ -2,8 +2,9 @@
  * pi-content-layout: a compact, minimal transcript.
  * - Tool calls and thinking between two pieces of assistant text form one group: a summary line
  *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it.
- *   Running calls show a live timer, edits keep their diff, failures show the error.
- *   Click a row (fullscreen TUI mode) or press ctrl+o for pi's full view.
+ *   Running calls show a live timer, edits show their diff, failures are red.
+ *   Click a row (fullscreen TUI mode) to open or close its content within the tree; ctrl+o opens
+ *   all tool rows.
  * - Thinking is a tree row: "thinking…" while it streams, then "thought for Xs" (click to open).
  * - User messages sit in a rounded border like pi-footer's prompt box.
  * - Each piece of assistant text starts with a ● bullet; summary lines align with its text.
@@ -24,7 +25,7 @@ import {
   getAgentDir,
   renderDiff,
 } from "@earendil-works/pi-coding-agent";
-import { Box, Container, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Box, Container, Markdown, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -44,14 +45,12 @@ type Tool = Node & {
   hideComponent: boolean;
   cwd: string;
   ui: Node & { requestRender(): void };
-  setExpanded(expanded: boolean): void;
 };
 type Block = { type: string; text?: string; thinking?: string };
 type Message = { content: Block[]; timestamp?: number; stopReason?: string };
 type Mouse = { type: string; button: string; x: number; y: number; width: number; height: number };
 type State = "running" | "done" | "error";
 
-const ERROR_LINES = 3; // lines of a failed call's output shown under its row
 /** Summary wording per tool: [verb, noun, plural noun]. Others read "ran <tool> N times". */
 type Wording = [string, string, string?];
 const SEARCHED: Wording = ["searched", "pattern"];
@@ -108,12 +107,7 @@ const outputOf = cached((r) =>
     .trimEnd(),
 );
 const output = (t: Tool) => (t.result ? outputOf(t.result) : "");
-// The exit code is already in the row; pi's "(no output)" placeholder adds nothing.
-const errorLinesOf = cached((r) =>
-  outputOf(r)
-    .split("\n")
-    .filter((l) => l.trim() && !/^\(no output\)$|exited with code/.test(l)),
-);
+const linesOf = cached((r) => outputOf(r).replace(/\t/g, "   ").split("\n"));
 // ponytail: cached with the theme's colors at the time; a theme switch keeps them.
 const diffOf = cached((r) => renderDiff(r.details?.diff ?? "").split("\n"));
 
@@ -176,16 +170,21 @@ function describe(t: Tool): [target: string, result: string] {
 }
 const described = new WeakMap<Result, [string, string]>();
 
-/** Lines shown under a row: the error, or an edit's diff. */
-function body(t: Tool, theme: Theme, config: Config): string[] {
-  if (!t.result || t.isPartial) return [];
-  if (t.result.isError) {
-    const lines = errorLinesOf(t.result);
-    const shown = t.toolName === "bash" ? lines.slice(-ERROR_LINES) : lines.slice(0, ERROR_LINES);
-    return shown.map((l) => theme.fg("error", l));
-  }
-  if (t.toolName !== "edit" || !t.result.details?.diff || config.diffs === false) return [];
-  return diffOf(t.result);
+/** Whether a row shows its content: edits open with their diff; ctrl+o opens all; clicks win. */
+const isOpen = (t: Tool & Proto, config: Config): boolean =>
+  t.clOpen ?? (t.expanded || (t.toolName === "edit" && config.diffs !== false));
+
+/** Lines shown under an open row: the diff, written content, or output (red for failures). */
+function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
+  const open = isOpen(t, config);
+  if (open && t.toolName === "write")
+    return str(t.args?.content)
+      .split("\n")
+      .map((l) => theme.fg("muted", l.replace(/\t/g, "   ")));
+  if (!open || !t.result) return [];
+  if (t.toolName === "edit" && t.result.details?.diff) return diffOf(t.result);
+  const color = t.result.isError ? "error" : "muted";
+  return linesOf(t.result).map((l) => theme.fg(color, l)); // live output while running
 }
 
 /** Rounded border like pi-footer's prompt box around `lines`, which fit width - 4. */
@@ -214,18 +213,24 @@ type Kind = "item" | "closes" | "skip" | "boundary";
 const visible = (c: Block) =>
   !!(c.type === "text" ? c.text : c.type === "thinking" ? c.thinking : "")?.trim();
 
-/** Whether an assistant message opens with collapsed thinking (so it becomes a tree row). */
-function leadsWithThinking(a: Proto) {
-  const first = (a.lastMessage as Message | undefined)?.content.find(visible);
-  return (
-    first?.type === "thinking" && (a.thinkingVisibilityOverrides.get(0) ?? a.hideThinkingBlock)
-  );
+/** Whether a message opens with thinking (which then becomes a tree row). */
+const leadsWithThinking = (message?: Message) =>
+  message?.content.find(visible)?.type === "thinking";
+
+/** The thinking a message opens with. */
+function thinkingOf(message: Message): string {
+  const run = [];
+  for (const c of message.content.slice(message.content.findIndex(visible))) {
+    if (c.type !== "thinking") break;
+    if (c.thinking?.trim()) run.push(c.thinking.trim());
+  }
+  return run.join("\n");
 }
 
 function kindOf(node: unknown): Kind {
   if (node instanceof ToolExecutionComponent) {
     const t = node as unknown as Tool;
-    return t.hideComponent ? "skip" : t.expanded ? "boundary" : "item";
+    return t.hideComponent ? "skip" : "item";
   }
   if (!(node instanceof AssistantMessageComponent)) return "boundary";
   const a = node as unknown as Proto;
@@ -236,7 +241,7 @@ function kindOf(node: unknown): Kind {
     !!message?.content.some((c) => c.type === "text" && c.text?.trim()) ||
     stop === "length" ||
     (!a.hasToolCalls && (stop === "error" || stop === "aborted"));
-  if (leadsWithThinking(a)) return text ? "closes" : "item";
+  if (leadsWithThinking(message)) return text ? "closes" : "item";
   return text ? "boundary" : "skip";
 }
 
@@ -321,8 +326,10 @@ function groupLines(
   const first = neighbor(list, i, -1) !== "item";
   const last = kindOf(node) === "closes" || !["item", "closes"].includes(neighbor(list, i, 1));
   const lines: string[] = [];
+  // Open content gets a blank line above, and below unless the group ends (a spacer follows).
+  if (rowBody.length) rowBody = ["", ...rowBody, ...(last ? [] : [""])];
   if (first && last && solo) {
-    lines.push("", `   ${solo}`);
+    lines.push("", `   ${solo}`, ...rowBody.map((l) => `       ${l}`));
     node.clRowY = 1;
   } else {
     if (first) {
@@ -412,7 +419,7 @@ export default function (pi: ExtensionAPI) {
             : orig.call(this, width);
         },
     );
-    // pi routes clicks by its own layout; a click on a compact row or its body opens the full view.
+    // pi routes clicks by its own layout; a click on a row or its content opens or closes it.
     patch(
       tool,
       "handleMouse",
@@ -421,7 +428,7 @@ export default function (pi: ExtensionAPI) {
           if (kindOf(this) !== "item") return orig.call(this, event);
           if (event.type !== "click" || event.button !== "left" || event.y < this.clRowY)
             return undefined;
-          this.setExpanded(true);
+          this.clOpen = !isOpen(this, config);
           this.ui.requestRender();
           return { handled: true };
         },
@@ -482,7 +489,19 @@ export default function (pi: ExtensionAPI) {
                 : `thought for ${Math.round(secs)}s`;
             this.hiddenThinkingLabel = done ? label : "thinking…";
           }
-          return orig.call(this, message, streaming);
+          if (!leadsWithThinking(message)) return orig.call(this, message, streaming);
+          // pi's own visibility (a click, ctrl+t) opens the thinking within the tree instead: pi
+          // always draws the label, which becomes the row, and render adds the text under it.
+          const overrides: Map<number, boolean> = this.thinkingVisibilityOverrides;
+          const own = overrides.get(0);
+          this.clThinkOpen = !(own ?? this.hideThinkingBlock);
+          overrides.set(0, true);
+          try {
+            return orig.call(this, message, streaming);
+          } finally {
+            if (own === undefined) overrides.delete(0);
+            else overrides.set(0, own);
+          }
         },
     );
     patch(
@@ -507,7 +526,17 @@ export default function (pi: ExtensionAPI) {
             const row = th.italic(th.fg("muted", thought));
             // Thinking alone reads as its own summary line: "Thought for 28s".
             const solo = th.fg("muted", thought[0]!.toUpperCase() + thought.slice(1));
-            group = groupLines(this, row, [], width, th, solo);
+            let thinking: string[] = [];
+            if (this.clThinkOpen) {
+              const source = thinkingOf(this.lastMessage);
+              if (this.clThinking?.source !== source) {
+                const style = { color: (s: string) => theme().fg("thinkingText", s), italic: true };
+                const md = new Markdown(source, 0, 0, this.markdownTheme, style);
+                this.clThinking = { source, md };
+              }
+              thinking = this.clThinking.md.render(Math.max(1, width - 10)); // 7 in, 3 margin
+            }
+            group = groupLines(this, row, thinking, width, th, solo);
             group[group.length - 1] = marksOf(label) + group[group.length - 1];
             group[0] = spacer + group[0];
             text = rest;
@@ -520,10 +549,11 @@ export default function (pi: ExtensionAPI) {
             first = false;
             return indent(l, prefix);
           });
+          this.clTextY = group.length;
           return [...group, ...text];
         },
     );
-    // Clicking the thinking row opens it (pi's full rendering then takes over this message).
+    // Clicking the thinking row opens or closes it.
     patch(
       assistant,
       "handleMouse",
@@ -532,14 +562,15 @@ export default function (pi: ExtensionAPI) {
           const rowY: number | undefined = this.clRowY;
           if (rowY !== undefined) {
             if (event.y === rowY && event.type === "click" && event.button === "left") {
-              this.thinkingVisibilityOverrides.set(0, false);
+              this.thinkingVisibilityOverrides.set(0, this.clThinkOpen); // hidden if it was open
               this.updateContent(this.lastMessage);
               return { handled: true };
             }
-            if (event.y <= rowY) return undefined;
+            if (event.y < this.clTextY) return undefined;
           }
-          // pi laid the content out 2 columns in, 4 narrower and, with a thinking row, 1 row lower.
-          const y = rowY === undefined ? event.y : event.y - rowY + 1;
+          // pi laid the content out 2 columns in and 4 narrower; with a thinking row, the text
+          // starts at clTextY here and after pi's spacer and label (2 lines) there.
+          const y = rowY === undefined ? event.y : event.y - this.clTextY + 2;
           return orig.call(this, {
             ...event,
             x: event.x - 2,
