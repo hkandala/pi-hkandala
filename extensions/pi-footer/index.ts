@@ -145,6 +145,7 @@ function sessionStats(ctx: ExtensionContext) {
     cachedAt: undefined as number | undefined, // last response or warm refresh that used the cache
     lastCached: false, // last response read or wrote the prompt cache
     lastModel: undefined as string | undefined, // provider/model of the last response
+    compactedSince: false, // compaction after the last response: history no longer matches the cache
   };
   let runStart: number | undefined;
   let runEnd = 0;
@@ -159,7 +160,10 @@ function sessionStats(ctx: ExtensionContext) {
         runStart = runEnd = ts;
       } else if (runStart !== undefined) runEnd = ts;
     }
-    if (e.type === "compaction") s.compactions++;
+    if (e.type === "compaction") {
+      s.compactions++;
+      s.compactedSince = true;
+    }
     const usage =
       e.type === "usage"
         ? e.usage
@@ -177,6 +181,7 @@ function sessionStats(ctx: ExtensionContext) {
     s.lastCached = usage.cacheRead + usage.cacheWrite > 0;
     if (s.lastCached) s.cachedAt = ts ?? s.cachedAt;
     s.lastModel = `${e.message.provider}/${e.message.model}`;
+    s.compactedSince = false;
     s.responses++;
     if (Array.isArray(e.message.content))
       s.toolCalls += e.message.content.filter((c) => c?.type === "toolCall").length;
@@ -356,7 +361,7 @@ function render(
       (diff.length ? dot + diff.join(" ") : "");
   }
   // Prompt cache: alive for its lifetime after the last cached response (or warm refresh);
-  // cold once that passes or the model changed, so the next message re-bills the full context.
+  // cold once that passes, the model changed, or the history was compacted: the next message re-bills.
   const model = ctx.model;
   const cacheModel = (model ?? {}) as CacheModel;
   const ctxUsage = ctx.getContextUsage();
@@ -366,7 +371,7 @@ function render(
   const cacheAge = s.cachedAt !== undefined ? Date.now() - s.cachedAt : 0;
   const expired = cacheAge > ttlMs;
   const modelChanged = !!model && !!s.lastModel && s.lastModel !== `${model.provider}/${model.id}`;
-  const cold = s.lastCached && (expired || modelChanged);
+  const cold = s.lastCached && (expired || modelChanged || s.compactedSince);
   const perToken = (price = 0) => ((ctxUsage?.tokens ?? 0) * price) / 1e6;
   const coldExtra = perToken(
     (cacheModel.cost?.cacheWrite ?? 0) - (cacheModel.cost?.cacheRead ?? 0),
