@@ -6,7 +6,9 @@
  *   Click a row (fullscreen TUI mode) to open or close its content, which hangs off a └ under it;
  *   ctrl+o opens all tool rows.
  * - Thinking is a tree row: "thinking…" while it streams, then "thought for Xs" (click to open).
- * - User messages sit in a rounded border like pi-footer's prompt box.
+ * - User messages sit in a rounded border like pi-footer's prompt box; compaction and branch
+ *   summaries, skills, and extension messages in a dashed one, labeled in its top edge.
+ * - User bash (!cmd) and info panels (pi's or extensions') read like assistant text, without rules.
  * - Each piece of assistant text starts with a ● bullet; summary lines align with its text.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-content-layout.json
@@ -20,6 +22,12 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import {
   AssistantMessageComponent,
+  BashExecutionComponent,
+  BranchSummaryMessageComponent,
+  CompactionSummaryMessageComponent,
+  CustomMessageComponent,
+  DynamicBorder,
+  SkillInvocationMessageComponent,
   ToolExecutionComponent,
   UserMessageComponent,
   getAgentDir,
@@ -73,6 +81,20 @@ function indent(line: string, prefix: string) {
   const marks = marksOf(line);
   return marks + prefix + line.slice(marks.length);
 }
+
+/** Lines padded 1 column by pi, moved to column 3; `paint` colors a ● on the first text line. */
+function bulleted(lines: string[], paint?: (s: string) => string): string[] {
+  return lines.map((l) => {
+    if (blank(l)) return l;
+    const prefix = paint ? ` ${paint("●")}` : "  ";
+    paint = undefined;
+    return indent(l, prefix);
+  });
+}
+
+/** Runs of blank lines (pi pads them with spaces) as one. */
+const blank = (l: string) => !visibleWidth(l.replaceAll(" ", ""));
+const tidy = (lines: string[]) => lines.filter((l, i) => !blank(l) || !i || !blank(lines[i - 1]!));
 
 function readConfig(): Config {
   try {
@@ -191,18 +213,23 @@ function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
   return linesOf(t.result).map((l) => theme.fg(color, l)); // live output while running
 }
 
-/** Rounded border like pi-footer's prompt box around `lines`, which fit width - 4. */
-function frame(lines: string[], width: number, theme: Theme): string[] {
+/**
+ * Rounded border like pi-footer's prompt box around `lines`, which fit width - 4; dashed with a
+ * title in its top edge for special messages.
+ */
+function frame(lines: string[], width: number, theme: Theme, title?: string): string[] {
   const inner = Math.max(1, width - 4);
-  const bar = "─".repeat(Math.max(0, width - 2));
-  const side = theme.fg("muted", "│");
+  const [h, v] = title ? ["┄", "┆"] : ["─", "│"];
+  const head = title ? `${h}${h} ${title} ` : "";
+  const bar = (lead: string) => lead + h.repeat(Math.max(0, width - 2 - visibleWidth(lead)));
+  const side = theme.fg("muted", v);
   return [
-    theme.fg("muted", `╭${bar}╮`),
+    theme.fg("muted", `╭${bar(head)}╮`),
     ...lines.map((l) => {
       const text = truncateToWidth(l, inner);
       return `${side} ${text}${" ".repeat(Math.max(0, inner - visibleWidth(text)))} ${side}`;
     }),
-    theme.fg("muted", `╰${bar}╯`),
+    theme.fg("muted", `╰${bar("")}╯`),
   ];
 }
 
@@ -249,7 +276,11 @@ function kindOf(node: unknown): Kind {
   return text ? "boundary" : "skip";
 }
 
-let tui: Node | undefined; // root of pi's component tree, to find each component's chat container
+/**
+ * pi's chat container: the third in its document (header, loaded resources, chat), which is the
+ * first child of the TUI root. ponytail: assumes pi's layout.
+ */
+let chat: Proto | undefined;
 function parentOf(node: Node, target: Node, depth = 4): Node | undefined {
   if (!node.children || depth < 0) return undefined;
   if (node.children.includes(target)) return node;
@@ -269,24 +300,27 @@ function neighbor(list: unknown[], i: number, dir: 1 | -1): Kind {
   return "boundary";
 }
 
-/**
- * When a group ends the chat, its dense tree rows would sit tight against the prompt, so the chat
- * gets one more blank line then. Inside the chat, so it scrolls with the content; text and status
- * lines keep just pi's own spacer.
- */
-const paddedChats = new Set<Proto>();
-function padChat(chat: Proto | undefined) {
-  if (!chat || paddedChats.has(chat)) return;
-  paddedChats.add(chat);
-  const render = chat.render;
-  chat.render = function (width: number) {
-    const lines: string[] = render.call(this, width);
+/** Components given their own render, and how to undo each on shutdown. */
+const overridden = new Map<Proto, () => void>();
+/** Gives one component its own render, falling back to pi's on any error, once. */
+function override(
+  node: Proto,
+  render: (orig: (width: number) => string[], width: number) => string[],
+  undo = () => {},
+) {
+  if (overridden.has(node)) return;
+  const orig = node.render.bind(node);
+  node.render = (width: number) => {
     try {
-      return neighbor(this.children, this.children.length, -1) === "item" ? [...lines, ""] : lines;
+      return render(orig, width);
     } catch {
-      return lines; // a layout bug must never crash pi
+      return orig(width);
     }
   };
+  overridden.set(node, () => {
+    delete node.render;
+    undo();
+  });
 }
 
 /** Summary line from a group's tool calls: "Read 3 files, ran 2 commands, 1 failed". */
@@ -322,10 +356,9 @@ function groupLines(
   theme: Theme,
   solo?: string,
 ) {
-  node.clParent ??= tui && parentOf(tui, node);
-  padChat(node.clParent);
-  const list: unknown[] = node.clParent?.children ?? [node];
+  let list: unknown[] = chat?.children ?? [];
   if (list[node.clIndex] !== node) node.clIndex = list.indexOf(node);
+  if (node.clIndex < 0) [list, node.clIndex] = [[node], 0]; // outside the chat: on its own
   const i: number = node.clIndex;
   const first = neighbor(list, i, -1) !== "item";
   const last = kindOf(node) === "closes" || !["item", "closes"].includes(neighbor(list, i, 1));
@@ -417,10 +450,20 @@ export default function (pi: ExtensionAPI) {
     const theme = () => ctx.ui.theme;
     // pi calls widget factories right away with the TUI; that is all this widget is for.
     ctx.ui.setWidget("pi-content-layout", (root) => {
-      tui = root as unknown as Node;
+      chat = (root as unknown as Node).children?.[0]?.children?.[2];
       return { render: () => [], invalidate() {} };
     });
     ctx.ui.setWidget("pi-content-layout", undefined);
+    // When a group ends the chat, its dense tree rows would sit tight against the prompt, so the
+    // chat gets one more blank line then. Inside the chat, so it scrolls with the content; text
+    // and status lines keep just pi's own spacer.
+    if (chat)
+      override(chat, (orig, width) => {
+        const lines = orig(width);
+        return neighbor(chat!.children, chat!.children.length, -1) === "item"
+          ? [...lines, ""]
+          : lines;
+      });
 
     const tool = ToolExecutionComponent.prototype as unknown as Proto;
     patch(
@@ -448,6 +491,10 @@ export default function (pi: ExtensionAPI) {
         },
     );
 
+    /** A box's content without its background and padding, to fit a frame. */
+    const inner = (box: Proto, width: number): string[] =>
+      Container.prototype.render.call(box, Math.max(1, width - 4));
+
     // User messages: take the text out of pi's background box and draw a rounded border instead.
     // Done at render time so messages created before the extension loaded are covered too.
     patch(
@@ -460,13 +507,96 @@ export default function (pi: ExtensionAPI) {
             this.clear();
             for (const child of box.children) this.addChild(child);
           }
-          const inner = Container.prototype.render.call(this, Math.max(1, width - 4));
-          const lines = frame(inner, width, theme());
+          const lines = frame(inner(this, width), width, theme());
           // pi's prompt marks stay at column 0 of the first and last lines, as pi places them:
           // terminals like Ghostty start a fresh line at the opening mark when it isn't.
           lines[0] = mark("A") + lines[0];
           lines[lines.length - 1] = mark("B") + mark("C") + lines[lines.length - 1];
           return lines;
+        },
+    );
+
+    // Special messages (compaction and branch summaries, skills, extension messages pi draws
+    // itself): pi's background box becomes a dashed border with pi's label in it. Their first two
+    // lines are the label and a blank line.
+    const special = (box: Proto, width: number, title: string) =>
+      frame(inner(box, width).slice(2), width, theme(), title);
+    for (const [proto, title] of [
+      [CompactionSummaryMessageComponent.prototype, "compaction"],
+      [BranchSummaryMessageComponent.prototype, "branch"],
+    ] as const)
+      patch(
+        proto as unknown as Proto,
+        "render",
+        () =>
+          function (this: Proto, width: number) {
+            return special(this, width, title);
+          },
+      );
+    patch(
+      CustomMessageComponent.prototype as unknown as Proto,
+      "render",
+      (orig) =>
+        function (this: Proto, width: number) {
+          if (this.customComponent) return orig.call(this, width); // the extension's own look
+          return ["", ...special(this.box, width, this.message.customType)];
+        },
+    );
+    // A skill's label leads its one line while closed, and has a line of its own while open.
+    patch(
+      SkillInvocationMessageComponent.prototype as unknown as Proto,
+      "render",
+      () =>
+        function (this: Proto, width: number) {
+          const lines = inner(this, width);
+          const body = this.expanded
+            ? lines.slice(1)
+            : lines.map((l) => l.replace("\x1b[1m[skill]\x1b[22m ", ""));
+          return frame(body, width, theme(), "skill");
+        },
+    );
+
+    // User bash (!cmd) and pi's info panels (/changelog, /hotkeys, updates) read like assistant
+    // text: a ● and column 3, without pi's horizontal rules around them. The ● takes the color
+    // of what it marks: pi's bash color (dim for !! runs, as pi's rules were), the panel heading.
+    patch(
+      BashExecutionComponent.prototype as unknown as Proto,
+      "render",
+      () =>
+        function (this: Proto, width: number) {
+          // The output follows the command without pi's blank line.
+          const lines = tidy(this.contentContainer.render(Math.max(1, width - 4)));
+          if (lines.length > 1 && blank(lines[1]!)) lines.splice(1, 1);
+          const rule = this.children.find((c: unknown) => c instanceof DynamicBorder);
+          return ["", ...bulleted(lines, rule?.color)];
+        },
+    );
+    // A panel is the siblings between two rules anywhere in the chat, pi's or an extension's
+    // (pi-header's /loaded); rules elsewhere, like selectors', stay.
+    patch(
+      DynamicBorder.prototype as unknown as Proto,
+      "render",
+      (orig) =>
+        function (this: Proto, width: number) {
+          const parent: Proto | null = (this.clParent ??= (chat && parentOf(chat, this)) ?? null);
+          if (!parent) return orig.call(this, width);
+          const list: Proto[] = parent.children;
+          const i = list.indexOf(this);
+          const opens = list.slice(0, i).filter((c) => c instanceof DynamicBorder).length % 2 === 0;
+          for (let j = i + 1; opens && j < list.length; j++) {
+            const member = list[j]!;
+            if (member instanceof DynamicBorder) break;
+            if (overridden.has(member)) continue;
+            const paint = j === i + 1 ? (s: string) => theme().fg("accent", s) : undefined;
+            const { paddingY } = member;
+            if (member instanceof Markdown) member.paddingY = 0; // pi spaces the panel already
+            override(
+              member,
+              (orig, w) => bulleted(tidy(orig(Math.max(1, w - 4))), paint),
+              () => member instanceof Markdown && (member.paddingY = paddingY),
+            );
+          }
+          return [];
         },
     );
 
@@ -555,14 +685,7 @@ export default function (pi: ExtensionAPI) {
             group[0] = spacer + group[0];
             text = rest;
           }
-          // A bullet marks the text.
-          let first = true;
-          text = text.map((l) => {
-            if (!visibleWidth(l)) return l;
-            const prefix = first ? ` ${th.fg("text", "●")}` : "  ";
-            first = false;
-            return indent(l, prefix);
-          });
+          text = bulleted(text, (s) => th.fg("text", s));
           this.clTextY = group.length;
           return [...group, ...text];
         },
@@ -598,8 +721,8 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_shutdown", () => {
     for (const restore of restores.splice(0).reverse()) restore();
-    for (const chat of paddedChats) delete chat.render;
-    paddedChats.clear();
-    tui = undefined;
+    for (const undo of overridden.values()) undo();
+    overridden.clear();
+    chat = undefined;
   });
 }
