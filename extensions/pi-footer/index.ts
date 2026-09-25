@@ -23,7 +23,7 @@ import type {
   KeybindingsManager,
   Theme,
 } from "@earendil-works/pi-coding-agent";
-import { CustomEditor, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, estimateTokens, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { execFile } from "node:child_process";
@@ -330,6 +330,22 @@ async function readGit(cwd: string): Promise<Git> {
   return g;
 }
 
+// After a compaction pi reports no context tokens until the next response (e.g. a session resumed
+// right after an auto-compaction). Estimate them the way pi does (chars / 4, the system message
+// including its tools), once per leaf entry.
+let estimate: { leaf: string | null; tokens: number } | undefined;
+function contextUsage(ctx: ExtensionContext) {
+  const usage = ctx.getContextUsage();
+  if (usage?.tokens !== null) return usage && { ...usage, estimated: false };
+  const leaf = ctx.sessionManager.getLeafId();
+  if (estimate?.leaf !== leaf) {
+    const { messages } = ctx.sessionManager.buildSessionContext();
+    estimate = { leaf, tokens: messages.reduce((n, m) => n + estimateTokens(m), 0) };
+  }
+  const { tokens } = estimate;
+  return { ...usage, tokens, percent: (tokens / usage.contextWindow) * 100, estimated: true };
+}
+
 function render(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -385,7 +401,8 @@ function render(
   // cold once that passes, the model changed, or the history was compacted: the next message re-bills.
   const model = ctx.model;
   const cacheModel = (model ?? {}) as CacheModel;
-  const ctxUsage = ctx.getContextUsage();
+  const ctxUsage = contextUsage(ctx);
+  const approx = ctxUsage?.estimated ? "~" : "";
   const ttlMs =
     (cacheModel.promptCache?.[process.env.PI_CACHE_RETENTION === "long" ? "long" : "short"] ??
       DEFAULT_CACHE_TTL_S) * 1000;
@@ -420,7 +437,7 @@ function render(
   const contextPiece = ctxUsage?.tokens
     ? paint(
         ctxColor,
-        `${PIE[Math.min(8, Math.round((pct ?? 0) / 12.5))]} ${fmt(ctxUsage.tokens)}/${fmt(window)}`,
+        `${PIE[Math.min(8, Math.round((pct ?? 0) / 12.5))]} ${approx}${fmt(ctxUsage.tokens)}/${fmt(window)}`,
       )
     : undefined;
   const level = pi.getThinkingLevel();
@@ -553,7 +570,7 @@ function render(
     brain.push(
       row(
         "context",
-        val(`${fmt(ctxUsage.tokens)} / ${fmt(window)}`) +
+        val(`${approx}${fmt(ctxUsage.tokens)} / ${fmt(window)}`) +
           (pct !== undefined ? val(` (${Math.round(pct)}%)`) : "") +
           (s.compactions ? dot + val(`compacted ${s.compactions}×`) : ""),
       ),
