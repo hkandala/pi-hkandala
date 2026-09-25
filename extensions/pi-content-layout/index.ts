@@ -4,8 +4,7 @@
  *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it.
  *   Running calls show a live timer, edits keep their diff, failures show the error.
  *   Click a row (fullscreen TUI mode) or press ctrl+o for pi's full view.
- * - Thinking is a tree row, "thought for Xs" (click to open). While waiting for the model,
- *   "thinking… Xs" shows at the bottom of the transcript.
+ * - Thinking is a tree row: "thinking…" while it streams, then "thought for Xs" (click to open).
  * - User messages sit in a rounded border like pi-footer's prompt box.
  * - Each piece of assistant text starts with a ● bullet; summary lines align with its text.
  *
@@ -52,7 +51,7 @@ type Message = { content: Block[]; timestamp?: number; stopReason?: string };
 type Mouse = { type: string; button: string; x: number; y: number; width: number; height: number };
 type State = "running" | "done" | "error";
 
-const PREVIEW_LINES = 3;
+const ERROR_LINES = 3; // lines of a failed call's output shown under its row
 /** Summary wording per tool: [verb, noun, plural noun]. Others read "ran <tool> N times". */
 type Wording = [string, string, string?];
 const SEARCHED: Wording = ["searched", "pattern"];
@@ -110,7 +109,7 @@ const outputOf = cached((r) =>
 );
 const output = (t: Tool) => (t.result ? outputOf(t.result) : "");
 // The exit code is already in the row; pi's "(no output)" placeholder adds nothing.
-const previewOf = cached((r) =>
+const errorLinesOf = cached((r) =>
   outputOf(r)
     .split("\n")
     .filter((l) => l.trim() && !/^\(no output\)$|exited with code/.test(l)),
@@ -181,9 +180,8 @@ const described = new WeakMap<Result, [string, string]>();
 function body(t: Tool, theme: Theme, config: Config): string[] {
   if (!t.result || t.isPartial) return [];
   if (t.result.isError) {
-    const lines = previewOf(t.result);
-    const shown =
-      t.toolName === "bash" ? lines.slice(-PREVIEW_LINES) : lines.slice(0, PREVIEW_LINES);
+    const lines = errorLinesOf(t.result);
+    const shown = t.toolName === "bash" ? lines.slice(-ERROR_LINES) : lines.slice(0, ERROR_LINES);
     return shown.map((l) => theme.fg("error", l));
   }
   if (t.toolName !== "edit" || !t.result.details?.diff || config.diffs === false) return [];
@@ -243,7 +241,6 @@ function kindOf(node: unknown): Kind {
 }
 
 let tui: Node | undefined; // root of pi's component tree, to find each component's chat container
-
 function parentOf(node: Node, target: Node, depth = 4): Node | undefined {
   if (!node.children || depth < 0) return undefined;
   if (node.children.includes(target)) return node;
@@ -263,6 +260,26 @@ function neighbor(list: unknown[], i: number, dir: 1 | -1): Kind {
   return "boundary";
 }
 
+/**
+ * When a group ends the chat, its dense tree rows would sit tight against the prompt, so the chat
+ * gets one more blank line then. Inside the chat, so it scrolls with the content; text and status
+ * lines keep just pi's own spacer.
+ */
+const paddedChats = new Set<Proto>();
+function padChat(chat: Proto | undefined) {
+  if (!chat || paddedChats.has(chat)) return;
+  paddedChats.add(chat);
+  const render = chat.render;
+  chat.render = function (width: number) {
+    const lines: string[] = render.call(this, width);
+    try {
+      return neighbor(this.children, this.children.length, -1) === "item" ? [...lines, ""] : lines;
+    } catch {
+      return lines; // a layout bug must never crash pi
+    }
+  };
+}
+
 /** Summary line from a group's tool calls: "Read 3 files, ran 2 commands, 1 failed". */
 function summary(members: unknown[], theme: Theme): string {
   const counts = new Map<Wording, number>();
@@ -271,7 +288,7 @@ function summary(members: unknown[], theme: Theme): string {
     if (!(m instanceof ToolExecutionComponent)) continue;
     const t = m as unknown as Tool;
     if (stateOf(t) === "error") failed++;
-    const wording = (WORDING[t.toolName] ??= [`ran ${t.toolName}`, "time"]);
+    const wording = (WORDING[t.toolName] ??= [`ran ${t.toolName}`, "time"]); // one entry per tool
     counts.set(wording, (counts.get(wording) ?? 0) + 1);
   }
   const text =
@@ -284,35 +301,49 @@ function summary(members: unknown[], theme: Theme): string {
 }
 
 /**
- * A member's lines: the summary line if it opens the group, its ├/└ row, and its body.
+ * A member's lines: the summary line if it opens the group, its ├/└ row, and its body. A member
+ * alone in its group shows `solo` instead, when given, as the summary line with no tree.
  * Sets node.clRowY to the row's line, for click handling.
  */
-function groupLines(node: Proto, row: string, rowBody: string[], width: number, theme: Theme) {
+function groupLines(
+  node: Proto,
+  row: string,
+  rowBody: string[],
+  width: number,
+  theme: Theme,
+  solo?: string,
+) {
   node.clParent ??= tui && parentOf(tui, node);
+  padChat(node.clParent);
   const list: unknown[] = node.clParent?.children ?? [node];
   if (list[node.clIndex] !== node) node.clIndex = list.indexOf(node);
   const i: number = node.clIndex;
   const first = neighbor(list, i, -1) !== "item";
   const last = kindOf(node) === "closes" || !["item", "closes"].includes(neighbor(list, i, 1));
   const lines: string[] = [];
-  if (first) {
-    const members = [];
-    for (let j = i; j < list.length; j++) {
-      const kind = kindOf(list[j]);
-      if (kind === "boundary") break;
-      if (kind !== "skip") members.push(list[j]);
-      if (kind === "closes") break;
+  if (first && last && solo) {
+    lines.push("", `   ${solo}`);
+    node.clRowY = 1;
+  } else {
+    if (first) {
+      const members = [];
+      for (let j = i; j < list.length; j++) {
+        const kind = kindOf(list[j]);
+        if (kind === "boundary") break;
+        if (kind !== "skip") members.push(list[j]);
+        if (kind === "closes") break;
+      }
+      lines.push("", `   ${summary(members, theme)}`); // aligned with assistant text
     }
-    lines.push("", `   ${summary(members, theme)}`); // aligned with assistant text
+    node.clRowY = lines.length;
+    const rail = last ? " " : theme.fg("dim", "│");
+    lines.push(
+      `   ${theme.fg("dim", last ? "└" : "├")} ${row}`,
+      ...rowBody.map((l) => `   ${rail}   ${l}`),
+    );
   }
-  node.clRowY = lines.length;
-  const rail = last ? " " : theme.fg("dim", "│");
-  lines.push(
-    `   ${theme.fg("dim", last ? "└" : "├")} ${row}`,
-    ...rowBody.map((l) => `   ${rail}   ${l}`),
-  );
   // Right margin matches the left indent of the row text.
-  return lines.map((l) => truncateToWidth(l, Math.max(1, width - 3), "…"));
+  return lines.map((l) => truncateToWidth(l, Math.max(1, width - 3), theme.fg("muted", "…")));
 }
 
 function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config): string[] {
@@ -328,29 +359,23 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
   const seconds = t.clStart ? ((t.clEnd ?? Date.now()) - t.clStart) / 1000 : 0;
   let time = seconds >= 1 ? `${seconds.toFixed(1)}s` : "";
   // While running, a live timer (pi's spinner keeps frames coming) shows the call is in progress.
-  if (state === "running")
-    time = t.clStart ? `running${seconds >= 1 ? ` ${Math.floor(seconds)}s` : ""}` : "";
+  if (state === "running") time = t.clStart ? `running ${Math.floor(seconds)}s` : "";
   const result = state === "error" ? detail : [detail, time].filter(Boolean).join(" · ");
   const color = state === "error" ? "error" : state === "done" ? "muted" : "dim";
+  const name = t.toolName.padEnd(5);
+  const tail = result ? ` · ${result}` : "";
+  // The target gives way so the result stays visible: 5 columns of tree before the row, 3 after.
+  const room = width - 8 - visibleWidth(name) - 1 - visibleWidth(tail);
   const row =
-    theme.italic(theme.fg(color, t.toolName.padEnd(5))) +
-    ` ${theme.fg(color, target)}` +
-    (result ? theme.fg(state === "error" ? "error" : "dim", ` · ${result}`) : "");
+    theme.italic(theme.fg(color, name)) +
+    // pi's truncation resets colors before the ellipsis, so it gets its own.
+    ` ${theme.fg(color, truncateToWidth(target, Math.max(1, room), theme.fg(color, "…")))}` +
+    theme.fg(state === "error" ? "error" : "dim", tail);
   return groupLines(t, row, body(t, theme, config), width, theme);
 }
 
 export default function (pi: ExtensionAPI) {
   const restores: (() => void)[] = [];
-  let waitingSince: number | undefined; // a model request is out and no reply has arrived yet
-  pi.on("turn_start", () => {
-    waitingSince = Date.now();
-  });
-  pi.on("message_start", (event) => {
-    if (event.message.role === "assistant") waitingSince = undefined;
-  });
-  pi.on("agent_end", () => {
-    waitingSince = undefined;
-  });
   // Patched methods fall back to pi's own on any error: a layout bug must never crash pi.
   const patch = (proto: Proto, key: string, wrap: (orig: any) => unknown) => {
     const orig = proto[key];
@@ -369,21 +394,12 @@ export default function (pi: ExtensionAPI) {
     if (ctx.mode !== "tui" || restores.length) return;
     const config = readConfig();
     const theme = () => ctx.ui.theme;
-    // Above the editor: "thinking… Xs" while waiting for the model (pi only shows a reply once it
-    // starts arriving), then an empty line to keep the chat off the prompt. pi calls widget
-    // factories right away, which is also how this gets the TUI.
+    // pi calls widget factories right away with the TUI; that is all this widget is for.
     ctx.ui.setWidget("pi-content-layout", (root) => {
       tui = root as unknown as Node;
-      return {
-        render: () => {
-          if (waitingSince === undefined) return [""];
-          const secs = Math.floor((Date.now() - waitingSince) / 1000);
-          const label = `thinking…${secs ? ` ${secs}s` : ""}`;
-          return [`   ${theme().italic(theme().fg("muted", label))}`, ""];
-        },
-        invalidate() {},
-      };
+      return { render: () => [], invalidate() {} };
     });
+    ctx.ui.setWidget("pi-content-layout", undefined);
 
     const tool = ToolExecutionComponent.prototype as unknown as Proto;
     patch(
@@ -437,7 +453,7 @@ export default function (pi: ExtensionAPI) {
     // Thinking is collapsed by default and timed: "thinking…" while it streams, then
     // "thought for Xs", or "thought briefly" under a second. Timed from the message's start, since
     // some providers deliver thinking in one burst. pi saves no thinking time, so messages loaded
-    // from history show just "thought".
+    // from history show "thought for some time".
     // ponytail: one label per message, and ctrl+t only toggles messages that already exist.
     patch(
       assistant,
@@ -460,7 +476,7 @@ export default function (pi: ExtensionAPI) {
             if (done) this.clThinkEnd ??= now;
             const secs = (this.clThinkEnd - this.clThinkStart) / 1000;
             const label = this.clUntimed
-              ? "thought"
+              ? "thought for some time"
               : secs < 1
                 ? "thought briefly"
                 : `thought for ${Math.round(secs)}s`;
@@ -487,8 +503,11 @@ export default function (pi: ExtensionAPI) {
             // pi's output opens with a spacer and the collapsed thinking label; a tree row
             // replaces both. Their zero-width prompt marks move to the row's first and last lines.
             const [spacer = "", label = "", ...rest] = lines;
-            const row = th.italic(th.fg("muted", this.hiddenThinkingLabel));
-            group = groupLines(this, row, [], width, th);
+            const thought: string = this.hiddenThinkingLabel;
+            const row = th.italic(th.fg("muted", thought));
+            // Thinking alone reads as its own summary line: "Thought for 28s".
+            const solo = th.fg("muted", thought[0]!.toUpperCase() + thought.slice(1));
+            group = groupLines(this, row, [], width, th, solo);
             group[group.length - 1] = marksOf(label) + group[group.length - 1];
             group[0] = spacer + group[0];
             text = rest;
@@ -534,6 +553,8 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_shutdown", () => {
     for (const restore of restores.splice(0).reverse()) restore();
+    for (const chat of paddedChats) delete chat.render;
+    paddedChats.clear();
     tui = undefined;
   });
 }
