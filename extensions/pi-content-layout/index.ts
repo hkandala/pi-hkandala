@@ -33,7 +33,14 @@ import {
   getAgentDir,
   renderDiff,
 } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Markdown, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  Box,
+  Container,
+  Markdown,
+  Spacer,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -80,6 +87,22 @@ const marksOf = (line: string) => /^(?:\x1b\]133;[A-Z]\x07)*/.exec(line)![0];
 function indent(line: string, prefix: string) {
   const marks = marksOf(line);
   return marks + prefix + line.slice(marks.length);
+}
+
+/** Arrays match when their items do: pi renders lines into fresh arrays. */
+const same = (a: unknown, b: unknown) =>
+  a === b ||
+  (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]));
+/**
+ * compute(), cached on `node` under `key` while `deps` hold (the theme among them, for colors).
+ * pi renders every component each frame, and open content can run to thousands of lines.
+ */
+function memo<T>(node: Proto, key: string, deps: unknown[], compute: () => T): T {
+  const cache = node[key];
+  if (cache && deps.every((d, i) => same(d, cache.deps[i]))) return cache.value;
+  const value = compute();
+  node[key] = { deps, value };
+  return value;
 }
 
 /** Lines padded 1 column by pi, moved to column 3; `paint` colors a ● on the first text line. */
@@ -132,10 +155,8 @@ const output = (t: Tool) => (t.result ? outputOf(t.result) : "");
 const untab = (s: string) => s.replace(/\t/g, "   ");
 const linesOf = cached((r) => untab(outputOf(r)).split("\n"));
 // pi marks skipped lines with "..."; only the ones between hunks say something.
-// ponytail: cached with the theme's colors at the time; a theme switch keeps them.
-const diffOf = cached((r) =>
-  renderDiff((r.details?.diff ?? "").replace(/^\s*\.\.\.\n|\n\s*\.\.\.$/g, "")).split("\n"),
-);
+const diffOf = (r: Result) =>
+  renderDiff((r.details?.diff ?? "").replace(/^\s*\.\.\.\n|\n\s*\.\.\.$/g, "")).split("\n");
 
 function shortPath(path: string, cwd: string) {
   if (path.startsWith(`${cwd}/`)) return path.slice(cwd.length + 1);
@@ -194,7 +215,6 @@ function describe(t: Tool): [target: string, result: string] {
       return [target, ""];
   }
 }
-const described = new WeakMap<Result, [string, string]>();
 
 /** Whether a row shows its content: edits open with their diff; ctrl+o opens all; clicks win. */
 const isOpen = (t: Tool & Proto, config: Config): boolean =>
@@ -203,6 +223,11 @@ const isOpen = (t: Tool & Proto, config: Config): boolean =>
 /** Lines shown under an open row: the diff, written content, or output (red for failures). */
 function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
   const open = isOpen(t, config);
+  return memo(t, "clBody", [open, t.result, t.args?.content, theme], () =>
+    bodyLines(t, open, theme),
+  );
+}
+function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
   if (open && t.toolName === "write")
     return untab(str(t.args?.content).trimEnd())
       .split("\n")
@@ -215,9 +240,14 @@ function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
 
 /**
  * Rounded border like pi-footer's prompt box around `lines`, which fit width - 4; dashed with a
- * title in its top edge for special messages.
+ * title in its top edge for special messages. Cached on `node`.
  */
-function frame(lines: string[], width: number, theme: Theme, title?: string): string[] {
+function frame(node: Proto, lines: string[], width: number, theme: Theme, title?: string) {
+  return memo(node, "clFrame", [lines, width, theme, title], () =>
+    boxed(lines, width, theme, title),
+  );
+}
+function boxed(lines: string[], width: number, theme: Theme, title?: string): string[] {
   const inner = Math.max(1, width - 4);
   const [h, v] = title ? ["┄", "┆"] : ["─", "│"];
   const head = title ? `${h}${h} ${title} ` : "";
@@ -362,47 +392,47 @@ function groupLines(
   const i: number = node.clIndex;
   const first = neighbor(list, i, -1) !== "item";
   const last = kindOf(node) === "closes" || !["item", "closes"].includes(neighbor(list, i, 1));
-  const lines: string[] = [];
   const alone = first && last && solo;
-  // Open content hangs off a └ under the row's name (column 5), one space before it like the rows,
-  // and a blank line follows it unless the group ends (a spacer follows then).
-  rowBody = rowBody.map((l, j) => (j ? "  " : `${theme.fg("dim", "└")} `) + l);
-  if (rowBody.length && !last) rowBody.push("");
-  if (alone) {
-    lines.push("", `   ${solo}`, ...rowBody.map((l) => `   ${l}`)); // └ under the line's start
-    node.clRowY = 1;
-  } else {
-    if (first) {
-      const members = [];
-      for (let j = i; j < list.length; j++) {
-        const kind = kindOf(list[j]);
-        if (kind === "boundary") break;
-        if (kind !== "skip") members.push(list[j]);
-        if (kind === "closes") break;
-      }
-      lines.push("", `   ${summary(members, theme)}`); // aligned with assistant text
+  let head: string | undefined; // the summary line, when the member opens the group
+  if (first && !alone) {
+    const members = [];
+    for (let j = i; j < list.length; j++) {
+      const kind = kindOf(list[j]);
+      if (kind === "boundary") break;
+      if (kind !== "skip") members.push(list[j]);
+      if (kind === "closes") break;
     }
-    node.clRowY = lines.length;
-    const rail = last ? " " : theme.fg("dim", "│");
-    lines.push(
-      `   ${theme.fg("dim", last ? "└" : "├")} ${row}`,
-      ...rowBody.map((l) => `   ${rail} ${l}`),
-    );
+    head = summary(members, theme);
   }
-  // Right margin matches the left indent of the row text.
-  return lines.map((l) => truncateToWidth(l, Math.max(1, width - 3), theme.fg("muted", "…")));
+  node.clRowY = alone ? 1 : head ? 2 : 0;
+  return memo(node, "clGroup", [row, rowBody, width, theme, last, alone, head], () => {
+    // Open content hangs off a └ under the row's name (column 5), one space before it like the
+    // rows, and a blank line follows it unless the group ends (a spacer follows then).
+    const hung = rowBody.map((l, j) => (j ? "  " : `${theme.fg("dim", "└")} `) + l);
+    if (hung.length && !last) hung.push("");
+    let lines: string[];
+    if (alone) lines = ["", `   ${solo}`, ...hung.map((l) => `   ${l}`)]; // └ under the line's start
+    else {
+      const rail = last ? " " : theme.fg("dim", "│");
+      lines = [
+        ...(head ? ["", `   ${head}`] : []), // aligned with assistant text
+        `   ${theme.fg("dim", last ? "└" : "├")} ${row}`,
+        ...hung.map((l) => `   ${rail} ${l}`),
+      ];
+    }
+    // Right margin matches the left indent of the row text.
+    return lines.map((l) => truncateToWidth(l, Math.max(1, width - 3), theme.fg("muted", "…")));
+  });
 }
 
 function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config): string[] {
   const state = stateOf(t);
   if (t.executionStarted) t.clStart ??= Date.now();
   if (state !== "running" && t.clStart) t.clEnd ??= Date.now();
-  let info = t.result && described.get(t.result);
-  if (!info) {
-    info = describe(t);
-    if (t.result) described.set(t.result, info);
-  }
-  const [target, detail] = info;
+  // Until a result arrives the arguments may still be streaming in.
+  const [target, detail] = t.result
+    ? memo(t, "clInfo", [t.result], () => describe(t))
+    : describe(t);
   const seconds = t.clStart ? ((t.clEnd ?? Date.now()) - t.clStart) / 1000 : 0;
   let time = seconds >= 1 ? `${seconds.toFixed(1)}s` : "";
   // While running, a live timer (pi's spinner keeps frames coming) shows the call is in progress.
@@ -454,11 +484,15 @@ export default function (pi: ExtensionAPI) {
       return { render: () => [], invalidate() {} };
     });
     ctx.ui.setWidget("pi-content-layout", undefined);
+    // pi opens the chat without a spacer before a first user message, as the header ends with its
+    // own blank lines; the same for anything else first (a resumed session's compaction summary).
     // When a group ends the chat, its dense tree rows would sit tight against the prompt, so the
     // chat gets one more blank line then. Inside the chat, so it scrolls with the content; text
     // and status lines keep just pi's own spacer.
     if (chat)
       override(chat, (orig, width) => {
+        const [first] = chat!.children;
+        if (first instanceof Spacer) override(first, () => []);
         const lines = orig(width);
         return neighbor(chat!.children, chat!.children.length, -1) === "item"
           ? [...lines, ""]
@@ -507,7 +541,7 @@ export default function (pi: ExtensionAPI) {
             this.clear();
             for (const child of box.children) this.addChild(child);
           }
-          const lines = frame(inner(this, width), width, theme());
+          const lines = [...frame(this, inner(this, width), width, theme())];
           // pi's prompt marks stay at column 0 of the first and last lines, as pi places them:
           // terminals like Ghostty start a fresh line at the opening mark when it isn't.
           lines[0] = mark("A") + lines[0];
@@ -520,7 +554,7 @@ export default function (pi: ExtensionAPI) {
     // itself): pi's background box becomes a dashed border with pi's label in it. Their first two
     // lines are the label and a blank line.
     const special = (box: Proto, width: number, title: string) =>
-      frame(inner(box, width).slice(2), width, theme(), title);
+      frame(box, inner(box, width).slice(2), width, theme(), title);
     for (const [proto, title] of [
       [CompactionSummaryMessageComponent.prototype, "compaction"],
       [BranchSummaryMessageComponent.prototype, "branch"],
@@ -552,7 +586,7 @@ export default function (pi: ExtensionAPI) {
           const body = this.expanded
             ? lines.slice(1)
             : lines.map((l) => l.replace("\x1b[1m[skill]\x1b[22m ", ""));
-          return frame(body, width, theme(), "skill");
+          return frame(this, body, width, theme(), "skill");
         },
     );
 
@@ -565,10 +599,13 @@ export default function (pi: ExtensionAPI) {
       () =>
         function (this: Proto, width: number) {
           // The output follows the command without pi's blank line.
-          const lines = tidy(this.contentContainer.render(Math.max(1, width - 4)));
-          if (lines.length > 1 && blank(lines[1]!)) lines.splice(1, 1);
-          const rule = this.children.find((c: unknown) => c instanceof DynamicBorder);
-          return ["", ...bulleted(lines, rule?.color)];
+          const raw: string[] = this.contentContainer.render(Math.max(1, width - 4));
+          return memo(this, "clBash", [raw, theme()], () => {
+            const lines = tidy(raw);
+            if (lines.length > 1 && blank(lines[1]!)) lines.splice(1, 1);
+            const rule = this.children.find((c: unknown) => c instanceof DynamicBorder);
+            return ["", ...bulleted(lines, rule?.color)];
+          });
         },
     );
     // A panel is the siblings between two rules anywhere in the chat, pi's or an extension's
@@ -592,7 +629,10 @@ export default function (pi: ExtensionAPI) {
             if (member instanceof Markdown) member.paddingY = 0; // pi spaces the panel already
             override(
               member,
-              (orig, w) => bulleted(tidy(orig(Math.max(1, w - 4))), paint),
+              (orig, w) => {
+                const raw = orig(Math.max(1, w - 4));
+                return memo(member, "clLines", [raw, theme()], () => bulleted(tidy(raw), paint));
+              },
               () => member instanceof Markdown && (member.paddingY = paddingY),
             );
           }
@@ -680,12 +720,13 @@ export default function (pi: ExtensionAPI) {
               }
               thinking = this.clThinking.md.render(Math.max(1, width - 10)); // 7 in, 3 margin
             }
-            group = groupLines(this, row, thinking, width, th, solo);
+            group = [...groupLines(this, row, thinking, width, th, solo)];
             group[group.length - 1] = marksOf(label) + group[group.length - 1];
             group[0] = spacer + group[0];
             text = rest;
           }
-          text = bulleted(text, (s) => th.fg("text", s));
+          const body = text;
+          text = memo(this, "clText", [body, th], () => bulleted(body, (s) => th.fg("text", s)));
           this.clTextY = group.length;
           return [...group, ...text];
         },
