@@ -327,8 +327,7 @@ export default function (pi: ExtensionAPI) {
           `**${s[0].toUpperCase()}${s.slice(1)}**\n\n${paths.map((p) => `- \`${p}\``).join("\n")}`,
       )
       .join("\n\n");
-    const box = new Container();
-    box.addChild(new Spacer(1));
+    const box = new Container(); // pi's entry wrapper spaces it from the chat
     box.addChild(new DynamicBorder());
     box.addChild(new Text(theme.bold(theme.fg("accent", "Loaded Resources")), 1, 0));
     box.addChild(new Spacer(1));
