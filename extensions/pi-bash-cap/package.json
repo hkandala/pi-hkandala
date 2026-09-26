@@ -1,0 +1,25 @@
+{
+  "name": "@hkandala/pi-bash-cap",
+  "version": "0.1.0",
+  "description": "Configurable line and byte limits for pi's bash tool output",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

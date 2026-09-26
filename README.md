@@ -12,6 +12,7 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 | [pi-prompt-clipboard](extensions/pi-prompt-clipboard/README.md) | ctrl+shift+s copies the prompt to the clipboard and clears it; paste long text twice to expand it for editing          |
 | [pi-retry](extensions/pi-retry/README.md)                       | Makes pi's auto-retry cover every model error (unknown errors, 400s, ...), except auth errors                          |
 | [pi-continue](extensions/pi-continue/README.md)                 | ctrl+shift+enter sends a continue prompt (queued as a follow-up while the agent is working)                            |
+| [pi-bash-cap](extensions/pi-bash-cap/README.md)                 | Configurable line and byte limits for bash tool output                                                                 |
 
 ## Install
 
