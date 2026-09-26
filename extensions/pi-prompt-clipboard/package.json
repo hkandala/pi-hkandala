@@ -1,0 +1,26 @@
+{
+  "name": "@hkandala/pi-prompt-clipboard",
+  "version": "0.1.0",
+  "description": "Copy the pi prompt to the clipboard with one key, and paste long text twice to expand it",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
