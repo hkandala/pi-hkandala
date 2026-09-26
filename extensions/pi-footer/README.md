@@ -49,8 +49,10 @@ Click the footer (fullscreen TUI mode) or run `/dashboard` to expand or collapse
    speed      58 t/s last · 61 t/s avg
 
    session    fix footer · 12 user · 51 assistant · 87 tool calls
-   time       42m working · 2h 10m since start
+   time       1m last turn · 42m working · 2h 10m since start
 ```
+
+The time row shows the last turn's length (a user message to its reply's end) or, while a turn runs, its time so far (`… this turn`).
 
 Git info refreshes one second after tool calls, `!` commands, agent runs, and branch changes, plus on a poll; `git fetch` runs on its own poll (and at start when the last fetch is older than that). Git only runs in trusted projects, with fsmonitor off, and fetch never prompts for credentials. Remote URLs are shown without any embedded credentials.
 

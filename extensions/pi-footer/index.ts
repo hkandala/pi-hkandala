@@ -161,6 +161,7 @@ function sessionStats(ctx: ExtensionContext) {
     streamMs: 0,
     streamOutput: 0,
     workingMs: 0,
+    lastTurnMs: 0, // the last run, from its user message to its last entry
     startedAt: undefined as number | undefined,
     cachedAt: undefined as number | undefined, // last response or warm refresh that used the cache
     lastCached: false, // last response read or wrote the prompt cache
@@ -215,7 +216,7 @@ function sessionStats(ctx: ExtensionContext) {
       s.streamOutput += usage.output;
     }
   }
-  if (runStart !== undefined) s.workingMs += runEnd - runStart;
+  if (runStart !== undefined) s.workingMs += s.lastTurnMs = runEnd - runStart;
   return s;
 }
 
@@ -344,6 +345,9 @@ function contextUsage(ctx: ExtensionContext) {
   const { tokens } = estimate;
   return { ...usage, tokens, percent: (tokens / usage.contextWindow) * 100, estimated: true };
 }
+
+/** When the running turn started (agent_start), while one runs. */
+let turnStartedAt: number | undefined;
 
 function render(
   pi: ExtensionAPI,
@@ -637,9 +641,16 @@ function render(
     session.push(
       row(
         "time",
-        val(`${duration(s.workingMs)} working`) +
-          dot +
-          val(`${duration(Date.now() - s.startedAt)} since start`),
+        [
+          turnStartedAt
+            ? `${duration(Date.now() - turnStartedAt)} this turn`
+            : s.lastTurnMs && `${duration(s.lastTurnMs)} last turn`,
+          `${duration(s.workingMs)} working`,
+          `${duration(Date.now() - s.startedAt)} since start`,
+        ]
+          .filter(Boolean)
+          .map((x) => val(x!))
+          .join(dot),
       ),
     );
   blocks.push(session);
@@ -855,12 +866,19 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     stop();
     session = undefined;
+    turnStartedAt = undefined;
   });
 
   // Anything that may have edited files or moved HEAD.
   pi.on("tool_result", async () => refreshSoon());
   pi.on("user_bash", async () => refreshSoon());
-  pi.on("agent_end", async () => refreshSoon());
+  pi.on("agent_start", async () => {
+    turnStartedAt = Date.now();
+  });
+  pi.on("agent_end", async () => {
+    turnStartedAt = undefined;
+    refreshSoon();
+  });
 
   pi.registerCommand("dashboard", {
     description: "Expand or collapse the footer dashboard",
