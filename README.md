@@ -45,7 +45,7 @@ package.json          # root package: loads everything below (private, not publi
 extensions/
   <name>/
     package.json      # standalone pi package, publishable to npm
-    index.ts          # entry point
+    index.ts          # entry point (a large one splits self-contained parts into files beside it)
     README.md         # what it does + configuration
 ```
 

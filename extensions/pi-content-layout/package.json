@@ -7,7 +7,7 @@
   ],
   "license": "MIT",
   "files": [
-    "index.ts",
+    "*.ts",
     "README.md"
   ],
   "type": "module",

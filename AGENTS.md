@@ -17,7 +17,7 @@ The root `package.json` intentionally has no `pi` manifest: pi then auto-discove
 - No build step: pi loads `.ts` directly.
 - Extension config lives in `~/.pi/agent/extensions/<name>.json`, is optional, and every key has a default.
 - Guard TUI-only UI with `ctx.mode === "tui"`.
-- Keep extensions small and simple; prefer one `index.ts`.
+- Keep extensions small and simple; prefer one `index.ts`. Move a self-contained part (no shared state) into a file beside it only when `index.ts` grows long; `"files": ["*.ts", "README.md"]` publishes it.
 
 ## Workflow
 

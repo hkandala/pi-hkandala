@@ -31,7 +31,7 @@ A compact, minimal transcript for pi: tool calls and thinking collapse into a su
 - **Groups:** tool calls and thinking between two pieces of assistant text form one group: a summary line ("Read 2 files, ran 1 command", failures in red) with a tree of one-row calls under it. `ctrl+shift+o` collapses all groups to their summary line, or expands them (saved to the config file, so it carries over to future sessions); click a summary line to collapse or expand just that group.
 - **Tool rows:** name (bold), target (file, command, or pattern), and result (line or match counts, an edit's `+added -removed` and a write's `+lines`, in the diff's colors when open, duration from 1s up; with [timestamps](#timestamps) on, in their column). Long targets shorten so the result stays visible. Running calls show `running Xs` and failures are red. In fullscreen TUI mode, what's still running pulses gently: a closed call's whole row, an open call's name, `thinking…`, or a collapsed group's summary line (from the group's start until text or a message ends it, or the turn ends, so it keeps going between calls); closed ones from muted a little toward bright, open ones from bright a little toward muted.
 - **Thinking:** a tree row, `thinking…` while it streams, then `thought for Xs`: `thought briefly` under a second, and `thought for some time` for messages loaded from history, since pi saves no thinking time. Thinking with no tool calls around it is a single `Thought for Xs` line. It opens or closes with `ctrl+t`, pi's own setting, new thinking included.
-- **Assistant text:** every piece starts with a `●`.
+- **Assistant text:** every piece starts with a `●`; click it to copy the reply (see [Copying](#copying)).
 - **User messages:** in a rounded border like [pi-footer](../pi-footer/README.md)'s prompt box, without pi's background.
 - **Special messages:** compaction and branch summaries, skill invocations, and extension messages pi draws itself, in a dashed rounded border with their label in the top edge (`╭┄┄ compaction ┄┄╮`). Click a summary or skill to open it. Both boxes sit a column in on each side, so their text lines up with assistant text.
 - **User bash and info panels:** `!cmd` runs and panels between horizontal rules, pi's (`/changelog`, `/hotkeys`, update notices) or an extension's (pi-header's `/loaded`), read like assistant text, a `●` and column 3, without pi's horizontal rules. The `●` is white for assistant text, pi's bash green for `!cmd` (dim for `!!cmd`, which stays out of the context), and accent for panels, like their heading.
@@ -48,19 +48,21 @@ Click a row (fullscreen TUI mode) to open or close it within the tree: its conte
          4   return items.slice(0, max);
 ```
 
-| Shortcut       | Does                                                                                                                         |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `ctrl+o`       | Open or close all tool rows (pi's)                                                                                           |
-| `ctrl+t`       | Open or close all thinking (pi's)                                                                                            |
-| `ctrl+shift+o` | Collapse or expand all groups to their summary line (saved)                                                                  |
-| `ctrl+shift+t` | Cycle [timestamps](#timestamps): off → relative → absolute (saved)                                                           |
-| Click          | A row, thought, or summary line: open or close just that one; a `↓ N more lines` or `↑ show less` line: show or cut the rest |
+| Shortcut       | Does                                                                                                                                                 |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ctrl+o`       | Open or close all tool rows (pi's)                                                                                                                   |
+| `ctrl+t`       | Open or close all thinking (pi's)                                                                                                                    |
+| `ctrl+shift+o` | Collapse or expand all groups to their summary line (saved)                                                                                          |
+| `ctrl+shift+t` | Cycle [timestamps](#timestamps): off → relative → absolute (saved)                                                                                   |
+| Click          | A row, thought, or summary line: open or close just that one; a `↓ N more lines` or `↑ show less` line: show or cut the rest; a reply's `●`: copy it |
 
 pi has no public API for restyling its own messages, so this extension patches the rendering of pi's message and tool components (restored on shutdown, and falling back to pi's own rendering on any error). It doesn't combine with other extensions that restyle the same components.
 
-**Copying a reply:** click an assistant message's `●` (fullscreen TUI mode) to copy it as written, in markdown; it shows `✓` for a moment.
+## Copying
 
-**Copying:** selecting text (fullscreen TUI mode) copies it without the layout's decoration: box edges and sides, tree lines, bullets, timestamps, and `↓`/`↑` lines. Text wrapped to fit (assistant text, boxes, thinking on its own) joins back into its original lines. Tool output and code keep their lines, dedented to column 0: a diff copies as its code after the edit, without line numbers, `+`/`-`, or removed lines, and a code block in assistant text without its extra indent. Lines cut off with `…` copy as shown (set `enableWordWrap` to see them whole).
+In fullscreen TUI mode, click a reply's `●` to copy the reply as written, in markdown; it shows `✓` for a moment.
+
+Selecting text copies it without the layout's decoration: box edges and sides, tree lines, bullets, timestamps, and `↓`/`↑` lines. Text wrapped to fit (assistant text, boxes, thinking on its own) joins back into its original lines. Tool output and code keep their lines, dedented to column 0: a diff copies as its code after the edit, without line numbers, `+`/`-`, or removed lines, and a code block in assistant text without its extra indent. Lines cut off with `…` copy as shown (set `enableWordWrap` to see them whole).
 
 ## Timestamps
 

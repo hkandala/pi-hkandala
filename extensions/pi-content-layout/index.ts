@@ -13,7 +13,8 @@
  * - User messages sit in a rounded border like pi-footer's prompt box; compaction and branch
  *   summaries, skills, and extension messages in a dashed one, labeled in its top edge.
  * - User bash (!cmd) and info panels (pi's or extensions') read like assistant text, without rules.
- * - Each piece of assistant text starts with a ● bullet; summary lines align with its text.
+ * - Each piece of assistant text starts with a ● bullet (click it to copy the reply as markdown);
+ *   summary lines align with its text.
  * - ctrl+shift+o collapses or expands all groups to their summary line (saved); click a summary
  *   line for its own group.
  * - ctrl+shift+t cycles timestamps (off, relative, absolute; saved): when messages, groups, and
@@ -44,7 +45,6 @@ import {
   copyToClipboard,
   getAgentDir,
   getLanguageFromPath,
-  highlightCode,
 } from "@earendil-works/pi-coding-agent";
 import {
   Box,
@@ -58,6 +58,8 @@ import {
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { between, diffOf, highlighted, rgbOf, untab } from "./code.ts";
+import { copied } from "./copy.ts";
 
 type Stamps = "off" | "relative" | "absolute";
 type Config = {
@@ -350,144 +352,11 @@ const outputOf = cached((r) =>
     .trimEnd(),
 );
 const output = (t: Tool) => (t.result ? outputOf(t.result) : "");
-const untab = (s: string) => s.replace(/\t/g, "   ");
 const linesOf = cached((r) => untab(outputOf(r)).split("\n"));
-
-// --- Highlighting -------------------------------------------------------------------------------
-// Code is colored by pi's own highlighter, in the theme's syntax colors, like code blocks in
-// assistant text. An edit's diff highlights each side whole, so multi-line strings and comments
-// keep their colors, then tints its lines with the theme's tool backgrounds, and the changed words
-// of a changed line with a stronger tint.
-
-/** Lines of `code` colored as `lang`, or in the text color without one. */
-function highlighted(code: string, lang: string | undefined, theme: Theme): string[] {
-  if (!lang) return code.split("\n").map((l) => theme.fg("text", l));
-  // pi splits the colored text into lines as is: a token across lines (a block comment, a template
-  // string) needs its color reopened on each.
-  let open = "";
-  return highlightCode(code, lang).map((l) => {
-    const line = open + l;
-    // oxlint-disable-next-line no-control-regex
-    const last = line.match(/\x1b\[(?:38;[\d;]*|39)m/g)?.at(-1) ?? "";
-    open = last.startsWith("\x1b[38") ? last : "";
-    return line;
-  });
-}
-
-/** A color code's RGB, when it's a truecolor one. */
-const rgbOf = (ansi: string) => /8;2;(\d+);(\d+);(\d+)/.exec(ansi)?.slice(1).map(Number);
-/** The RGB `t` of the way from `a` to `b`, as "r;g;b". */
-const between = (a: number[], b: number[], t: number) =>
-  a.map((v, i) => Math.round(v + (b[i]! - v) * t)).join(";");
-
-/** Background codes for added and removed lines, and a stronger one for their changed words. */
-function tints(theme: Theme) {
-  const tint = (bg: "toolSuccessBg" | "toolErrorBg", fg: "toolDiffAdded" | "toolDiffRemoved") => {
-    const line = theme.getBgAnsi(bg);
-    const [from, to] = [rgbOf(line), rgbOf(theme.getFgAnsi(fg))];
-    return { line, word: from && to ? `\x1b[48;2;${between(from, to, 0.25)}m` : line };
-  };
-  return {
-    "+": tint("toolSuccessBg", "toolDiffAdded"),
-    "-": tint("toolErrorBg", "toolDiffRemoved"),
-  };
-}
-
-/** Ranges of `a` not in `b`, by words, spaces, and punctuation; none when most of `a` changed. */
-function changed(a: string, b: string): [number, number][] {
-  const [x, y] = [a, b].map((s) => s.match(/\w+|\s+|[^\w\s]/g) ?? []) as [string[], string[]];
-  if (x.length * y.length > 250_000) return [];
-  // Longest common subsequence of tokens, walked forward.
-  const lcs = Array.from({ length: x.length + 1 }, () => Array<number>(y.length + 1).fill(0));
-  for (let i = x.length - 1; i >= 0; i--)
-    for (let j = y.length - 1; j >= 0; j--)
-      lcs[i]![j] =
-        x[i] === y[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
-  const out: [number, number][] = [];
-  let [i, j, col, total] = [0, 0, 0, 0];
-  while (i < x.length) {
-    if (x[i] === y[j]) j++; // in both
-    else if (j < y.length && lcs[i]![j + 1]! >= lcs[i + 1]![j]!) {
-      j++; // only in b
-      continue;
-    } else {
-      // only in a
-      const last = out.at(-1);
-      if (last?.[1] === col) last[1] += x[i]!.length;
-      else out.push([col, col + x[i]!.length]);
-      total += x[i]!.length;
-    }
-    col += x[i++]!.length;
-  }
-  return total > a.trim().length * 0.6 ? [] : out;
-}
-
-/** `s` with `on` and `off` around the given ranges of its visible characters. */
-function emphasize(s: string, ranges: [number, number][], on: string, off: string): string {
-  let [out, col] = ["", 0];
-  // oxlint-disable-next-line no-control-regex
-  for (const [, code, ch] of s.matchAll(/(\x1b\[[\d;]*m)|([\s\S])/g)) {
-    if (code) out += code;
-    else {
-      if (ranges.some(([a]) => a === col)) out += on;
-      out += ch;
-      col++;
-      if (ranges.some(([, b]) => b === col)) out += off;
-    }
-  }
-  return out;
-}
-
-type DiffRow = { sign: string; num: string; text: string } | undefined; // undefined: a gap
-/** An edit's diff, from pi's "+12 code" lines ("..." marks skipped lines; only gaps are kept). */
-function diffOf(r: Result, lang: string | undefined, theme: Theme): string[] {
-  const rows: DiffRow[] = (r.details?.diff ?? "")
-    .replace(/^\s*\.\.\.\n|\n\s*\.\.\.$/g, "")
-    .split("\n")
-    .map((l) => {
-      const m = /^([+\- ])(\s*\d+) (.*)$/.exec(l);
-      return m ? { sign: m[1]!, num: m[2]!, text: untab(m[3]!) } : undefined;
-    });
-  const side = (skip: string) => {
-    const kept = rows.filter((row) => row && row.sign !== skip);
-    const lines = highlighted(kept.map((row) => row!.text).join("\n"), lang, theme);
-    return new Map(kept.map((row, i) => [row, lines[i] ?? ""]));
-  };
-  const [before, after, tint] = [side("+"), side("-"), tints(theme)];
-  const line = (row: NonNullable<DiffRow>, other?: DiffRow) => {
-    const code = (row.sign === "+" ? after : before).get(row)!;
-    const num = theme.fg("dim", row.num);
-    if (row.sign === " ") return ` ${num} ${code}`;
-    const t = tint[row.sign as "+" | "-"];
-    const sign = theme.fg(row.sign === "+" ? "toolDiffAdded" : "toolDiffRemoved", row.sign);
-    const marks = other ? changed(row.text, other.text) : [];
-    // The tint stays open to the line's end: groupLines pads it across the row.
-    return `${t.line}${sign}${num} ${marks.length ? emphasize(code, marks, t.word, t.line) : code}`;
-  };
-  const out: string[] = [];
-  for (let i = 0; i < rows.length;) {
-    const row = rows[i];
-    if (row?.sign !== "-") {
-      out.push(row ? line(row) : theme.fg("dim", "  ⋮"));
-      i++;
-      continue;
-    }
-    // Removed lines, then added ones: paired line by line for word marks when the counts match.
-    let j = i;
-    while (rows[j]?.sign === "-") j++;
-    let k = j;
-    while (rows[k]?.sign === "+") k++;
-    const paired = j - i === k - j;
-    for (let n = i; n < k; n++)
-      out.push(line(rows[n]!, paired ? rows[n < j ? n + j - i : n - j + i] : undefined));
-    i = k;
-  }
-  return out;
-}
 
 function shortPath(path: string, cwd: string) {
   if (path.startsWith(`${cwd}/`)) return path.slice(cwd.length + 1);
-  return path.startsWith(homedir()) ? `~${path.slice(homedir().length)}` : path;
+  return path.startsWith(`${homedir()}/`) ? `~${path.slice(homedir().length)}` : path;
 }
 
 /** What a call targets and, once settled, what came back. */
@@ -559,7 +428,8 @@ function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
   if (open && t.toolName === "write")
     return highlighted(untab(str(t.args?.content).trimEnd()), lang, theme);
   if (!open || !t.result) return [];
-  if (t.toolName === "edit" && t.result.details?.diff) return diffOf(t.result, lang, theme);
+  if (t.toolName === "edit" && t.result.details?.diff)
+    return diffOf(t.result.details.diff, lang, theme);
   if (t.toolName === "read" && !t.result.isError) {
     // pi ends a partial read with a note ("[705 more lines in file. …]"), which isn't code.
     const lines = linesOf(t.result);
@@ -697,86 +567,6 @@ function pulse(theme: Theme, s: string, open: boolean): string {
   if (!fullscreen || !muted || !text) return theme.fg(open ? "text" : "muted", s);
   const t = (0.4 * (1 - Math.cos((Date.now() / 1600) * 2 * Math.PI))) / 2;
   return `\x1b[38;2;${open ? between(text, muted, t) : between(muted, text, t)}m${s}\x1b[39m`;
-}
-
-// --- Copying ------------------------------------------------------------------------------------
-// pi's full-screen selection copies the screen as drawn. The layout's decoration comes off first:
-// box edges and sides, tree glyphs, bullets, timestamps, and toggle lines. Text wrapped to fit
-// (assistant text, boxes, lone thinking: it starts by column 5) joins back where the next line's
-// first word wouldn't have fit on the line. Tool content (from column 7, under the tree's │ or └:
-// code and output, cut off rather than wrapped) comes out as its own block, dedented, and a diff
-// as its code after the edit.
-
-type Copied = { line: string; end: number; lead: number; code?: boolean };
-
-/** Selected screen text, starting at column `start` of a `width`-wide screen, as plain text. */
-function copied(text: string, start: number, width: number): string {
-  const limit = width - 3 - reserve(); // where text wraps: the right margin, and the time column
-  const kept: Copied[] = [];
-  let fence = -1; // the column of an open ``` fence in assistant text
-  let tool = false; // in tool content: from a line with the tree's │ or └ until text is back left
-  for (let [i, line] of text.split("\n").entries()) {
-    if (!i) line = " ".repeat(start) + line; // columns line up with the full lines below
-    const t = line.trim();
-    const tree = line[3] === "│" || line[5] === "└";
-    if (/^[╭╰]/.test(t) || /^[─┄]+.*[╮╯]$/.test(t)) continue; // a box's top or bottom edge
-    // A timestamp ends 3 columns from the right, after its dotted leader.
-    if (visibleWidth(line) === width - 3) line = line.replace(/ +·(?: ·)* +[^·]*$/, "");
-    line = line
-      .replace(/\s+[│┆]$/, "") // a box's right side
-      .replace(/^[\s│┆├└●]+/, (m) => " ".repeat(m.length)); // box sides, tree, bullets
-    if (/^\s*(?:↓ \d+ more lines?|↑ show less)$/.test(line)) continue;
-    const end = visibleWidth(line.trimEnd());
-    let lead = line.search(/\S/);
-    if (t.startsWith("```")) fence = fence < 0 ? lead : -1;
-    // pi indents a code block's lines 2 columns past its fence.
-    else if (fence >= 0 && lead >= fence + 2)
-      [line, lead] = [line.slice(0, fence) + line.slice(fence + 2), lead - 2];
-    if (lead >= 0) tool = lead >= 7 && (tool || tree);
-    kept.push({ line, end, lead, code: fence < 0 && tool && lead >= 7 });
-  }
-  const prose = kept.filter((k) => !k.code && k.lead >= 0);
-  const indent = prose.length ? Math.min(...prose.map((k) => k.lead)) : 0;
-  const out: string[] = [];
-  let prev: Copied | undefined;
-  for (let i = 0; i < kept.length; i++) {
-    const k = kept[i]!;
-    if (k.code) {
-      // The run of tool content, blank lines inside it included.
-      let j = i;
-      while (kept[j]?.code || (kept[j]?.lead === -1 && kept[j + 1]?.code)) j++;
-      out.push(...codeOf(kept.slice(i, j)));
-      [i, prev] = [j - 1, undefined];
-      continue;
-    }
-    const word = k.line.trim().split(/\s/)[0]!;
-    const wrapped =
-      prev &&
-      prev.lead >= 0 &&
-      prev.lead <= 5 &&
-      !prev.line.trimEnd().endsWith("…") &&
-      prev.end + 1 + visibleWidth(word) > limit &&
-      k.lead - prev.lead >= 0 &&
-      k.lead - prev.lead <= 3 && // a paragraph's or list item's next line
-      !/^(?:[-*+]|\d+[.)])\s/.test(k.line.trim()); // not a new list item
-    if (wrapped) out[out.length - 1] += ` ${k.line.trim()}`;
-    else out.push(k.line.slice(indent).trimEnd());
-    prev = k;
-  }
-  return out.join("\n").replace(/^\n+|\n+$/g, "");
-}
-
-/** A run of tool content, dedented; a diff ("+12 code" lines, ⋮ between hunks) as its new code. */
-function codeOf(run: Copied[]): string[] {
-  const lines = run.map((k) => k.line).filter((l) => l.trim() !== "⋮");
-  const dedent = (ls: string[]) => {
-    const lead = Math.min(...ls.filter((l) => l.trim()).map((l) => l.search(/\S/)));
-    return ls.map((l) => l.slice(lead).trimEnd());
-  };
-  // A blank line reads as a blank context line.
-  const rows = dedent(lines).map((l) => (l ? /^([-+ ])( *\d+) (.*)$/.exec(l) : ["", " ", "", ""]));
-  if (!rows.every(Boolean) || !rows.some((m) => m![1] !== " ")) return dedent(lines);
-  return dedent(rows.filter((m) => m![1] !== "-").map((m) => m![3]!));
 }
 
 /** The member that opens the group `list[i]` belongs to (it keeps the group's collapsed state). */
@@ -1082,7 +872,7 @@ export default function (pi: ExtensionAPI) {
       if (copy) {
         tui.copySelection = (text) => {
           const start = tui.getSelectionBounds?.()?.start.col ?? 0;
-          return copy(copied(text, start, tui.terminal?.columns ?? 80));
+          return copy(copied(text, start, tui.terminal?.columns ?? 80, reserve()));
         };
         restores.push(() => (tui.copySelection = copy));
       }
@@ -1364,8 +1154,8 @@ export default function (pi: ExtensionAPI) {
           const body = text;
           const stamp = clock(this.lastMessage?.timestamp);
           // The ● copies the reply (see handleMouse), and shows ✓ for a moment after.
-          const copied = Date.now() - (this.clCopied ?? 0) < 1200;
-          const bullet = copied ? th.fg("success", "✓") : th.fg("text", "●");
+          const justCopied = Date.now() - (this.clCopied ?? 0) < 1200;
+          const bullet = justCopied ? th.fg("success", "✓") : th.fg("text", "●");
           text = memo(this, "clText", [body, th, stamp, bullet, width], () =>
             stampFirst(
               bulleted(body, () => bullet),
@@ -1375,7 +1165,8 @@ export default function (pi: ExtensionAPI) {
             ),
           );
           this.clTextY = group.length;
-          this.clBulletY = group.length + text.findIndex((l) => !blank(l));
+          const bulletY = text.findIndex((l) => !blank(l));
+          this.clBulletY = bulletY < 0 ? undefined : group.length + bulletY;
           return [...group, ...text];
         },
     );
@@ -1394,10 +1185,14 @@ export default function (pi: ExtensionAPI) {
               .map((c) => c.text!.trim())
               .join("\n\n");
             if (source) {
-              void copyToClipboard(source);
-              this.clCopied = Date.now();
-              requestRender();
-              setTimeout(requestRender, 1250);
+              copyToClipboard(source).then(
+                () => {
+                  this.clCopied = Date.now();
+                  requestRender();
+                  setTimeout(requestRender, 1250);
+                },
+                () => {}, // no clipboard: nothing to confirm
+              );
               return { handled: true };
             }
           }

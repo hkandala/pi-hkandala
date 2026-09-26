@@ -154,7 +154,9 @@ function render(
 }
 
 const tilde = (path: string) =>
-  path.startsWith(homedir()) ? `~${path.slice(homedir().length)}` : path;
+  path === homedir() || path.startsWith(`${homedir()}/`)
+    ? `~${path.slice(homedir().length)}`
+    : path;
 const displayPath = (path: string, cwd: string) => {
   const rel = relative(cwd, path);
   return rel.startsWith("..") ? tilde(path) : rel;
