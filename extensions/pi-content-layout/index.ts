@@ -23,7 +23,7 @@
  * - Copying a selection (full screen) leaves out the layout's decoration and rejoins wrapped text.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-content-layout.json
- *   { "autoExpandedTools": ["edit"], "maxExpandedLines": 10, "enableWordWrap": false,
+ *   { "autoExpandedTools": ["edit", "write"], "maxExpandedLines": 10, "enableWordWrap": false,
  *     "collapseGroups": false,
  *     "timestamps": "off" | "relative" | "absolute", "timestampFormat": "24h" | "12h" }
  *
@@ -877,7 +877,7 @@ export default function (pi: ExtensionAPI) {
     const max = Number(config.maxExpandedLines ?? 10);
     maxLines = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 10;
     wordWrap = config.enableWordWrap === true;
-    if (!Array.isArray(config.autoExpandedTools)) config.autoExpandedTools = ["edit"];
+    if (!Array.isArray(config.autoExpandedTools)) config.autoExpandedTools = ["edit", "write"];
     stamps = STAMPS.includes(config.timestamps!) ? config.timestamps! : "off";
     twelveHour = config.timestampFormat === "12h";
     session = ctx.sessionManager as unknown as Session;
