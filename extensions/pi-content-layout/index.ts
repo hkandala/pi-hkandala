@@ -41,6 +41,7 @@ import {
   SkillInvocationMessageComponent,
   ToolExecutionComponent,
   UserMessageComponent,
+  copyToClipboard,
   getAgentDir,
   getLanguageFromPath,
   highlightCode,
@@ -1362,15 +1363,19 @@ export default function (pi: ExtensionAPI) {
           }
           const body = text;
           const stamp = clock(this.lastMessage?.timestamp);
-          text = memo(this, "clText", [body, th, stamp, width], () =>
+          // The ● copies the reply (see handleMouse), and shows ✓ for a moment after.
+          const copied = Date.now() - (this.clCopied ?? 0) < 1200;
+          const bullet = copied ? th.fg("success", "✓") : th.fg("text", "●");
+          text = memo(this, "clText", [body, th, stamp, bullet, width], () =>
             stampFirst(
-              bulleted(body, (s) => th.fg("text", s)),
+              bulleted(body, () => bullet),
               stamp,
               width,
               th,
             ),
           );
           this.clTextY = group.length;
+          this.clBulletY = group.length + text.findIndex((l) => !blank(l));
           return [...group, ...text];
         },
     );
@@ -1382,6 +1387,20 @@ export default function (pi: ExtensionAPI) {
         function (this: Proto, event: Mouse) {
           const rowY: number | undefined = this.clRowY;
           const click = event.type === "click" && event.button === "left";
+          // A click on the ● copies the reply's text as written (markdown).
+          if (click && event.y === this.clBulletY && event.x <= 2) {
+            const source = (this.lastMessage as Message).content
+              .filter((c) => c.type === "text" && c.text?.trim())
+              .map((c) => c.text!.trim())
+              .join("\n\n");
+            if (source) {
+              void copyToClipboard(source);
+              this.clCopied = Date.now();
+              requestRender();
+              setTimeout(requestRender, 1250);
+              return { handled: true };
+            }
+          }
           if (click && event.y === this.clHeadY) return toggleGroup(this);
           if (click && event.y === this.clMoreY) {
             this.clFullBody = !this.clFullBody; // the thinking's toggle line

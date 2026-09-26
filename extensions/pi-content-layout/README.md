@@ -58,6 +58,8 @@ Click a row (fullscreen TUI mode) to open or close it within the tree: its conte
 
 pi has no public API for restyling its own messages, so this extension patches the rendering of pi's message and tool components (restored on shutdown, and falling back to pi's own rendering on any error). It doesn't combine with other extensions that restyle the same components.
 
+**Copying a reply:** click an assistant message's `●` (fullscreen TUI mode) to copy it as written, in markdown; it shows `✓` for a moment.
+
 **Copying:** selecting text (fullscreen TUI mode) copies it without the layout's decoration: box edges and sides, tree lines, bullets, timestamps, and `↓`/`↑` lines. Text wrapped to fit (assistant text, boxes, thinking on its own) joins back into its original lines. Tool output and code keep their lines, dedented to column 0: a diff copies as its code after the edit, without line numbers, `+`/`-`, or removed lines, and a code block in assistant text without its extra indent. Lines cut off with `…` copy as shown (set `enableWordWrap` to see them whole).
 
 ## Timestamps
