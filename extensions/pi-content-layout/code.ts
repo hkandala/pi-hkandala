@@ -24,6 +24,12 @@ export function highlighted(code: string, lang: string | undefined, theme: Theme
   });
 }
 
+/** Code lines numbered from `first`, like a diff's unchanged lines (a blank sign column). */
+export function numbered(lines: string[], first: number, theme: Theme): string[] {
+  const width = String(first + lines.length - 1).length;
+  return lines.map((l, i) => ` ${theme.fg("dim", String(first + i).padStart(width))} ${l}`);
+}
+
 /** A color code's RGB, when it's a truecolor one. */
 export const rgbOf = (ansi: string) => /8;2;(\d+);(\d+);(\d+)/.exec(ansi)?.slice(1).map(Number);
 /** The RGB `t` of the way from `a` to `b`, as "r;g;b". */

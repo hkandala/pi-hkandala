@@ -17,6 +17,7 @@
  *   summary lines align with its text.
  * - ctrl+shift+o collapses or expands all groups to their summary line (saved); click a summary
  *   line for its own group.
+ * - ctrl+shift+w wraps long lines of open tool content, or cuts them off with … (saved).
  * - ctrl+shift+t cycles timestamps (off, relative, absolute; saved): when messages, groups, and
  *   user bash happened, and how long tool calls took, in a column on the right.
  * - Copying a selection (full screen) leaves out the layout's decoration and rejoins wrapped text.
@@ -51,6 +52,7 @@ import {
   Container,
   Key,
   Markdown,
+  sliceByColumn,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
@@ -58,7 +60,7 @@ import {
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { between, diffOf, highlighted, rgbOf, untab } from "./code.ts";
+import { between, diffOf, highlighted, numbered, rgbOf, untab } from "./code.ts";
 import { copied } from "./copy.ts";
 
 type Stamps = "off" | "relative" | "absolute";
@@ -426,7 +428,7 @@ function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
 function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
   const lang = getLanguageFromPath(str(t.args?.path ?? t.args?.file_path));
   if (open && t.toolName === "write")
-    return highlighted(untab(str(t.args?.content).trimEnd()), lang, theme);
+    return numbered(highlighted(untab(str(t.args?.content).trimEnd()), lang, theme), 1, theme);
   if (!open || !t.result) return [];
   if (t.toolName === "edit" && t.result.details?.diff)
     return diffOf(t.result.details.diff, lang, theme);
@@ -436,7 +438,8 @@ function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
     const note =
       lines.at(-2) === "" && /^\[.*\]$/.test(lines.at(-1)!) ? lines.length - 2 : Infinity;
     const code = highlighted(lines.slice(0, note).join("\n"), lang, theme);
-    return [...code, ...lines.slice(note).map((l) => theme.fg("muted", l))];
+    const first = Math.max(1, Math.floor(Number(t.args?.offset)) || 1);
+    return [...numbered(code, first, theme), ...lines.slice(note).map((l) => theme.fg("muted", l))];
   }
   const color = t.result.isError ? "error" : "text";
   return linesOf(t.result).map((l) => theme.fg(color, l)); // live output while running
@@ -543,7 +546,7 @@ function parentOf(node: Node, target: Node, depth = 4): Node | undefined {
 let collapseGroups = false;
 /** Most lines open thinking and a call's input and content each show until clicked (0: all). */
 let maxLines = 10;
-/** Whether open content wraps long lines, or cuts them off with … (the default). */
+/** Whether open content wraps long lines, or cuts them off with … (the default; ctrl+shift+w). */
 let wordWrap = false;
 /** Whether pi runs full screen, where the whole transcript redraws and can animate. */
 let fullscreen = false;
@@ -675,7 +678,7 @@ function groupLines(
   node.clGroupCollapsed = collapsed;
   const rowY = (node.clRowY = collapsed ? Infinity : alone ? 1 : head ? 2 : 0);
   const deps = [row, rowBody, width, theme, last, alone, head, started, stamp, collapsed];
-  deps.push(node.clFullBody); // a click showed all of the content
+  deps.push(node.clFullBody, wordWrap); // a click showed all of the content; ctrl+shift+w wrapped it
   return memo(node, "clGroup", deps, () => {
     node.clMoreY = undefined;
     if (collapsed) return head ? ["", stamped(`   ${head}`, started, width, theme)] : [];
@@ -691,7 +694,7 @@ function groupLines(
       const parts = !wordWrap
         ? [truncateToWidth(l, fit, cut)]
         : visibleWidth(l) > fit
-          ? wrapTextWithAnsi(l, fit)
+          ? hanging(l, fit)
           : [l];
       if (!tint) return parts;
       return parts.map(
@@ -726,6 +729,15 @@ function groupLines(
     if (!alone) lines[rowY] = stamped(lines[rowY]!, stamp, width, theme);
     return lines;
   });
+}
+
+/** A long line wrapped to `fit`; numbered code (a diff, a read, a write) continues under its code. */
+function hanging(line: string, fit: number): string[] {
+  // oxlint-disable-next-line no-control-regex
+  const hang = /^[-+ ] *\d+ /.exec(line.replace(/\x1b\[[\d;]*m/g, ""))?.[0].length ?? 0;
+  if (!hang || hang > fit / 2) return wrapTextWithAnsi(line, fit);
+  const [first = "", ...rest] = wrapTextWithAnsi(sliceByColumn(line, hang, Infinity), fit - hang);
+  return [sliceByColumn(line, 0, hang) + first, ...rest.map((p) => " ".repeat(hang) + p)];
 }
 
 function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config): string[] {
@@ -832,6 +844,15 @@ export default function (pi: ExtensionAPI) {
       saveConfig({ collapseGroups });
       for (const c of chat?.children ?? []) delete c.clCollapsed;
       ctx.ui.notify(`Tool groups: ${collapseGroups ? "collapsed" : "expanded"}`, "info");
+      requestRender();
+    },
+  });
+  pi.registerShortcut(Key.ctrlShift("w"), {
+    description: "Toggle word wrap for open tool content",
+    handler: async (ctx) => {
+      wordWrap = !wordWrap;
+      saveConfig({ enableWordWrap: wordWrap });
+      ctx.ui.notify(`Word wrap: ${wordWrap ? "on" : "off"}`, "info");
       requestRender();
     },
   });
