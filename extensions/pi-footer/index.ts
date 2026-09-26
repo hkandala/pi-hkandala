@@ -1,6 +1,6 @@
 /**
- * pi-footer: minimal one-line footer inside a rounded input box; click it (fullscreen mode)
- * or run /dashboard to expand the dashboard below the box.
+ * pi-footer: minimal one-line footer inside a rounded input box; click it (fullscreen mode),
+ * press ctrl+shift+s, or run /dashboard to expand the dashboard below the box.
  *
  *    ╭── ⠋ Working ──────────────────────────────────────────────────────────────────────────────────────╮
  *    │ prompt                                                                                             │
@@ -25,7 +25,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { CustomEditor, estimateTokens, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -742,6 +742,10 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("dashboard", {
+    description: "Expand or collapse the footer dashboard",
+    handler: async () => toggle(),
+  });
+  pi.registerShortcut(Key.ctrlShift("s"), {
     description: "Expand or collapse the footer dashboard",
     handler: async () => toggle(),
   });
