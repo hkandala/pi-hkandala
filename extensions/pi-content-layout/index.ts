@@ -2,10 +2,13 @@
  * pi-content-layout: a compact, minimal transcript.
  * - Tool calls and thinking between two pieces of assistant text form one group: a summary line
  *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it.
- *   Running calls show a live timer, edits show their diff, failures are red.
+ *   Running calls show a live timer, edits show their diff, failures are red. Code is colored by
+ *   pi's own highlighter; diffs tint changed lines and mark the changed words.
  *   Click a row (fullscreen TUI mode) to open or close its content, which hangs off a └ under it,
- *   and its full input; ctrl+o opens or closes all tool rows, clicked ones too.
- * - Thinking is a tree row: "thinking…" while it streams, then "thought for Xs" (click to open).
+ *   and its full input, each cut to 10 lines until their "↓ N more lines" line is clicked;
+ *   ctrl+o opens or closes all tool rows, clicked ones too.
+ * - Thinking is a tree row: "thinking…" while it streams, then "thought for Xs" (click or ctrl+t
+ *   to open).
  * - User messages sit in a rounded border like pi-footer's prompt box; compaction and branch
  *   summaries, skills, and extension messages in a dashed one, labeled in its top edge.
  * - User bash (!cmd) and info panels (pi's or extensions') read like assistant text, without rules.
@@ -16,7 +19,8 @@
  *   user bash happened, and how long tool calls took, in a column on the right.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-content-layout.json
- *   { "autoExpandedTools": ["edit"], "maxExpandedLines": 0, "collapseGroups": false,
+ *   { "autoExpandedTools": ["edit"], "maxExpandedLines": 10, "enableWordWrap": false,
+ *     "collapseGroups": false,
  *     "timestamps": "off" | "relative" | "absolute", "timestampFormat": "24h" | "12h" }
  *
  * pi has no public API for restyling its own tool rows or messages, so this patches
@@ -36,7 +40,8 @@ import {
   ToolExecutionComponent,
   UserMessageComponent,
   getAgentDir,
-  renderDiff,
+  getLanguageFromPath,
+  highlightCode,
 } from "@earendil-works/pi-coding-agent";
 import {
   Box,
@@ -55,6 +60,7 @@ type Stamps = "off" | "relative" | "absolute";
 type Config = {
   autoExpandedTools?: string[];
   maxExpandedLines?: number;
+  enableWordWrap?: boolean;
   collapseGroups?: boolean;
   timestamps?: Stamps;
   timestampFormat?: "24h" | "12h";
@@ -336,9 +342,134 @@ const outputOf = cached((r) =>
 const output = (t: Tool) => (t.result ? outputOf(t.result) : "");
 const untab = (s: string) => s.replace(/\t/g, "   ");
 const linesOf = cached((r) => untab(outputOf(r)).split("\n"));
-// pi marks skipped lines with "..."; only the ones between hunks say something.
-const diffOf = (r: Result) =>
-  renderDiff((r.details?.diff ?? "").replace(/^\s*\.\.\.\n|\n\s*\.\.\.$/g, "")).split("\n");
+
+// --- Highlighting -------------------------------------------------------------------------------
+// Code is colored by pi's own highlighter, in the theme's syntax colors, like code blocks in
+// assistant text. An edit's diff highlights each side whole, so multi-line strings and comments
+// keep their colors, then tints its lines with the theme's tool backgrounds, and the changed words
+// of a changed line with a stronger tint.
+
+/** Lines of `code` colored as `lang`, or in the text color without one. */
+function highlighted(code: string, lang: string | undefined, theme: Theme): string[] {
+  if (!lang) return code.split("\n").map((l) => theme.fg("text", l));
+  // pi splits the colored text into lines as is: a token across lines (a block comment, a template
+  // string) needs its color reopened on each.
+  let open = "";
+  return highlightCode(code, lang).map((l) => {
+    const line = open + l;
+    // oxlint-disable-next-line no-control-regex
+    const last = line.match(/\x1b\[(?:38;[\d;]*|39)m/g)?.at(-1) ?? "";
+    open = last.startsWith("\x1b[38") ? last : "";
+    return line;
+  });
+}
+
+/** Background codes for added and removed lines, and a stronger one for their changed words. */
+function tints(theme: Theme) {
+  const rgb = (ansi: string) => /8;2;(\d+);(\d+);(\d+)/.exec(ansi)?.slice(1).map(Number);
+  const tint = (bg: "toolSuccessBg" | "toolErrorBg", fg: "toolDiffAdded" | "toolDiffRemoved") => {
+    const line = theme.getBgAnsi(bg);
+    const [from, to] = [rgb(line), rgb(theme.getFgAnsi(fg))];
+    const mix = from && to && from.map((v, i) => Math.round(v + (to[i]! - v) * 0.25)).join(";");
+    return { line, word: mix ? `\x1b[48;2;${mix}m` : line };
+  };
+  return {
+    "+": tint("toolSuccessBg", "toolDiffAdded"),
+    "-": tint("toolErrorBg", "toolDiffRemoved"),
+  };
+}
+
+/** Ranges of `a` not in `b`, by words, spaces, and punctuation; none when most of `a` changed. */
+function changed(a: string, b: string): [number, number][] {
+  const [x, y] = [a, b].map((s) => s.match(/\w+|\s+|[^\w\s]/g) ?? []) as [string[], string[]];
+  if (x.length * y.length > 250_000) return [];
+  // Longest common subsequence of tokens, walked forward.
+  const lcs = Array.from({ length: x.length + 1 }, () => Array<number>(y.length + 1).fill(0));
+  for (let i = x.length - 1; i >= 0; i--)
+    for (let j = y.length - 1; j >= 0; j--)
+      lcs[i]![j] =
+        x[i] === y[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+  const out: [number, number][] = [];
+  let [i, j, col, total] = [0, 0, 0, 0];
+  while (i < x.length) {
+    if (x[i] === y[j]) j++; // in both
+    else if (j < y.length && lcs[i]![j + 1]! >= lcs[i + 1]![j]!) {
+      j++; // only in b
+      continue;
+    } else {
+      // only in a
+      const last = out.at(-1);
+      if (last?.[1] === col) last[1] += x[i]!.length;
+      else out.push([col, col + x[i]!.length]);
+      total += x[i]!.length;
+    }
+    col += x[i++]!.length;
+  }
+  return total > a.trim().length * 0.6 ? [] : out;
+}
+
+/** `s` with `on` and `off` around the given ranges of its visible characters. */
+function emphasize(s: string, ranges: [number, number][], on: string, off: string): string {
+  let [out, col] = ["", 0];
+  // oxlint-disable-next-line no-control-regex
+  for (const [, code, ch] of s.matchAll(/(\x1b\[[\d;]*m)|([\s\S])/g)) {
+    if (code) out += code;
+    else {
+      if (ranges.some(([a]) => a === col)) out += on;
+      out += ch;
+      col++;
+      if (ranges.some(([, b]) => b === col)) out += off;
+    }
+  }
+  return out;
+}
+
+type DiffRow = { sign: string; num: string; text: string } | undefined; // undefined: a gap
+/** An edit's diff, from pi's "+12 code" lines ("..." marks skipped lines; only gaps are kept). */
+function diffOf(r: Result, lang: string | undefined, theme: Theme): string[] {
+  const rows: DiffRow[] = (r.details?.diff ?? "")
+    .replace(/^\s*\.\.\.\n|\n\s*\.\.\.$/g, "")
+    .split("\n")
+    .map((l) => {
+      const m = /^([+\- ])(\s*\d+) (.*)$/.exec(l);
+      return m ? { sign: m[1]!, num: m[2]!, text: untab(m[3]!) } : undefined;
+    });
+  const side = (skip: string) => {
+    const kept = rows.filter((row) => row && row.sign !== skip);
+    const lines = highlighted(kept.map((row) => row!.text).join("\n"), lang, theme);
+    return new Map(kept.map((row, i) => [row, lines[i] ?? ""]));
+  };
+  const [before, after, tint] = [side("+"), side("-"), tints(theme)];
+  const line = (row: NonNullable<DiffRow>, other?: DiffRow) => {
+    const code = (row.sign === "+" ? after : before).get(row)!;
+    const num = theme.fg("dim", row.num);
+    if (row.sign === " ") return ` ${num} ${code}`;
+    const t = tint[row.sign as "+" | "-"];
+    const sign = theme.fg(row.sign === "+" ? "toolDiffAdded" : "toolDiffRemoved", row.sign);
+    const marks = other ? changed(row.text, other.text) : [];
+    // The tint stays open to the line's end: groupLines pads it across the row.
+    return `${t.line}${sign}${num} ${marks.length ? emphasize(code, marks, t.word, t.line) : code}`;
+  };
+  const out: string[] = [];
+  for (let i = 0; i < rows.length;) {
+    const row = rows[i];
+    if (row?.sign !== "-") {
+      out.push(row ? line(row) : theme.fg("dim", "  ⋮"));
+      i++;
+      continue;
+    }
+    // Removed lines, then added ones: paired line by line for word marks when the counts match.
+    let j = i;
+    while (rows[j]?.sign === "-") j++;
+    let k = j;
+    while (rows[k]?.sign === "+") k++;
+    const paired = j - i === k - j;
+    for (let n = i; n < k; n++)
+      out.push(line(rows[n]!, paired ? rows[n < j ? n + j - i : n - j + i] : undefined));
+    i = k;
+  }
+  return out;
+}
 
 function shortPath(path: string, cwd: string) {
   if (path.startsWith(`${cwd}/`)) return path.slice(cwd.length + 1);
@@ -374,7 +505,7 @@ function describe(t: Tool): [target: string, result: string] {
     const exit = out.match(/exit(?:ed with)? code (\d+)/i)?.[1];
     return [target, exit ? `exit ${exit}` : "error"];
   }
-  if (t.toolName === "write") return [target, plural(lineCount(str(a.content)), "line")];
+  if (t.toolName === "write") return [target, `+${lineCount(str(a.content))}`];
   if (state === "running") return [target, ""];
   // Counts output lines, so pi's truncation notes count too.
   switch (t.toolName) {
@@ -410,13 +541,20 @@ function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
   );
 }
 function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
+  const lang = getLanguageFromPath(str(t.args?.path ?? t.args?.file_path));
   if (open && t.toolName === "write")
-    return untab(str(t.args?.content).trimEnd())
-      .split("\n")
-      .map((l) => theme.fg("muted", l));
+    return highlighted(untab(str(t.args?.content).trimEnd()), lang, theme);
   if (!open || !t.result) return [];
-  if (t.toolName === "edit" && t.result.details?.diff) return diffOf(t.result);
-  const color = t.result.isError ? "error" : "muted";
+  if (t.toolName === "edit" && t.result.details?.diff) return diffOf(t.result, lang, theme);
+  if (t.toolName === "read" && !t.result.isError) {
+    // pi ends a partial read with a note ("[705 more lines in file. …]"), which isn't code.
+    const lines = linesOf(t.result);
+    const note =
+      lines.at(-2) === "" && /^\[.*\]$/.test(lines.at(-1)!) ? lines.length - 2 : Infinity;
+    const code = highlighted(lines.slice(0, note).join("\n"), lang, theme);
+    return [...code, ...lines.slice(note).map((l) => theme.fg("muted", l))];
+  }
+  const color = t.result.isError ? "error" : "text";
   return linesOf(t.result).map((l) => theme.fg(color, l)); // live output while running
 }
 
@@ -519,8 +657,18 @@ function parentOf(node: Node, target: Node, depth = 4): Node | undefined {
 
 /** Whether groups start collapsed to their summary line (ctrl+shift+o); a click sets one's own. */
 let collapseGroups = false;
-/** The most lines open content shows (0: no limit). */
-let maxLines = 0;
+/** Most lines open thinking and a call's input and content each show until clicked (0: all). */
+let maxLines = 10;
+/** Whether open content wraps long lines, or cuts them off with … (the default). */
+let wordWrap = false;
+
+/** `lines` cut to maxLines, and a line to show the rest or, once shown (`full`), cut them again. */
+function capped(lines: string[], theme: Theme, full?: boolean): [string[], string?] {
+  if (!maxLines || lines.length <= maxLines) return [lines];
+  if (full) return [lines, theme.fg("dim", "↑ show less")];
+  const more = `↓ ${plural(lines.length - maxLines, "more line")}`;
+  return [lines.slice(0, maxLines), theme.fg("dim", more)];
+}
 
 /** The member that opens the group `list[i]` belongs to (it keeps the group's collapsed state). */
 function groupStart(list: unknown[], i: number): Proto {
@@ -565,8 +713,8 @@ function override(
   });
 }
 
-/** Summary line from a group's tool calls: "Read 3 files, ran 2 commands, 1 failed". */
-function summary(members: unknown[], theme: Theme): string {
+/** Summary line from a group's calls ("Read 3 files, ran 2 commands, 1 failed"), muted collapsed. */
+function summary(members: unknown[], theme: Theme, collapsed: boolean): string {
   const counts = new Map<Wording, number>();
   let failed = 0;
   for (const m of members) {
@@ -579,10 +727,9 @@ function summary(members: unknown[], theme: Theme): string {
   const text =
     [...counts].map(([[verb, noun, nouns], n]) => `${verb} ${plural(n, noun, nouns)}`).join(", ") ||
     "thought";
-  const line = theme.fg("muted", text[0]!.toUpperCase() + text.slice(1));
-  return failed
-    ? `${line}${theme.fg("muted", ", ")}${theme.fg("error", `${failed} failed`)}`
-    : line;
+  const color = collapsed ? "muted" : "text";
+  const line = theme.fg(color, text[0]!.toUpperCase() + text.slice(1));
+  return failed ? `${line}${theme.fg(color, ", ")}${theme.fg("error", `${failed} failed`)}` : line;
 }
 
 /**
@@ -608,6 +755,7 @@ function groupLines(
   const first = neighbor(list, i, -1) !== "item";
   const last = kindOf(node) === "closes" || !["item", "closes"].includes(neighbor(list, i, 1));
   const alone = first && last && solo;
+  const collapsed = !alone && ((first ? node : groupStart(list, i)).clCollapsed ?? collapseGroups);
   let head: string | undefined; // the summary line, when the member opens the group
   const started = first ? clock(startOf(node)) : "";
   if (first && !alone) {
@@ -618,24 +766,37 @@ function groupLines(
       if (kind !== "skip") members.push(list[j]);
       if (kind === "closes") break;
     }
-    head = summary(members, theme);
+    head = summary(members, theme, collapsed);
   }
-  const collapsed = !alone && ((first ? node : groupStart(list, i)).clCollapsed ?? collapseGroups);
   node.clHeadY = head ? 1 : undefined;
   node.clGroupCollapsed = collapsed;
   const rowY = (node.clRowY = collapsed ? Infinity : alone ? 1 : head ? 2 : 0);
   const deps = [row, rowBody, width, theme, last, alone, head, started, stamp, collapsed];
+  deps.push(node.clFullBody); // a click showed all of the content
   return memo(node, "clGroup", deps, () => {
+    node.clMoreY = undefined;
     if (collapsed) return head ? ["", stamped(`   ${head}`, started, width, theme)] : [];
     // Open content hangs off a └ under the row's name (column 5), one space before it like the
     // rows, and a blank line follows it unless the group ends (a spacer follows then).
-    // Wrapped to fit, so nothing open is cut off: 3 columns in, 2 of rail, 2 for the └, 3 after.
+    // Fit to 3 columns in, 2 of rail, 2 for the └, 3 after: long lines wrap, or end in …. A diff
+    // line's tint (a background it opens with) spans the whole row.
     const fit = Math.max(1, width - (alone ? 8 : 10));
-    let wrapped = rowBody.flatMap((l) => (visibleWidth(l) > fit ? wrapTextWithAnsi(l, fit) : [l]));
-    if (maxLines > 0 && wrapped.length > maxLines) {
-      const more = plural(wrapped.length - maxLines, "more line");
-      wrapped = [...wrapped.slice(0, maxLines), theme.fg("dim", `… ${more}`)];
-    }
+    let wrapped = rowBody.flatMap((l) => {
+      // oxlint-disable-next-line no-control-regex
+      const tint = /^\x1b\[48;[\d;]*m/.exec(l)?.[0] ?? "";
+      const cut = tint + theme.fg("muted", "…");
+      const parts = !wordWrap
+        ? [truncateToWidth(l, fit, cut)]
+        : visibleWidth(l) > fit
+          ? wrapTextWithAnsi(l, fit)
+          : [l];
+      if (!tint) return parts;
+      return parts.map(
+        (p) => `${tint}${p}${tint}${" ".repeat(Math.max(0, fit - visibleWidth(p)))}\x1b[49m`,
+      );
+    });
+    const [shown, toggle] = capped(wrapped, theme, node.clFullBody);
+    wrapped = toggle ? [...shown, toggle] : shown;
     const hung = wrapped.map((l, j) => (j ? "  " : `${theme.fg("dim", "└")} `) + l);
     if (hung.length && !last) hung.push("");
     let lines: string[];
@@ -649,9 +810,13 @@ function groupLines(
         ...row
           .slice(1)
           .map((l) => `   ${rail} ${hung.length ? theme.fg("dim", "│") + l.slice(1) : l}`),
+        // A row on more than one line (a multi-line bash command) gets a line before its content.
+        ...(row.length > 1 && hung.length ? [`   ${rail} ${theme.fg("dim", "│")}`] : []),
         ...hung.map((l) => `   ${rail} ${l}`),
       ];
     }
+    // The content's toggle is its last line (a spacer may follow).
+    node.clMoreY = toggle ? lines.length - hung.length + wrapped.length - 1 : undefined;
     // Right margin matches the left indent of the row text.
     lines = lines.map((l) => truncateToWidth(l, Math.max(1, width - 3), theme.fg("muted", "…")));
     if (head || alone) lines[1] = stamped(lines[1]!, started, width, theme);
@@ -678,7 +843,9 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
   if (state === "running") time = t.clStart ? `running ${Math.floor(seconds)}s` : "";
   const stamp = stamps !== "off" && state !== "running" ? took : "";
   const result = state === "error" ? detail : [detail, time].filter(Boolean).join(" · ");
-  const color = state === "error" ? "error" : state === "done" ? "muted" : "dim";
+  // Open, a done row reads as bright as its content; closed, it stays muted.
+  const open = isOpen(t, config);
+  const color = state === "error" ? "error" : state === "running" ? "dim" : open ? "text" : "muted";
   const name = t.toolName.padEnd(5);
   const tail = result ? ` · ${result}` : "";
   // The target's room: 5 columns of tree before the row, 3 after, and the time column.
@@ -687,27 +854,42 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
   // before it, so it gets its own). Open, it wraps in full under its start (a bash command with its
   // own line breaks), the result after it, or on a line of its own when it doesn't fit.
   let lines: string[];
-  if (isOpen(t, config)) {
+  let toggle: string | undefined; // the input's toggle, under the result
+  if (open) {
     const full = t.toolName === "bash" ? untab(str(t.args?.command).trim()) : target;
-    lines = full.split("\n").flatMap((l) => wrapTextWithAnsi(l, room));
+    const colored =
+      t.toolName === "bash" && state !== "error"
+        ? memo(t, "clCommand", [full, theme], () => highlighted(full, "bash", theme))
+        : full.split("\n").map((l) => theme.fg(color, l));
+    [lines, toggle] = capped(
+      colored.flatMap((l) => wrapTextWithAnsi(l, room)),
+      theme,
+      t.clFullRow,
+    );
     if (tail && visibleWidth(lines.at(-1)! + tail) > room) lines.push("");
   } else {
     const fit = Math.max(1, room - visibleWidth(tail));
-    lines = [truncateToWidth(target, fit, theme.fg(color, "…"))];
+    lines = [theme.fg(color, truncateToWidth(target, fit, theme.fg(color, "…")))];
   }
   const row = lines.map(
     (l, i) =>
-      (i ? " ".repeat(visibleWidth(name) + 1) : `${theme.italic(theme.fg(color, name))} `) +
-      theme.fg(color, l),
+      (i
+        ? " ".repeat(visibleWidth(name) + 1)
+        : `${theme.bold(theme.italic(theme.fg(color, name)))} `) + l,
   );
-  row[row.length - 1] += theme
-    .fg(state === "error" ? "error" : "dim", lines.at(-1) ? tail : tail.slice(1))
-    // An edit's line counts in the diff's colors.
-    .replace(
-      /\+(\d+) -(\d+)/,
+  let after = theme.fg(state === "error" ? "error" : "dim", lines.at(-1) ? tail : tail.slice(1));
+  // An open edit's or write's line counts in the diff's colors.
+  if (open && (t.toolName === "edit" || t.toolName === "write"))
+    after = after.replace(
+      /\+(\d+)(?: -(\d+))?/,
       (_, added, removed) =>
-        `${theme.fg("toolDiffAdded", `+${added}`)} ${theme.fg("toolDiffRemoved", `-${removed}`)}${theme.getFgAnsi("dim")}`,
+        theme.fg("toolDiffAdded", `+${added}`) +
+        (removed ? ` ${theme.fg("toolDiffRemoved", `-${removed}`)}` : "") +
+        theme.getFgAnsi("dim"),
     );
+  row[row.length - 1] += after;
+  if (toggle) row.push(" ".repeat(visibleWidth(name) + 1) + toggle);
+  t.clRowMore = toggle ? row.length - 1 : undefined;
   return groupLines(t, row, body(t, theme, config), width, theme, undefined, stamp);
 }
 
@@ -760,7 +942,9 @@ export default function (pi: ExtensionAPI) {
     if (ctx.mode !== "tui" || restores.length) return;
     const config = readConfig();
     collapseGroups = config.collapseGroups === true;
-    maxLines = Math.max(0, Math.floor(Number(config.maxExpandedLines) || 0));
+    const max = Number(config.maxExpandedLines ?? 10);
+    maxLines = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 10;
+    wordWrap = config.enableWordWrap === true;
     if (!Array.isArray(config.autoExpandedTools)) config.autoExpandedTools = ["edit"];
     stamps = STAMPS.includes(config.timestamps!) ? config.timestamps! : "off";
     twelveHour = config.timestampFormat === "12h";
@@ -804,7 +988,7 @@ export default function (pi: ExtensionAPI) {
       "setExpanded",
       (orig) =>
         function (this: Tool & Proto, expanded: boolean) {
-          this.clOpen = undefined;
+          this.clOpen = this.clFullRow = this.clFullBody = undefined;
           return orig.call(this, expanded);
         },
     );
@@ -818,7 +1002,15 @@ export default function (pi: ExtensionAPI) {
           if (event.type !== "click" || event.button !== "left") return undefined;
           if (event.y === this.clHeadY) return toggleGroup(this);
           if (event.y < this.clRowY) return undefined;
-          this.clOpen = !isOpen(this, config);
+          // A toggle line shows or cuts its part; anywhere else opens or closes the row.
+          const part =
+            event.y === this.clRowY + this.clRowMore
+              ? "clFullRow"
+              : event.y === this.clMoreY
+                ? "clFullBody"
+                : undefined;
+          if (part) this[part] = !this[part];
+          else this.clOpen = !isOpen(this, config);
           this.ui.requestRender();
           return { handled: true };
         },
@@ -947,19 +1139,18 @@ export default function (pi: ExtensionAPI) {
     );
 
     const assistant = AssistantMessageComponent.prototype as unknown as Proto;
-    // Thinking is collapsed by default and timed: "thinking…" while it streams, then
-    // "thought for Xs", or "thought briefly" under a second. Timed from the message's start, since
-    // some providers deliver thinking in one burst. pi saves no thinking time, so messages loaded
-    // from history show "thought for some time".
-    // One label per message; ctrl+t only toggles messages that already exist.
+    // Thinking opens or closes with ctrl+t (pi's own setting) and is timed: "thinking…" while it
+    // streams, then "thought for Xs", or "thought briefly" under a second. Timed from the
+    // message's start, since some providers deliver thinking in one burst. pi saves no thinking
+    // time, so messages loaded from history show "thought for some time". One label per message.
     patch(
       assistant,
       "updateContent",
       (orig) =>
         function (this: Proto, message: Message, streaming?: boolean) {
-          // pi's constructor makes the first call: with thinking already there, it's history.
-          const history = !this.clInit;
-          if (history) this.hideThinkingBlock = true;
+          // pi's constructor makes the first call only for history (live messages start empty and
+          // update with `streaming` set).
+          const history = !this.clInit && streaming === undefined;
           this.clInit = true;
           const blocks = message.content;
           if (blocks.some((c) => c.type === "thinking" && c.thinking?.trim())) {
@@ -1014,14 +1205,16 @@ export default function (pi: ExtensionAPI) {
             // replaces both. Their zero-width prompt marks move to the row's first and last lines.
             const [spacer = "", label = "", ...rest] = lines;
             const thought: string = this.hiddenThinkingLabel;
-            const row = th.italic(th.fg("muted", thought));
+            // Open, the row and its text read bright; closed, muted.
+            const color = this.clThinkOpen ? "text" : "muted";
+            const row = th.italic(th.fg(color, thought));
             // Thinking alone reads as its own summary line: "Thought for 28s".
-            const solo = th.fg("muted", thought[0]!.toUpperCase() + thought.slice(1));
+            const solo = th.fg(color, thought[0]!.toUpperCase() + thought.slice(1));
             let thinking: string[] = [];
             if (this.clThinkOpen) {
               const source = thinkingOf(this.lastMessage);
               if (this.clThinking?.source !== source) {
-                const style = { color: (s: string) => theme().fg("thinkingText", s), italic: true };
+                const style = { color: (s: string) => theme().fg("text", s), italic: true };
                 const md = new Markdown(source, 0, 0, this.markdownTheme, style);
                 this.clThinking = { source, md };
               }
@@ -1057,6 +1250,11 @@ export default function (pi: ExtensionAPI) {
           const rowY: number | undefined = this.clRowY;
           const click = event.type === "click" && event.button === "left";
           if (click && event.y === this.clHeadY) return toggleGroup(this);
+          if (click && event.y === this.clMoreY) {
+            this.clFullBody = !this.clFullBody; // the thinking's toggle line
+            requestRender();
+            return { handled: true };
+          }
           if (rowY !== undefined) {
             const onThinking = event.y >= rowY && event.y < this.clTextY;
             if (onThinking && click) {
