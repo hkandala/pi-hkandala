@@ -10,6 +10,7 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 | [pi-footer](extensions/pi-footer/README.md)                     | Minimal one-line footer in a rounded prompt box that expands into a dashboard                                          |
 | [pi-content-layout](extensions/pi-content-layout/README.md)     | Compact transcript: tool calls and thinking in collapsible summarized groups, boxed user messages, optional timestamps |
 | [pi-prompt-clipboard](extensions/pi-prompt-clipboard/README.md) | ctrl+shift+s copies the prompt to the clipboard and clears it; paste long text twice to expand it for editing          |
+| [pi-retry](extensions/pi-retry/README.md)                       | Makes pi's auto-retry cover every model error (unknown errors, 400s, ...), except auth errors                          |
 
 ## Install
 

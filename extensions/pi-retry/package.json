@@ -1,0 +1,25 @@
+{
+  "name": "@hkandala/pi-retry",
+  "version": "0.1.0",
+  "description": "Make pi's built-in auto-retry cover every model error, except auth errors",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
