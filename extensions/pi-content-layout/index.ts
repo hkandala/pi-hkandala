@@ -2,8 +2,9 @@
  * pi-content-layout: a compact, minimal transcript.
  * - Tool calls and thinking between two pieces of assistant text form one group: a summary line
  *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it.
- *   Running calls show a live timer, edits show their diff, failures are red. Code is colored by
- *   pi's own highlighter; diffs tint changed lines and mark the changed words.
+ *   Running calls show a live timer (and pulse, full screen), edits show their diff,
+ *   failures are red. Code is colored by pi's own highlighter; diffs tint changed lines and mark
+ *   the changed words.
  *   Click a row (fullscreen TUI mode) to open or close its content, which hangs off a └ under it,
  *   and its full input, each cut to 10 lines until their "↓ N more lines" line is clicked;
  *   ctrl+o opens or closes all tool rows, clicked ones too.
@@ -17,6 +18,7 @@
  *   line for its own group.
  * - ctrl+shift+t cycles timestamps (off, relative, absolute; saved): when messages, groups, and
  *   user bash happened, and how long tool calls took, in a column on the right.
+ * - Copying a selection (full screen) leaves out the layout's decoration and rejoins wrapped text.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-content-layout.json
  *   { "autoExpandedTools": ["edit"], "maxExpandedLines": 10, "enableWordWrap": false,
@@ -87,6 +89,13 @@ type Saved = { role: string; content?: string | Block[]; command?: string; times
 type Entry = { type: string; timestamp: string; message?: Saved };
 type Session = { getEntries(): Entry[]; getBranch(): Entry[]; getLeafId(): string | null };
 type Mouse = { type: string; button: string; x: number; y: number; width: number; height: number };
+/** The parts of pi's full-screen TUI this uses. */
+type FullScreen = {
+  mode?: string;
+  terminal?: { columns: number };
+  copySelection?: (text: string) => unknown;
+  getSelectionBounds?: () => { start: { col: number } } | undefined;
+};
 type State = "running" | "done" | "error";
 
 /** Summary wording per tool: [verb, noun, plural noun]. Others read "ran <tool> N times". */
@@ -364,14 +373,18 @@ function highlighted(code: string, lang: string | undefined, theme: Theme): stri
   });
 }
 
+/** A color code's RGB, when it's a truecolor one. */
+const rgbOf = (ansi: string) => /8;2;(\d+);(\d+);(\d+)/.exec(ansi)?.slice(1).map(Number);
+/** The RGB `t` of the way from `a` to `b`, as "r;g;b". */
+const between = (a: number[], b: number[], t: number) =>
+  a.map((v, i) => Math.round(v + (b[i]! - v) * t)).join(";");
+
 /** Background codes for added and removed lines, and a stronger one for their changed words. */
 function tints(theme: Theme) {
-  const rgb = (ansi: string) => /8;2;(\d+);(\d+);(\d+)/.exec(ansi)?.slice(1).map(Number);
   const tint = (bg: "toolSuccessBg" | "toolErrorBg", fg: "toolDiffAdded" | "toolDiffRemoved") => {
     const line = theme.getBgAnsi(bg);
-    const [from, to] = [rgb(line), rgb(theme.getFgAnsi(fg))];
-    const mix = from && to && from.map((v, i) => Math.round(v + (to[i]! - v) * 0.25)).join(";");
-    return { line, word: mix ? `\x1b[48;2;${mix}m` : line };
+    const [from, to] = [rgbOf(line), rgbOf(theme.getFgAnsi(fg))];
+    return { line, word: from && to ? `\x1b[48;2;${between(from, to, 0.25)}m` : line };
   };
   return {
     "+": tint("toolSuccessBg", "toolDiffAdded"),
@@ -661,6 +674,10 @@ let collapseGroups = false;
 let maxLines = 10;
 /** Whether open content wraps long lines, or cuts them off with … (the default). */
 let wordWrap = false;
+/** Whether pi runs full screen, where the whole transcript redraws and can animate. */
+let fullscreen = false;
+/** Whether the agent is working (from agent_start to agent_end). */
+let working = false;
 
 /** `lines` cut to maxLines, and a line to show the rest or, once shown (`full`), cut them again. */
 function capped(lines: string[], theme: Theme, full?: boolean): [string[], string?] {
@@ -668,6 +685,97 @@ function capped(lines: string[], theme: Theme, full?: boolean): [string[], strin
   if (full) return [lines, theme.fg("dim", "↑ show less")];
   const more = `↓ ${plural(lines.length - maxLines, "more line")}`;
   return [lines.slice(0, maxLines), theme.fg("dim", more)];
+}
+
+/**
+ * What's still running, full screen: a slow pulse from its color (text when `open`, else muted) 40%
+ * of the way to the other and back, every 1.6s.
+ */
+function pulse(theme: Theme, s: string, open: boolean): string {
+  const [muted, text] = [rgbOf(theme.getFgAnsi("muted")), rgbOf(theme.getFgAnsi("text"))];
+  if (!fullscreen || !muted || !text) return theme.fg(open ? "text" : "muted", s);
+  const t = (0.4 * (1 - Math.cos((Date.now() / 1600) * 2 * Math.PI))) / 2;
+  return `\x1b[38;2;${open ? between(text, muted, t) : between(muted, text, t)}m${s}\x1b[39m`;
+}
+
+// --- Copying ------------------------------------------------------------------------------------
+// pi's full-screen selection copies the screen as drawn. The layout's decoration comes off first:
+// box edges and sides, tree glyphs, bullets, timestamps, and toggle lines. Text wrapped to fit
+// (assistant text, boxes, lone thinking: it starts by column 5) joins back where the next line's
+// first word wouldn't have fit on the line. Tool content (from column 7, under the tree's │ or └:
+// code and output, cut off rather than wrapped) comes out as its own block, dedented, and a diff
+// as its code after the edit.
+
+type Copied = { line: string; end: number; lead: number; code?: boolean };
+
+/** Selected screen text, starting at column `start` of a `width`-wide screen, as plain text. */
+function copied(text: string, start: number, width: number): string {
+  const limit = width - 3 - reserve(); // where text wraps: the right margin, and the time column
+  const kept: Copied[] = [];
+  let fence = -1; // the column of an open ``` fence in assistant text
+  let tool = false; // in tool content: from a line with the tree's │ or └ until text is back left
+  for (let [i, line] of text.split("\n").entries()) {
+    if (!i) line = " ".repeat(start) + line; // columns line up with the full lines below
+    const t = line.trim();
+    const tree = line[3] === "│" || line[5] === "└";
+    if (/^[╭╰]/.test(t) || /^[─┄]+.*[╮╯]$/.test(t)) continue; // a box's top or bottom edge
+    // A timestamp ends 3 columns from the right, after its dotted leader.
+    if (visibleWidth(line) === width - 3) line = line.replace(/ +·(?: ·)* +[^·]*$/, "");
+    line = line
+      .replace(/\s+[│┆]$/, "") // a box's right side
+      .replace(/^[\s│┆├└●]+/, (m) => " ".repeat(m.length)); // box sides, tree, bullets
+    if (/^\s*(?:↓ \d+ more lines?|↑ show less)$/.test(line)) continue;
+    const end = visibleWidth(line.trimEnd());
+    let lead = line.search(/\S/);
+    if (t.startsWith("```")) fence = fence < 0 ? lead : -1;
+    // pi indents a code block's lines 2 columns past its fence.
+    else if (fence >= 0 && lead >= fence + 2)
+      [line, lead] = [line.slice(0, fence) + line.slice(fence + 2), lead - 2];
+    if (lead >= 0) tool = lead >= 7 && (tool || tree);
+    kept.push({ line, end, lead, code: fence < 0 && tool && lead >= 7 });
+  }
+  const prose = kept.filter((k) => !k.code && k.lead >= 0);
+  const indent = prose.length ? Math.min(...prose.map((k) => k.lead)) : 0;
+  const out: string[] = [];
+  let prev: Copied | undefined;
+  for (let i = 0; i < kept.length; i++) {
+    const k = kept[i]!;
+    if (k.code) {
+      // The run of tool content, blank lines inside it included.
+      let j = i;
+      while (kept[j]?.code || (kept[j]?.lead === -1 && kept[j + 1]?.code)) j++;
+      out.push(...codeOf(kept.slice(i, j)));
+      [i, prev] = [j - 1, undefined];
+      continue;
+    }
+    const word = k.line.trim().split(/\s/)[0]!;
+    const wrapped =
+      prev &&
+      prev.lead >= 0 &&
+      prev.lead <= 5 &&
+      !prev.line.trimEnd().endsWith("…") &&
+      prev.end + 1 + visibleWidth(word) > limit &&
+      k.lead - prev.lead >= 0 &&
+      k.lead - prev.lead <= 3 && // a paragraph's or list item's next line
+      !/^(?:[-*+]|\d+[.)])\s/.test(k.line.trim()); // not a new list item
+    if (wrapped) out[out.length - 1] += ` ${k.line.trim()}`;
+    else out.push(k.line.slice(indent).trimEnd());
+    prev = k;
+  }
+  return out.join("\n").replace(/^\n+|\n+$/g, "");
+}
+
+/** A run of tool content, dedented; a diff ("+12 code" lines, ⋮ between hunks) as its new code. */
+function codeOf(run: Copied[]): string[] {
+  const lines = run.map((k) => k.line).filter((l) => l.trim() !== "⋮");
+  const dedent = (ls: string[]) => {
+    const lead = Math.min(...ls.filter((l) => l.trim()).map((l) => l.search(/\S/)));
+    return ls.map((l) => l.slice(lead).trimEnd());
+  };
+  // A blank line reads as a blank context line.
+  const rows = dedent(lines).map((l) => (l ? /^([-+ ])( *\d+) (.*)$/.exec(l) : ["", " ", "", ""]));
+  if (!rows.every(Boolean) || !rows.some((m) => m![1] !== " ")) return dedent(lines);
+  return dedent(rows.filter((m) => m![1] !== "-").map((m) => m![3]!));
 }
 
 /** The member that opens the group `list[i]` belongs to (it keeps the group's collapsed state). */
@@ -713,8 +821,11 @@ function override(
   });
 }
 
-/** Summary line from a group's calls ("Read 3 files, ran 2 commands, 1 failed"), muted collapsed. */
-function summary(members: unknown[], theme: Theme, collapsed: boolean): string {
+/**
+ * Summary line from a group's calls ("Read 3 files, ran 2 commands, 1 failed"): muted collapsed,
+ * and pulsing then while the group goes on (`live`: the agent works, and nothing ended it yet).
+ */
+function summary(members: unknown[], theme: Theme, collapsed: boolean, live: boolean): string {
   const counts = new Map<Wording, number>();
   let failed = 0;
   for (const m of members) {
@@ -728,7 +839,8 @@ function summary(members: unknown[], theme: Theme, collapsed: boolean): string {
     [...counts].map(([[verb, noun, nouns], n]) => `${verb} ${plural(n, noun, nouns)}`).join(", ") ||
     "thought";
   const color = collapsed ? "muted" : "text";
-  const line = theme.fg(color, text[0]!.toUpperCase() + text.slice(1));
+  const title = text[0]!.toUpperCase() + text.slice(1);
+  const line = collapsed && live ? pulse(theme, title, false) : theme.fg(color, title);
   return failed ? `${line}${theme.fg(color, ", ")}${theme.fg("error", `${failed} failed`)}` : line;
 }
 
@@ -760,13 +872,13 @@ function groupLines(
   const started = first ? clock(startOf(node)) : "";
   if (first && !alone) {
     const members = [];
-    for (let j = i; j < list.length; j++) {
+    let ended = false; // by text, a message, or thinking the answer follows
+    for (let j = i; j < list.length && !ended; j++) {
       const kind = kindOf(list[j]);
-      if (kind === "boundary") break;
-      if (kind !== "skip") members.push(list[j]);
-      if (kind === "closes") break;
+      ended = kind === "boundary" || kind === "closes";
+      if (kind === "item" || kind === "closes") members.push(list[j]);
     }
-    head = summary(members, theme, collapsed);
+    head = summary(members, theme, collapsed, working && !ended);
   }
   node.clHeadY = head ? 1 : undefined;
   node.clGroupCollapsed = collapsed;
@@ -843,9 +955,12 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
   if (state === "running") time = t.clStart ? `running ${Math.floor(seconds)}s` : "";
   const stamp = stamps !== "off" && state !== "running" ? took : "";
   const result = state === "error" ? detail : [detail, time].filter(Boolean).join(" · ");
-  // Open, a done row reads as bright as its content; closed, it stays muted.
+  // Open, a row reads as bright as its content; closed, it stays muted. While running, a closed
+  // row pulses whole, an open one just its name.
   const open = isOpen(t, config);
-  const color = state === "error" ? "error" : state === "running" ? "dim" : open ? "text" : "muted";
+  const color = state === "error" ? "error" : open ? "text" : "muted";
+  const pulsing = state === "running" && !open;
+  const paint = (s: string) => (pulsing ? pulse(theme, s, false) : theme.fg(color, s));
   const name = t.toolName.padEnd(5);
   const tail = result ? ` · ${result}` : "";
   // The target's room: 5 columns of tree before the row, 3 after, and the time column.
@@ -869,15 +984,13 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
     if (tail && visibleWidth(lines.at(-1)! + tail) > room) lines.push("");
   } else {
     const fit = Math.max(1, room - visibleWidth(tail));
-    lines = [theme.fg(color, truncateToWidth(target, fit, theme.fg(color, "…")))];
+    lines = [paint(truncateToWidth(target, fit, paint("…")))];
   }
-  const row = lines.map(
-    (l, i) =>
-      (i
-        ? " ".repeat(visibleWidth(name) + 1)
-        : `${theme.bold(theme.italic(theme.fg(color, name)))} `) + l,
-  );
-  let after = theme.fg(state === "error" ? "error" : "dim", lines.at(-1) ? tail : tail.slice(1));
+  const painted = state === "running" ? pulse(theme, name, open) : theme.fg(color, name);
+  const label = `${theme.bold(theme.italic(painted))} `;
+  const row = lines.map((l, i) => (i ? " ".repeat(visibleWidth(label)) : label) + l);
+  const tailText = lines.at(-1) ? tail : tail.slice(1);
+  let after = pulsing ? paint(tailText) : theme.fg(state === "error" ? "error" : "dim", tailText);
   // An open edit's or write's line counts in the diff's colors.
   if (open && (t.toolName === "edit" || t.toolName === "write"))
     after = after.replace(
@@ -938,6 +1051,13 @@ export default function (pi: ExtensionAPI) {
     return { handled: true };
   };
 
+  pi.on("agent_start", () => {
+    working = true;
+  });
+  pi.on("agent_end", () => {
+    working = false;
+  });
+
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui" || restores.length) return;
     const config = readConfig();
@@ -954,6 +1074,17 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setWidget("pi-content-layout", (root) => {
       chat = (root as unknown as Node).children?.[0]?.children?.[2];
       requestRender = () => (root as unknown as Tool["ui"]).requestRender();
+      const tui = root as unknown as FullScreen;
+      fullscreen = tui.mode === "fullscreen";
+      // pi hands a selection's text to copySelection; the layout's decoration comes off first.
+      const copy = tui.copySelection;
+      if (copy) {
+        tui.copySelection = (text) => {
+          const start = tui.getSelectionBounds?.()?.start.col ?? 0;
+          return copy(copied(text, start, tui.terminal?.columns ?? 80));
+        };
+        restores.push(() => (tui.copySelection = copy));
+      }
       return { render: () => [], invalidate() {} };
     });
     // Relative times ("12m ago") age without anything else to redraw them.
@@ -1207,9 +1338,11 @@ export default function (pi: ExtensionAPI) {
             const thought: string = this.hiddenThinkingLabel;
             // Open, the row and its text read bright; closed, muted.
             const color = this.clThinkOpen ? "text" : "muted";
-            const row = th.italic(th.fg(color, thought));
+            const paint = (s: string) =>
+              thought === "thinking…" ? pulse(th, s, this.clThinkOpen) : th.fg(color, s);
+            const row = th.italic(paint(thought));
             // Thinking alone reads as its own summary line: "Thought for 28s".
-            const solo = th.fg(color, thought[0]!.toUpperCase() + thought.slice(1));
+            const solo = paint(thought[0]!.toUpperCase() + thought.slice(1));
             let thinking: string[] = [];
             if (this.clThinkOpen) {
               const source = thinkingOf(this.lastMessage);
@@ -1279,6 +1412,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", () => {
+    working = false;
     for (const restore of restores.splice(0).reverse()) restore();
     for (const undo of overridden.values()) undo();
     overridden.clear();
