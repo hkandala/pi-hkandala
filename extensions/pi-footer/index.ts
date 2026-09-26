@@ -1,6 +1,6 @@
 /**
  * pi-footer: minimal one-line footer inside a rounded input box; click it (fullscreen mode),
- * press ctrl+shift+s, or run /dashboard to expand the dashboard below the box.
+ * press ctrl+shift+h, or run /dashboard to expand the dashboard below the box.
  *
  *    ╭── ⠋ Working ──────────────────────────────────────────────────────────────────────────────────────╮
  *    │ prompt                                                                                             │
@@ -745,7 +745,7 @@ export default function (pi: ExtensionAPI) {
     description: "Expand or collapse the footer dashboard",
     handler: async () => toggle(),
   });
-  pi.registerShortcut(Key.ctrlShift("s"), {
+  pi.registerShortcut(Key.ctrlShift("h"), {
     description: "Expand or collapse the footer dashboard",
     handler: async () => toggle(),
   });

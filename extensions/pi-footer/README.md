@@ -29,7 +29,7 @@ On narrow terminals whole sections drop in this order: usage, cost, git, context
 
 ## Dashboard
 
-Click the footer (fullscreen TUI mode), press `ctrl+shift+s`, or run `/dashboard` to expand or collapse it. It opens below the box:
+Click the footer (fullscreen TUI mode), press `ctrl+shift+h`, or run `/dashboard` to expand or collapse it. It opens below the box:
 
 ```
    path       ~/code/pi-hkandala
