@@ -1,0 +1,26 @@
+{
+  "name": "@hkandala/pi-continue",
+  "version": "0.1.0",
+  "description": "Send a continue prompt to pi with one key (ctrl+shift+enter)",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
