@@ -33,7 +33,7 @@ import { basename, join } from "node:path";
 import { EMPTY_GIT, type Git, git, readGit } from "./git.ts";
 
 const ICON = {
-  folder: "\uf07b", //  fa-folder
+  folder: "\u{f024b}", // 󰉋 md-folder
   repo: "\u{f02a2}", // 󰊢 md-git
   worktree: "\u{f0645}", // 󰙅 md-file-tree
   branch: "\u{f062c}", // 󰘬 md-source-branch
