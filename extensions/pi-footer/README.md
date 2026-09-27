@@ -46,11 +46,13 @@ Click the footer (fullscreen TUI mode), press `ctrl+shift+h`, or run `/dashboard
    context    47k / 200k (23%) · compacted 2×
    tokens     ↑116 input · ↓29.6k output · cache 2.7M read, 249k write · $1.24
    cache      99% last hit · expires in 4m · next message ~$0.05
-   speed      58 t/s last · 61 t/s avg
+   speed      58 t/s last · 61 t/s avg · ttft avg 1.2s
 
    session    fix footer · 12 user · 51 assistant · 87 tool calls
    time       1m last turn · 42m working · 2h 10m since start
 ```
+
+Speed counts from each response's first token, and `ttft` is the time from sending the request to that first token; both cover only responses streamed since pi started (first-token times aren't saved in the session).
 
 The time row shows the last turn's length (a user message to its reply's end) or, while a turn runs, its time so far (`… this turn`).
 

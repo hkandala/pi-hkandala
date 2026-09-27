@@ -128,6 +128,8 @@ function sessionStats(ctx: ExtensionContext) {
     lastSpeed: undefined as number | undefined,
     streamMs: 0,
     streamOutput: 0,
+    ttftMs: 0,
+    ttftCount: 0,
     workingMs: 0,
     lastTurnMs: 0, // the last run, from its user message to its last entry
     startedAt: undefined as number | undefined,
@@ -176,8 +178,13 @@ function sessionStats(ctx: ExtensionContext) {
       s.toolCalls += e.message.content.filter((c) => c?.type === "toolCall").length;
     const prompt = usage.input + usage.cacheRead + usage.cacheWrite;
     if (prompt > 0) s.cacheHit = (usage.cacheRead / prompt) * 100;
-    // Tokens per second from message start to saved, so it includes the time to first token.
-    const ms = ts !== undefined && e.message.timestamp ? ts - e.message.timestamp : 0;
+    // Time to first token, and tokens per second from it to saved (this session's responses only).
+    const sent = e.message.timestamp ?? 0;
+    const first = firstTokenAt.get(sent);
+    if (first === undefined || ts === undefined) continue;
+    s.ttftMs += first - sent;
+    s.ttftCount++;
+    const ms = ts - first;
     if (ms > 0 && usage.output > 0) {
       s.lastSpeed = usage.output / (ms / 1000);
       s.streamMs += ms;
@@ -209,6 +216,8 @@ function contextUsage(ctx: ExtensionContext) {
 
 /** When the running turn started (agent_start), while one runs. */
 let turnStartedAt: number | undefined;
+/** First token time by assistant message timestamp (set just before its request). Not saved. */
+const firstTokenAt = new Map<number, number>();
 
 function render(
   pi: ExtensionAPI,
@@ -472,13 +481,21 @@ function render(
       ),
     );
   }
-  if (s.lastSpeed !== undefined)
+  if (s.ttftCount)
     brain.push(
       row(
         "speed",
-        val(`${Math.round(s.lastSpeed)} t/s last`) +
-          dot +
-          val(`${Math.round(s.streamOutput / (s.streamMs / 1000))} t/s avg`),
+        [
+          ...(s.lastSpeed !== undefined
+            ? [
+                `${Math.round(s.lastSpeed)} t/s last`,
+                `${Math.round(s.streamOutput / (s.streamMs / 1000))} t/s avg`,
+              ]
+            : []),
+          `ttft avg ${(s.ttftMs / s.ttftCount / 1000).toFixed(1)}s`,
+        ]
+          .map(val)
+          .join(dot),
       ),
     );
   blocks.push(brain);
@@ -733,6 +750,10 @@ export default function (pi: ExtensionAPI) {
   // Anything that may have edited files or moved HEAD.
   pi.on("tool_result", async () => refreshSoon());
   pi.on("user_bash", async () => refreshSoon());
+  pi.on("message_update", async ({ message }) => {
+    if (message.role === "assistant" && !firstTokenAt.has(message.timestamp))
+      firstTokenAt.set(message.timestamp, Date.now());
+  });
   pi.on("agent_start", async () => {
     turnStartedAt = Date.now();
   });
