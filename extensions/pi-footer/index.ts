@@ -128,6 +128,7 @@ function sessionStats(ctx: ExtensionContext) {
     lastSpeed: undefined as number | undefined,
     streamMs: 0,
     streamOutput: 0,
+    lastTtft: undefined as number | undefined,
     ttftMs: 0,
     ttftCount: 0,
     workingMs: 0,
@@ -182,7 +183,8 @@ function sessionStats(ctx: ExtensionContext) {
     const sent = e.message.timestamp ?? 0;
     const first = firstTokenAt.get(sent);
     if (first === undefined || ts === undefined) continue;
-    s.ttftMs += first - sent;
+    s.lastTtft = first - sent;
+    s.ttftMs += s.lastTtft;
     s.ttftCount++;
     const ms = ts - first;
     if (ms > 0 && usage.output > 0) {
@@ -481,7 +483,7 @@ function render(
       ),
     );
   }
-  if (s.ttftCount)
+  if (s.lastTtft !== undefined)
     brain.push(
       row(
         "speed",
@@ -492,7 +494,8 @@ function render(
                 `${Math.round(s.streamOutput / (s.streamMs / 1000))} t/s avg`,
               ]
             : []),
-          `ttft avg ${(s.ttftMs / s.ttftCount / 1000).toFixed(1)}s`,
+          `${(s.lastTtft / 1000).toFixed(1)}s ttft last`,
+          `${(s.ttftMs / s.ttftCount / 1000).toFixed(1)}s ttft avg`,
         ]
           .map(val)
           .join(dot),
