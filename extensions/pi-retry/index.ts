@@ -27,9 +27,11 @@ const AUTH_ERROR = new RegExp(
 );
 
 export default function (pi: ExtensionAPI) {
-  pi.on("message_end", (event) => {
+  pi.on("message_end", (event, ctx) => {
     const message = event.message;
     if (message.role !== "assistant" || message.stopReason !== "error") return;
+    // User aborted: pi won't retry, and tagging would make it look like a provider failure.
+    if (ctx.signal?.aborted) return;
     const text = message.errorMessage || "Unknown error";
     if (text.includes(TAG) || AUTH_ERROR.test(text)) return;
     return { message: { ...message, errorMessage: `${text}\n\n${TAG}` } };

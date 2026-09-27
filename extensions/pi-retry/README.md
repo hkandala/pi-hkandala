@@ -10,6 +10,7 @@ Pi only retries errors whose message matches a fixed list (overloaded, 429, 5xx,
 | Auth errors (401/403, invalid or missing API key, expired token) | Not retried: fails immediately     |
 | Context overflow                                                 | Unchanged: pi compacts and retries |
 | Quota, billing, or usage limits                                  | Unchanged: pi stops                |
+| User abort (esc)                                                 | Unchanged: not retried or tagged   |
 
 There is no separate retry loop. The extension marks failed messages as retryable, and pi's native retry handles the rest: attempt count, backoff, the `Retrying (n/N) in Xs... (esc to cancel)` countdown, and cancelling with esc.
 
