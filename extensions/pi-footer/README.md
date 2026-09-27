@@ -83,11 +83,11 @@ Optional file: `~/.pi/agent/extensions/pi-footer.json`
 }
 ```
 
-| Key                   | Values                          | Default    | Notes                                                                                                         |
-| --------------------- | ------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
-| `promptEditor`        | `"box"`, `"default"`            | `"box"`    | `default` keeps pi's editor with the footer below it                                                          |
-| `disableEffortColors` | `true`, `false`                 | `true`     | keep the prompt border gray (theme `muted`) instead of pi's thinking-level colors (bash mode still colors it) |
-| `style`               | `"color"`, `"white"`            | `"color"`  | `white` draws everything in the theme's text color                                                            |
-| `iconColor`           | theme color name or `"#rrggbb"` | `"accent"` | color of the folder, repo, and branch icons; e.g. `"border"`, `"mdHeading"`, `"#F05032"`                      |
-| `gitStatusPollMins`   | minutes                         | `0.5`      | line-change poll; `0` disables                                                                                |
-| `gitFetchPollMins`    | minutes                         | `30`       | `git fetch` poll; `0` disables                                                                                |
+| Key                   | Values                          | Default    | Notes                                                                                                                                                            |
+| --------------------- | ------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `promptEditor`        | `"box"`, `"default"`            | `"box"`    | `default` keeps pi's editor with the footer below it                                                                                                             |
+| `disableEffortColors` | `true`, `false`                 | `true`     | keep the prompt border gray (theme `muted`) and the footer's thinking level in `text`, instead of pi's thinking-level colors (bash mode still colors the border) |
+| `style`               | `"color"`, `"white"`            | `"color"`  | `white` draws everything in the theme's text color                                                                                                               |
+| `iconColor`           | theme color name or `"#rrggbb"` | `"accent"` | color of the folder, repo, and branch icons; e.g. `"border"`, `"mdHeading"`, `"#F05032"`                                                                         |
+| `gitStatusPollMins`   | minutes                         | `0.5`      | line-change poll; `0` disables                                                                                                                                   |
+| `gitFetchPollMins`    | minutes                         | `30`       | `git fetch` poll; `0` disables                                                                                                                                   |

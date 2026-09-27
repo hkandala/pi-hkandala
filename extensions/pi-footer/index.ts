@@ -13,7 +13,8 @@
  *   { "promptEditor": "box" | "default", "disableEffortColors": true, "style": "color" | "white",
  *     "iconColor": "accent", "gitStatusPollMins": 0.5, "gitFetchPollMins": 30 }
  *   promptEditor "default" keeps pi's editor with the footer below it; disableEffortColors false
- *   lets the prompt border follow pi's thinking-level colors instead of staying gray;
+ *   lets the prompt border and the footer's level label follow pi's thinking-level colors instead
+ *   of staying gray / text;
  *   iconColor: a theme color name or "#rrggbb"; a poll of 0 disables it.
  */
 
@@ -317,7 +318,10 @@ function render(
       )
     : undefined;
   const level = pi.getThinkingLevel();
-  const levelColor = `thinking${level[0].toUpperCase()}${level.slice(1)}` as Color;
+  const levelColor: Color =
+    config.disableEffortColors === false
+      ? (`thinking${level[0].toUpperCase()}${level.slice(1)}` as Color)
+      : "text";
   const modelPiece =
     (model ? paint("text", shortModel(model.id)) : dim("no model")) +
     (model?.reasoning ? dot + paint(levelColor, level) : "");
