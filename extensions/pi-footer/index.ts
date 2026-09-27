@@ -186,8 +186,9 @@ function sessionStats(ctx: ExtensionContext) {
     s.lastTtft = first - sent;
     s.ttftMs += s.lastTtft;
     s.ttftCount++;
+    // Output arrives in bursts (a short reply can land in one chunk), so skip sub-second streams.
     const ms = ts - first;
-    if (ms > 0 && usage.output > 0) {
+    if (ms >= 1000 && usage.output > 0) {
       s.lastSpeed = usage.output / (ms / 1000);
       s.streamMs += ms;
       s.streamOutput += usage.output;

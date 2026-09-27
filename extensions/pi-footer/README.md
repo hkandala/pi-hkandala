@@ -52,7 +52,7 @@ Click the footer (fullscreen TUI mode), press `ctrl+shift+h`, or run `/dashboard
    time       1m last turn · 42m working · 2h 10m since start
 ```
 
-Speed counts from each response's first token, and `ttft` is the time from sending the request to that first token; both cover only responses streamed since pi started (first-token times aren't saved in the session).
+Speed counts from each response's first token (skipping streams under a second: output arrives in bursts, so a short reply can land in one chunk), and `ttft` is the time from sending the request to that first token; both cover only responses streamed since pi started (first-token times aren't saved in the session).
 
 The time row shows the last turn's length (a user message to its reply's end) or, while a turn runs, its time so far (`… this turn`).
 
