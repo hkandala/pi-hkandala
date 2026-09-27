@@ -926,16 +926,14 @@ export default function (pi: ExtensionAPI) {
     const timer = setInterval(() => stamps === "relative" && requestRender(), 30_000);
     restores.push(() => clearInterval(timer));
     ctx.ui.setWidget("pi-content-layout", undefined);
-    // When a group ends the chat, its dense tree rows would sit tight against the prompt, so the
-    // chat gets one more blank line then. Inside the chat, so it scrolls with the content; text
-    // and status lines keep just pi's own spacer.
+    // Whatever ends the chat gets one more blank line before the prompt (pi adds a spacer of its
+    // own), so the gap is the same after text, a group, or a message. Inside the chat, so it
+    // scrolls with the content.
     if (chat)
       override(chat, (orig, width) => {
         indentNotices(chat!.children);
         const lines = orig(width);
-        return neighbor(chat!.children, chat!.children.length, -1) === "item"
-          ? [...lines, ""]
-          : lines;
+        return lines.length && !blank(lines.at(-1)!) ? [...lines, ""] : lines;
       });
 
     const tool = ToolExecutionComponent.prototype as unknown as Proto;
