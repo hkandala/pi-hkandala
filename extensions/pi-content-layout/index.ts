@@ -14,7 +14,8 @@
  *   summaries, skills, and extension messages in a dashed one, labeled in its top edge.
  * - User bash (!cmd) and info panels (pi's or extensions') read like assistant text, without rules.
  * - Each piece of assistant text starts with a ● bullet (click it to copy the reply as markdown);
- *   summary lines align with its text.
+ *   summary lines align with its text, and so do status lines, notices, warnings, and errors
+ *   (without a bullet).
  * - ctrl+shift+o collapses or expands all groups to their summary line (saved); click a summary
  *   line for its own group.
  * - ctrl+shift+w wraps long lines of open tool content, or cuts them off with … (saved).
@@ -52,6 +53,7 @@ import {
   Container,
   Key,
   Markdown,
+  Text,
   sliceByColumn,
   truncateToWidth,
   visibleWidth,
@@ -616,6 +618,27 @@ function override(
 }
 
 /**
+ * pi's status lines, notices, warnings, and errors (plain Text in the chat, outside panels) at
+ * column 3 like assistant text, without a bullet, keeping the same 3 columns free on the right.
+ */
+function indentNotices(list: Proto[]) {
+  let panel = false; // between two rules: the panel's own render places it
+  for (const node of list) {
+    if (node instanceof DynamicBorder) panel = !panel;
+    // Exactly Text: subclasses (pi's loaders) draw their own way.
+    if (panel || overridden.has(node) || Object.getPrototypeOf(node) !== Text.prototype) continue;
+    override(node, (orig, width) => {
+      // pi pads them 1 column (0 with its outputPad setting off); the rest makes 3.
+      const pad = Math.min(3, Math.max(0, node.paddingX ?? 1));
+      const raw = orig(Math.max(1, width - 6 + 2 * pad));
+      return memo(node, "clLines", [raw, width], () =>
+        raw.map((l) => (blank(l) ? l : indent(l, " ".repeat(3 - pad)))),
+      );
+    });
+  }
+}
+
+/**
  * Summary line from a group's calls ("Read 3 files, ran 2 commands, 1 failed"): muted collapsed,
  * and pulsing then while the group goes on (`live`: the agent works, and nothing ended it yet).
  */
@@ -908,6 +931,7 @@ export default function (pi: ExtensionAPI) {
     // and status lines keep just pi's own spacer.
     if (chat)
       override(chat, (orig, width) => {
+        indentNotices(chat!.children);
         const lines = orig(width);
         return neighbor(chat!.children, chat!.children.length, -1) === "item"
           ? [...lines, ""]
@@ -1174,19 +1198,19 @@ export default function (pi: ExtensionAPI) {
           }
           const body = text;
           const stamp = clock(this.lastMessage?.timestamp);
-          // The ● copies the reply (see handleMouse), and shows ✓ for a moment after.
+          // The ● copies the reply (see handleMouse), and shows ✓ for a moment after. It marks
+          // text only: pi's note for an aborted, failed, or cut-off message goes without, like
+          // other status lines.
+          const replied = (this.lastMessage as Message | undefined)?.content.some(
+            (c) => c.type === "text" && c.text?.trim(),
+          );
           const justCopied = Date.now() - (this.clCopied ?? 0) < 1200;
-          const bullet = justCopied ? th.fg("success", "✓") : th.fg("text", "●");
+          const bullet = !replied ? "" : justCopied ? th.fg("success", "✓") : th.fg("text", "●");
           text = memo(this, "clText", [body, th, stamp, bullet, width], () =>
-            stampFirst(
-              bulleted(body, () => bullet),
-              stamp,
-              width,
-              th,
-            ),
+            stampFirst(bulleted(body, bullet ? () => bullet : undefined), stamp, width, th),
           );
           this.clTextY = group.length;
-          const bulletY = text.findIndex((l) => !blank(l));
+          const bulletY = bullet ? text.findIndex((l) => !blank(l)) : -1;
           this.clBulletY = bulletY < 0 ? undefined : group.length + bulletY;
           return [...group, ...text];
         },
