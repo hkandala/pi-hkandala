@@ -116,6 +116,9 @@ const WORDING: Record<string, Wording> = {
   grep: SEARCHED,
   find: SEARCHED,
   ls: ["listed", "directory", "directories"],
+  // pi-web's tools; web_fetch counts pages, not calls (one call fetches up to 10).
+  web_search: ["searched the web", "time"],
+  web_fetch: ["fetched", "web page"],
 };
 
 /** Terminal prompt marks (OSC 133) that pi puts around messages for jump-to-prompt. */
@@ -383,6 +386,8 @@ function describe(t: Tool): [target: string, result: string] {
       case "edit":
       case "write":
         return path;
+      case "web_fetch":
+        return oneLine(Array.isArray(a.urls) ? a.urls.join(" ") : "");
       default:
         return oneLine(str(Object.values(a).find((v) => typeof v === "string")));
     }
@@ -653,7 +658,8 @@ function summary(members: unknown[], theme: Theme, collapsed: boolean, live: boo
     const t = m as unknown as Tool;
     if (stateOf(t) === "error") failed++;
     const wording = (WORDING[t.toolName] ??= [`ran ${t.toolName}`, "time"]); // one entry per tool
-    counts.set(wording, (counts.get(wording) ?? 0) + 1);
+    const urls = t.toolName === "web_fetch" && t.args?.urls;
+    counts.set(wording, (counts.get(wording) ?? 0) + (Array.isArray(urls) ? urls.length : 1));
   }
   const text =
     [...counts].map(([[verb, noun, nouns], n]) => `${verb} ${plural(n, noun, nouns)}`).join(", ") ||
