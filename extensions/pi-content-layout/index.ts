@@ -11,7 +11,8 @@
  * - Thinking is a tree row: "thinking…" while it streams, then "thought for Xs" (click or ctrl+t
  *   to open).
  * - User messages sit in a rounded border like pi-footer's prompt box; compaction and branch
- *   summaries, skills, and extension messages in a dashed one, labeled in its top edge.
+ *   summaries, skills, and extension messages (pi's box or an extension's) in a dashed one,
+ *   labeled in its top edge.
  * - User bash (!cmd) and info panels (pi's or extensions') read like assistant text, without rules.
  * - Each piece of assistant text starts with a ● bullet (click it to copy the reply as markdown);
  *   summary lines align with its text, and so do status lines, notices, warnings, and errors,
@@ -1016,9 +1017,9 @@ export default function (pi: ExtensionAPI) {
         },
     );
 
-    // Special messages (compaction and branch summaries, skills, extension messages pi draws
-    // itself): pi's background box becomes a dashed border with pi's label in it, and the time in
-    // its top edge. Their first two lines are the label and a blank line.
+    // Special messages (compaction and branch summaries, skills, extension messages in pi's box
+    // or an extension's): the background box becomes a dashed border with pi's label in it, and
+    // the time in its top edge. pi's own boxes open with the label and a blank line.
     const special = (box: Proto, width: number, title: string, time?: number) =>
       frame(box, inner(box, width).slice(2), width, theme(), title, clock(time));
     for (const [proto, title] of [
@@ -1042,8 +1043,13 @@ export default function (pi: ExtensionAPI) {
           // An extension's status line (a plain Text) sits at column 3 like pi's.
           if (own && Object.getPrototypeOf(own) === Text.prototype)
             return ["", ...atColumn3(own, width, (w) => own.render(w))];
-          if (own) return orig.call(this, width); // the extension's own look
-          return ["", ...special(this.box, width, this.message.customType, this.message.timestamp)];
+          // An extension's background box (bg-tasks' notifications) is pi's look redone: its whole
+          // content goes in the dashed border. Anything else keeps the extension's own look.
+          if (own && !(own instanceof Box)) return orig.call(this, width);
+          const { customType: title, timestamp } = this.message;
+          if (own)
+            return ["", ...frame(own, inner(own, width), width, theme(), title, clock(timestamp))];
+          return ["", ...special(this.box, width, title, timestamp)];
         },
     );
     // A skill's label leads its one line while closed, and has a line of its own while open.
