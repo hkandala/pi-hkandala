@@ -1,7 +1,7 @@
 {
   "name": "@hkandala/pi-continue",
-  "version": "0.1.0",
-  "description": "Send a continue prompt to pi with one key (ctrl+shift+enter)",
+  "version": "0.2.0",
+  "description": "Nudge the pi agent to continue with one key (ctrl+shift+enter)",
   "keywords": [
     "pi-package"
   ],

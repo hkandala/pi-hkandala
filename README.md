@@ -8,7 +8,7 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | [pi-bash-cap](extensions/pi-bash-cap/README.md)                 | Configurable line and byte limits for bash tool output                                                                 |
 | [pi-content-layout](extensions/pi-content-layout/README.md)     | Compact transcript: tool calls and thinking in collapsible summarized groups, boxed user messages, optional timestamps |
-| [pi-continue](extensions/pi-continue/README.md)                 | ctrl+shift+enter sends a continue prompt (queued as a follow-up while the agent is working)                            |
+| [pi-continue](extensions/pi-continue/README.md)                 | ctrl+shift+enter nudges the agent to continue without a user message (queued as a follow-up while it is working)       |
 | [pi-footer](extensions/pi-footer/README.md)                     | Minimal one-line footer in a rounded prompt box that expands into a dashboard                                          |
 | [pi-header](extensions/pi-header/README.md)                     | Minimal startup header with the official pi logo                                                                       |
 | [pi-prompt-clipboard](extensions/pi-prompt-clipboard/README.md) | ctrl+shift+s copies the prompt to the clipboard and clears it; paste long text twice to expand it for editing          |
