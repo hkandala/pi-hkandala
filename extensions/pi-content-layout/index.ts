@@ -14,8 +14,8 @@
  *   summaries, skills, and extension messages in a dashed one, labeled in its top edge.
  * - User bash (!cmd) and info panels (pi's or extensions') read like assistant text, without rules.
  * - Each piece of assistant text starts with a ● bullet (click it to copy the reply as markdown);
- *   summary lines align with its text, and so do status lines, notices, warnings, and errors
- *   (without a bullet).
+ *   summary lines align with its text, and so do status lines, notices, warnings, and errors,
+ *   pi's or extensions' (without a bullet).
  * - ctrl+shift+o collapses or expands all groups to their summary line (saved); click a summary
  *   line for its own group.
  * - ctrl+shift+w wraps long lines of open tool content, or cuts them off with … (saved).
@@ -627,15 +627,18 @@ function indentNotices(list: Proto[]) {
     if (node instanceof DynamicBorder) panel = !panel;
     // Exactly Text: subclasses (pi's loaders) draw their own way.
     if (panel || overridden.has(node) || Object.getPrototypeOf(node) !== Text.prototype) continue;
-    override(node, (orig, width) => {
-      // pi pads them 1 column (0 with its outputPad setting off); the rest makes 3.
-      const pad = Math.min(3, Math.max(0, node.paddingX ?? 1));
-      const raw = orig(Math.max(1, width - 6 + 2 * pad));
-      return memo(node, "clLines", [raw, width], () =>
-        raw.map((l) => (blank(l) ? l : indent(l, " ".repeat(3 - pad)))),
-      );
-    });
+    override(node, (orig, width) => atColumn3(node, width, orig));
   }
+}
+
+/** A plain Text's lines, from `render`, at column 3 with the same 3 columns free on the right. */
+function atColumn3(node: Proto, width: number, render: (width: number) => string[]) {
+  // pi pads them 1 column (0 with its outputPad setting off); the rest makes 3.
+  const pad = Math.min(3, Math.max(0, node.paddingX ?? 1));
+  const raw = render(Math.max(1, width - 6 + 2 * pad));
+  return memo(node, "clLines", [raw, width], () =>
+    raw.map((l) => (blank(l) ? l : indent(l, " ".repeat(3 - pad)))),
+  );
 }
 
 /**
@@ -1029,7 +1032,11 @@ export default function (pi: ExtensionAPI) {
       "render",
       (orig) =>
         function (this: Proto, width: number) {
-          if (this.customComponent) return orig.call(this, width); // the extension's own look
+          const own = this.customComponent;
+          // An extension's status line (a plain Text) sits at column 3 like pi's.
+          if (own && Object.getPrototypeOf(own) === Text.prototype)
+            return ["", ...atColumn3(own, width, (w) => own.render(w))];
+          if (own) return orig.call(this, width); // the extension's own look
           return ["", ...special(this.box, width, this.message.customType, this.message.timestamp)];
         },
     );
