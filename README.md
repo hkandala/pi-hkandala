@@ -13,6 +13,7 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 | [pi-header](extensions/pi-header/README.md)                     | Minimal startup header with the official pi logo                                                                       |
 | [pi-prompt-clipboard](extensions/pi-prompt-clipboard/README.md) | ctrl+shift+s copies the prompt to the clipboard and clears it; paste long text twice to expand it for editing          |
 | [pi-retry](extensions/pi-retry/README.md)                       | Makes pi's auto-retry cover every model error (unknown errors, 400s, ...), except auth errors                          |
+| [pi-time-sense](extensions/pi-time-sense/README.md)             | Gives the agent a sense of time: a hidden current-time marker at most once an hour, cache-friendly                     |
 | [pi-working](extensions/pi-working/README.md)                   | Elapsed timer in the working label, and a `✓ Worked for 4m 12s` label after each run                                   |
 
 ## Install
