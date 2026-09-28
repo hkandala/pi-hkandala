@@ -1,0 +1,26 @@
+{
+  "name": "@hkandala/pi-web",
+  "version": "0.1.0",
+  "description": "web_search and web_fetch tools for pi, backed by TinyFish's free Search and Fetch APIs",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
