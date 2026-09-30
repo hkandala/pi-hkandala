@@ -61,11 +61,14 @@ export class Tabs {
   private openedByKey = false; // ↓ opened them, so typing closes them again
   /** The tab opening starts on (↓, /footer), when it has a say (e.g. jobs while any run). */
   pick: () => string | undefined = () => undefined;
+  /** Runs when the dashboard closes (e.g. lists scroll back to the top). */
+  onClose = () => {};
   private clicks: Click[] = [];
 
   /** Closes, giving the keys back to the prompt (a click on its text). */
   close() {
     this.expanded = this.focus = this.openedByKey = false;
+    this.onClose();
   }
 
   /** Opens at `tab` with the keys, staying open while you type (a footer piece, /footer). */
@@ -77,8 +80,9 @@ export class Tabs {
 
   /** Gives the keys back to the prompt; `close` (↑, esc), or ↓ having opened them, also closes. */
   private unfocus(close: boolean) {
-    if (close || this.openedByKey) this.expanded = false;
+    const closing = close || this.openedByKey;
     this.focus = this.openedByKey = false;
+    if (closing) this.close();
   }
 
   private active(tabs: Tab[]) {

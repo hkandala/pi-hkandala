@@ -857,6 +857,7 @@ export default function (pi: ExtensionAPI) {
     move(b, i, b.list.length);
     b.armed = false;
   };
+  tabs.onClose = () => bg && select(bg, 0); // reopening shows the top: running jobs first
 
   pi.events.on("bash-bg:update", (data) => {
     const u = data as { jobs: Job[]; running: number };
@@ -865,7 +866,7 @@ export default function (pi: ExtensionAPI) {
       ...u.jobs.filter((j) => j.state !== "running"),
     ];
     // The selection follows its job while the tab is open, and starts at the top otherwise.
-    const open = tabs.tab === "jobs";
+    const open = tabs.expanded && tabs.tab === "jobs";
     const pid = open ? bg?.list[bg.selected]?.pid : undefined;
     const at = list.findIndex((j) => j.pid === pid);
     const next: Bg = {
