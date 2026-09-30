@@ -6,50 +6,62 @@ A minimal one-line footer for pi, inside a rounded prompt box, that expands into
  ╭── ⠋ Working ─────────────────────────────────────────────────────────────────────────────────────────╮
  │ fix the footer so the cache goes cold after compaction                                               │
  │                                                                                                      │
- │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   ↑116 ↓29.6k (99% · 4m) · $1.24 · 󰪟 47k/200k · opus-5.5 · high │
+ │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7              cold (~$0.46) · 󰦖 2 · 󰪟 47k/200k · opus-5.5 · high │
  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 The box is pi's own editor (same keys, spinner, and autocomplete) drawn with rounded borders and the footer as its last row, set a column in on each side so your text lines up with the transcript's (as in [pi-content-layout](../pi-content-layout/README.md)). Set `"promptEditor": "default"` to keep pi's editor and show the footer below it. The box replaces pi's editor, so it doesn't combine with other extensions that replace the editor (e.g. vim mode).
 
-| Piece                    | Shows                                                                                                                                                            |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| folder                   | folder pi runs in                                                                                                                                                |
-| 󰊢 / 󰙅 repo               | repo name, when it differs from the folder (󰊢) or you are in a linked worktree (󰙅)                                                                               |
-| 󰘬 branch `󰁝2 󰁅1`         | git branch, commits to push / pull                                                                                                                               |
-| `+42 -7`                 | pending line changes vs HEAD, including untracked files                                                                                                          |
-| `↑116 ↓29.6k (99% · 4m)` | session input / output tokens, cache hit rate and time left (see below)                                                                                          |
-| `$1.24`                  | session cost, hidden at $0                                                                                                                                       |
-| `󰪟 47k/200k`             | context used / window, hidden at 0; the pie fills in eighths, yellow above 75%, red above 90%; `~` marks an estimate until the first response after a compaction |
-| `opus-5.5 · high`        | model and thinking level                                                                                                                                         |
+| Piece             | Shows                                                                                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| folder            | folder pi runs in                                                                                                                                                |
+| 󰊢 / 󰙅 repo        | repo name, when it differs from the folder (󰊢) or you are in a linked worktree (󰙅)                                                                               |
+| 󰘬 branch `󰁝2 󰁅1`  | git branch, commits to push / pull                                                                                                                               |
+| `+42 -7`          | pending line changes vs HEAD, including untracked files                                                                                                          |
+| `cold (~$0.46)`   | only while the prompt cache is cold (see below)                                                                                                                  |
+| `󰦖 2`             | [pi-bash-bg](../pi-bash-bg/README.md) jobs running in this session; click it for the jobs tab                                                                    |
+| `󰪟 47k/200k`      | context used / window, hidden at 0; the pie fills in eighths, yellow above 75%, red above 90%; `~` marks an estimate until the first response after a compaction |
+| `opus-5.5 · high` | model and thinking level                                                                                                                                         |
 
-**Cache:** `(99% · 4m)` is the last response's cache hit rate (yellow below 90%) and the time until the prompt cache expires. Once it expires, you switch models, or the session is compacted, it shows `(cold · ~$0.46)` with `cold` in yellow: the next message re-bills the full context (the estimate appears when the model has pricing). The lifetime comes from the model (`promptCache`, honoring `PI_CACHE_RETENTION=long`), else pi's 5-minute default; refreshes from pi's `cacheWarming` setting extend it.
+Tokens, cost and cache timing are in the dashboard's `usage` tab. Clicking a piece (fullscreen TUI mode) opens the dashboard at its tab: folder and git → `git`, cold and context → `usage`, jobs → `jobs`, model and effort → `session`. The rest of the line does nothing; clicking the prompt's text closes the dashboard.
 
-On narrow terminals whole sections drop in this order: usage, cost, git, context. Folder and model always stay. Statuses from other extensions appear right-aligned on their own line below. Yellow and red use the theme's `warning` and `error` colors.
+**Cache:** once the prompt cache expires, you switch models, or the session is compacted, `cold` shows in yellow: the next message re-bills the full context, and `(~$0.46)` estimates what that costs (when the model has pricing). The lifetime comes from the model (`promptCache`, honoring `PI_CACHE_RETENTION=long`), else pi's 5-minute default; refreshes from pi's `cacheWarming` setting extend it.
+
+On narrow terminals git drops first, then the context. Folder, cold, jobs and model always stay. Statuses from other extensions appear right-aligned on their own line below. Yellow and red use the theme's `warning` and `error` colors.
 
 ## Dashboard
 
-Click the footer (fullscreen TUI mode), press `ctrl+shift+h`, or run `/dashboard` to expand or collapse it. It opens below the box:
+Press ↓ at the end of the prompt (a first ↓ moves the cursor there) to open the dashboard and move the keys to it; ↑ (at the top) or Esc closes it and gives the keys back. Typing also gives them back (and closes a dashboard that ↓ opened). The prompt's cursor disappears while the dashboard has the keys. To keep it open while you type, click a footer piece or run `/footer [tab]` (`/footer` alone closes an open dashboard); clicking the prompt's text closes it.
+
+It has tabs, like Claude Code's dialogs: ←/→ or a click switches them, and the active tab is bold (with a background while the dashboard has the keys). ↓ and `/footer` open on the jobs tab while jobs run, else on the last tab you used. The dashboard keeps the height of its tallest tab, so switching tabs doesn't move anything.
 
 ```
-   path       ~/code/pi-hkandala
-   repo       https://github.com/hkandala/pi-hkandala
-   worktree   pi-hkandala (main) · 1 other: fix-footer
-   branch     master → origin/master · 2 to push · fetched 12m ago
-   commit     8252543 pi-header: toggle logo color on click… · 3 hours ago
-   changes    7 files · +42 -7
-              M  extensions/pi-footer/index.ts   +30 -5
-              …
-              +2 more
+   overview  session  usage  git  jobs 1   ←→ switch · ↑ close
 
-   model      anthropic/claude-opus-5-5 · thinking high
-   context    47k / 200k (23%) · compacted 2×
-   tokens     ↑116 input · ↓29.6k output · cache 2.7M read, 249k write · $1.24
-   cache      99% last hit · expires in 4m · next message ~$0.05
-   speed      58 t/s last · 61 t/s avg · 1.0s ttft last · 1.2s ttft avg
+   repo       pi-hkandala · master → origin/master · 7 files · +42 -7
+   model      anthropic/claude-opus-5-5 · thinking high · 47k / 200k (23%)
+   usage      ↑116 ↓29.6k · $1.24 · 99% last hit · expires in 4m
+   session    12 user · 51 assistant · 87 tool calls · 42m working
+   jobs       1 running · 3 completed
+```
 
-   session    fix footer · 12 user · 51 assistant · 87 tool calls
-   time       1m last turn · 42m working · 2h 10m since start
+| Tab        | Shows                                                                                                                                                                                                       |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `overview` | one line per area (above)                                                                                                                                                                                   |
+| `session`  | model, messages, times, and speed (`n/a` before the first reply)                                                                                                                                            |
+| `usage`    | after the first prompt: context, tokens, and cache (with the next message's cost)                                                                                                                           |
+| `git`      | only in a git repo: the repo URL with the folder (`https://github.com/you/repo (~/code/repo)`), worktrees, branch and sync, last commit, and changes: `7 files · 2 created, 4 modified, 1 deleted · +42 -7` |
+| `jobs`     | with [pi-bash-bg](../pi-bash-bg/README.md) and jobs in this session (below)                                                                                                                                 |
+
+**Jobs** (with pi-bash-bg): the footer line shows `󰦖 2` on its right, before the context, while this session has background jobs running; it never drops on narrow terminals, and a click on it opens the jobs tab. The tab shows running jobs, then completed ones, 3 at a time: ↑/↓ select, Enter opens the job's log viewer, and `x` twice kills it. A click selects a job, and a click on the selected job opens its log.
+
+```
+   overview  session  usage  git  jobs 1   ←→ switch · ↑ close
+
+   ▸ 48213  running  4m      npm run dev                               ~/proj
+     48190  exit 0   12s     npm test                                  ~/proj
+
+   ↑↓ select · enter logs · x kill
 ```
 
 Speed counts from each response's first token (skipping streams under a second: output arrives in bursts, so a short reply can land in one chunk), and `ttft` is the time from sending the request to that first token; both cover only responses streamed since pi started (first-token times aren't saved in the session).
