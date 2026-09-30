@@ -1,0 +1,31 @@
+--- a/herdr-agent-state.ts
++++ b/herdr-agent-state.ts
+@@ -187,12 +187,13 @@
+   let lastState: AgentState | undefined;
+   let lastMessage: string | undefined;
+   let rootSession = false;
++  const backgroundWork = new Set(); // patch: sources with work that will wake the agent
+ 
+   function desiredState() {
+     if (blockedCount > 0) {
+       return { state: "blocked" as const, message: blockedMessage };
+     }
+-    if (agentActive) {
++    if (agentActive || backgroundWork.size > 0) {
+       return { state: "working" as const, message: undefined };
+     }
+     return { state: "idle" as const, message: undefined };
+@@ -224,6 +225,13 @@
+     blockedCount += 1;
+     blockedMessage = data.label;
+     publishState();
++  });
++
++  // patch: stay working while background work (e.g. pi-bash-bg jobs) will wake the agent.
++  pi.events.on("herdr:working", (data) => {
++    if (data?.active) backgroundWork.add(data.source);
++    else backgroundWork.delete(data?.source);
++    if (rootSession) publishState();
+   });
+ 
+   pi.on("session_start", async (event, ctx) => {

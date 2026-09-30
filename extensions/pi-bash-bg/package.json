@@ -1,0 +1,29 @@
+{
+  "name": "@hkandala/pi-bash-bg",
+  "version": "0.1.0",
+  "description": "Background bash for pi: move a running command to the background, get a message when it ends",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "files": [
+    "*.ts",
+    "README.md",
+    "docs",
+    "herdr"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

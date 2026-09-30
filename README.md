@@ -6,6 +6,7 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 
 | Extension                                                       | Description                                                                                                                          |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| [pi-bash-bg](extensions/pi-bash-bg/README.md)                   | Background bash: move a running command to the background, get a message when it ends                                                |
 | [pi-bash-cap](extensions/pi-bash-cap/README.md)                 | Configurable line and byte limits for bash tool output                                                                               |
 | [pi-content-layout](extensions/pi-content-layout/README.md)     | Compact transcript: tool calls and thinking in collapsible summarized groups, boxed user messages, optional timestamps               |
 | [pi-continue](extensions/pi-continue/README.md)                 | ctrl+shift+enter nudges the agent to continue without a user message (queued as a follow-up while it is working)                     |
