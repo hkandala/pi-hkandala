@@ -1005,8 +1005,10 @@ export default function (pi: ExtensionAPI) {
     session = ctx.sessionManager as unknown as Session;
     const theme = () => ctx.ui.theme;
     // pi calls widget factories right away with the TUI; that is all this widget is for.
+    let pending: Proto | undefined;
     ctx.ui.setWidget("pi-content-layout", (root) => {
       chat = (root as unknown as Node).children?.[0]?.children?.[2];
+      pending = (root as unknown as Node).children?.[1];
       requestRender = () => (root as unknown as Tool["ui"]).requestRender();
       const tui = root as unknown as FullScreen;
       fullscreen = tui.mode === "fullscreen";
@@ -1034,6 +1036,12 @@ export default function (pi: ExtensionAPI) {
         const lines = orig(width);
         return lines.length && !blank(lines.at(-1)!) ? [...lines, ""] : lines;
       });
+    // Queued steering and follow-up lines (pi pads them 1 column) sit at column 3, inside the
+    // prompt box's edges, with the same 3 columns free on the right.
+    if (pending)
+      override(pending, (orig, width) =>
+        orig(Math.max(1, width - 4)).map((l) => (blank(l) ? l : indent(l, "  "))),
+      );
 
     const tool = ToolExecutionComponent.prototype as unknown as Proto;
     patch(
