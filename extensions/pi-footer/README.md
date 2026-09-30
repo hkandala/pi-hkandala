@@ -49,7 +49,7 @@ It has tabs, like Claude Code's dialogs: ←/→ or a click switches them, and t
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `overview` | one line per area (above)                                                                                                                                                                                   |
 | `session`  | model, messages, times, and speed (`n/a` before the first reply)                                                                                                                                            |
-| `usage`    | after the first prompt: context, tokens, and cache (with the next message's cost)                                                                                                                           |
+| `usage`    | after the first prompt: context, tokens, cost (total, this or last turn, and split into input, output and cache), and cache (with the next message's cost)                                                  |
 | `git`      | only in a git repo: the repo URL with the folder (`https://github.com/you/repo (~/code/repo)`), worktrees, branch and sync, last commit, and changes: `7 files · 2 created, 4 modified, 1 deleted · +42 -7` |
 | `jobs`     | with [pi-bash-bg](../pi-bash-bg/README.md) and jobs in this session (below)                                                                                                                                 |
 

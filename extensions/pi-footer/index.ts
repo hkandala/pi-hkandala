@@ -75,7 +75,13 @@ type Usage = {
   output: number;
   cacheRead: number;
   cacheWrite: number;
-  cost?: { total: number };
+  cost?: {
+    total: number;
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
 };
 type Entry = {
   type: string;
@@ -145,6 +151,8 @@ function sessionStats(ctx: ExtensionContext) {
     cacheRead: 0,
     cacheWrite: 0,
     cost: 0,
+    costParts: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    turnCost: 0, // since the last user message: the running turn, or the last one
     cacheHit: undefined as number | undefined,
     responses: 0,
     userMessages: 0,
@@ -173,6 +181,7 @@ function sessionStats(ctx: ExtensionContext) {
       // Working time: from each user message to the last entry before the next one.
       if (e.type === "message" && e.message?.role === "user") {
         s.userMessages++;
+        s.turnCost = 0;
         if (runStart !== undefined) s.workingMs += runEnd - runStart;
         runStart = runEnd = ts;
       } else if (runStart !== undefined) runEnd = ts;
@@ -193,6 +202,9 @@ function sessionStats(ctx: ExtensionContext) {
     s.cacheRead += usage.cacheRead;
     s.cacheWrite += usage.cacheWrite;
     s.cost += usage.cost?.total ?? 0;
+    s.turnCost += usage.cost?.total ?? 0;
+    for (const k of ["input", "output", "cacheRead", "cacheWrite"] as const)
+      s.costParts[k] += usage.cost?.[k] ?? 0;
     if (e.type === "usage" && e.kind === "cache_warm") s.cachedAt = ts ?? s.cachedAt; // refresh extends the cache
     if (e.message?.role !== "assistant") continue;
     s.lastCached = usage.cacheRead + usage.cacheWrite > 0;
@@ -544,7 +556,8 @@ function tabData(
     }
   }
 
-  // Session: model, messages, time, speed. Usage (after the first prompt): context, tokens, cache.
+  // Session: model, messages, time, speed. Usage (after the first prompt): context, tokens, cost,
+  // cache.
   const session: string[] = [];
   if (model) session.push(row("model", join([modelName, thinking])));
   session.push(row("messages", join(messages)));
@@ -587,10 +600,26 @@ function tabData(
           `↑${fmt(s.input)} input`,
           `↓${fmt(s.output)} output`,
           `cache ${fmt(s.cacheRead)} read, ${fmt(s.cacheWrite)} write`,
-          s.cost > 0 && `$${s.cost.toFixed(2)}`,
         ]),
       ),
     );
+  // Cost: the total, the running or last turn's, then split like the tokens row.
+  if (s.cost > 0) {
+    const usd = (n: number) => `$${n.toFixed(2)}`;
+    const c = s.costParts;
+    usage.push(
+      row(
+        "cost",
+        join([
+          `${usd(s.cost)} total`,
+          `${usd(s.turnCost)} ${turnStartedAt ? "this" : "last"} turn`,
+          `input ${usd(c.input)}`,
+          `output ${usd(c.output)}`,
+          `cache ${usd(c.cacheRead)} read, ${usd(c.cacheWrite)} write`,
+        ]),
+      ),
+    );
+  }
   if (s.lastCached) {
     const price = cold ? cacheModel.cost?.cacheWrite : cacheModel.cost?.cacheRead;
     const next = ((ctxUsage?.tokens ?? 0) * (price ?? 0)) / 1e6;
