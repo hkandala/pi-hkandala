@@ -758,6 +758,7 @@ type PromptEditor = {
   getLines?: () => string[];
   getCursor?: () => { line: number; col: number };
   historyIndex?: number;
+  focused?: boolean; // false while a selector (e.g. /tree) replaces it
 };
 // Found by duck typing; if pi's layout changes, the autocomplete gap and border pinning just stop
 // applying.
@@ -854,7 +855,7 @@ export default function (pi: ExtensionAPI) {
     requestRender();
   };
   // The cursor is at the end of the prompt's text (not browsing history), with no autocomplete
-  // list or overlay: ↓ has nothing left to do there, so it moves on to the dashboard.
+  // list or overlay, and the prompt has focus (not /tree etc.): ↓ has nothing left to do there, so it moves on to the dashboard.
   let promptEnd = () => true;
   let tuiHasOverlay = () => false; // e.g. pi-bash-bg's log viewer, which gets its own keys
   /** Selects a job row (and disarms x). */
@@ -917,6 +918,7 @@ export default function (pi: ExtensionAPI) {
               const lines = e.getLines?.() ?? [""];
               const cursor = e.getCursor?.() ?? { line: 0, col: 0 };
               return (
+                e.focused !== false &&
                 cursor.line === lines.length - 1 &&
                 cursor.col === lines.at(-1)!.length &&
                 (e.historyIndex ?? -1) === -1 &&
