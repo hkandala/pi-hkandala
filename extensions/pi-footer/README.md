@@ -19,7 +19,7 @@ The box is pi's own editor (same keys, spinner, and autocomplete) drawn with rou
 | 󰘬 branch `󰁝2 󰁅1`  | git branch, commits to push / pull                                                                                                                               |
 | `+42 -7`          | pending line changes vs HEAD, including untracked files                                                                                                          |
 | `cold (~$0.46)`   | only while the prompt cache is cold (see below)                                                                                                                  |
-| `󰦖 2`             | [pi-bash-bg](../pi-bash-bg/README.md) jobs running in this session; click it for the jobs tab                                                                    |
+| `󰦖 2`             | [pi-bash-bg](../pi-bash-bg/README.md) jobs running in this session, dim; click it for the jobs tab                                                               |
 | `󰪟 47k/200k`      | context used / window, hidden at 0; the pie fills in eighths, yellow above 75%, red above 90%; `~` marks an estimate until the first response after a compaction |
 | `opus-5.5 · high` | model and thinking level                                                                                                                                         |
 

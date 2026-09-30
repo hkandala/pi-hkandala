@@ -350,9 +350,7 @@ function render(
     (model ? paint("text", shortModel(model.id)) : dim("no model")) +
     (model?.reasoning ? dot + paint(levelColor, level) : "");
 
-  const jobsPiece = bg?.running
-    ? `${icon(ICON.jobs)} ${paint("text", String(bg.running))}`
-    : undefined;
+  const jobsPiece = bg?.running ? dim(`${ICON.jobs} ${bg.running}`) : undefined;
 
   // Left: folder and git. Right: cold, jobs, context, model. Drop whole sections until the line
   // fits: git, then context; folder, cold, jobs and model always stay.
