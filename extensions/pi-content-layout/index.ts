@@ -3,6 +3,7 @@
  * - Tool calls and thinking between two pieces of assistant text form one group: a summary line
  *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it.
  *   Running calls show a live timer (and pulse, full screen), edits show their diff,
+ *   the last bash call running 30s+ shows pi-bash-bg's "ctrl+shift+b to run in background" hint,
  *   failures are red. Code is colored by pi's own highlighter; diffs tint changed lines and mark
  *   the changed words.
  *   Click a row (fullscreen TUI mode) to open or close its content, which hangs off a └ under it,
@@ -12,7 +13,7 @@
  *   to open).
  * - User messages sit in a rounded border like pi-footer's prompt box; compaction and branch
  *   summaries, skills, and extension messages (pi's box or an extension's) in a dashed one,
- *   labeled in its top edge.
+ *   labeled in its top edge; click an extension's box (fullscreen) to open or close it.
  * - User bash (!cmd) and info panels (pi's or extensions') read like assistant text, without rules.
  * - Each piece of assistant text starts with a ● bullet (click it to copy the reply as markdown);
  *   summary lines align with its text, and so do status lines, notices, warnings, and errors,
@@ -78,7 +79,10 @@ type Config = {
 
 type Node = { children?: Node[] };
 type Proto = Record<string, any>; // oxlint-disable-line no-explicit-any
-type Result = { content: { type: string; text?: string }[]; details?: { diff?: string } };
+type Result = {
+  content: { type: string; text?: string }[];
+  details?: { diff?: string; durationMs?: number }; // durationMs: a tool's own measure (pi-bash-bg)
+};
 type Tool = Node & {
   toolName: string;
   toolCallId: string;
@@ -179,6 +183,12 @@ function readConfig(): Config {
 const STAMPS: Stamps[] = ["off", "relative", "absolute"];
 let stamps: Stamps = "off";
 let twelveHour = false;
+/** pi-bash-bg's shortcut, once it has reported (bash-bg:update): the hint under long bash calls. */
+let backgroundKey: string | undefined;
+const HINT_AFTER_S = 30;
+/** Running bash rows in the order they started: only the last gets the hint (the key moves all). */
+const runningBash = new Set<Proto>();
+
 /** Columns text gives up for the time column: its widest time + 1 ("11mo ago", "Sep 24 12:02 pm"). */
 const reserve = () => (stamps === "off" ? 0 : stamps === "relative" ? 9 : twelveHour ? 16 : 13);
 
@@ -271,12 +281,17 @@ function callOf(id: string) {
 /**
  * A tool call's start and end: measured live, or from the session for history. pi saves a batch
  * of parallel calls' results only once all of them finish, so for history those end times are
- * the batch's (`bound`: the call took at most that long).
+ * the batch's (`bound`: the call took at most that long), unless the result's details carry the
+ * tool's own `durationMs` (pi-bash-bg's bash does).
  */
 function timesOf(t: Tool & Proto): { start?: number; end?: number; bound?: boolean } {
   if (t.clStart) return { start: t.clStart, end: t.clEnd };
   if (t.clCall === undefined) t.clCall = callOf(t.toolCallId) ?? null;
-  return { start: t.clCall?.start, end: t.result?.timestamp, bound: t.clCall?.batch > 1 };
+  const start = t.clCall?.start;
+  // A tool that reports its own duration is exact, even in a batch.
+  const ms = t.result?.details?.durationMs;
+  if (start && typeof ms === "number") return { start, end: start + ms };
+  return { start, end: t.result?.timestamp, bound: t.clCall?.batch > 1 };
 }
 
 /** When a group member started: a tool call, or an assistant message that opens with thinking. */
@@ -467,9 +482,21 @@ function frame(
   stamp = "",
 ) {
   return memo(node, "clFrame", [lines, width, theme, title, stamp], () =>
-    boxed(lines, width - 2, theme, title, stamp).map((l) => ` ${l} `),
+    boxed(
+      lines.map((l) => dimHint(l, theme)),
+      width - 2,
+      theme,
+      title,
+      stamp,
+    ).map((l) => ` ${l} `),
   );
 }
+/** pi paints "(ctrl+o to expand)" in its message color with only the key dim: all of it dim. */
+const dimHint = (line: string, theme: Theme) =>
+  // oxlint-disable-next-line no-control-regex
+  line.replace(/\((?:\x1b\[[\d;]*m)*(\S+?)(?:\x1b\[[\d;]*m)* to expand\)/, (_, key) =>
+    theme.fg("dim", `(${key} to expand)`),
+  );
 function boxed(lines: string[], width: number, theme: Theme, title?: string, stamp = "") {
   const inner = Math.max(1, width - 4);
   const [h, v] = title ? ["┄", "┆"] : ["─", "│"];
@@ -839,7 +866,12 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
   row[row.length - 1] += after;
   if (toggle) row.push(" ".repeat(visibleWidth(name) + 1) + toggle);
   t.clRowMore = toggle ? row.length - 1 : undefined;
-  return groupLines(t, row, body(t, theme, config), width, theme, undefined, stamp);
+  let content = body(t, theme, config);
+  if (t.toolName === "bash" && state === "running") runningBash.add(t);
+  else runningBash.delete(t);
+  if (backgroundKey && seconds >= HINT_AFTER_S && [...runningBash].at(-1) === t)
+    content = [...content, theme.fg("dim", `${backgroundKey} to run in background`)];
+  return groupLines(t, row, content, width, theme, undefined, stamp);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -857,6 +889,10 @@ export default function (pi: ExtensionAPI) {
     };
     restores.push(() => (proto[key] = orig));
   };
+
+  pi.events.on("bash-bg:update", (data) => {
+    backgroundKey = (data as { shortcut?: string }).shortcut;
+  });
 
   let requestRender = () => {};
   pi.registerShortcut(Key.ctrlShift("t"), {
@@ -1043,13 +1079,26 @@ export default function (pi: ExtensionAPI) {
           // An extension's status line (a plain Text) sits at column 3 like pi's.
           if (own && Object.getPrototypeOf(own) === Text.prototype)
             return ["", ...atColumn3(own, width, (w) => own.render(w))];
-          // An extension's background box (bg-tasks' notifications) is pi's look redone: its whole
+          // An extension's background box (pi-bash-bg's end messages) is pi's look redone: its whole
           // content goes in the dashed border. Anything else keeps the extension's own look.
           if (own && !(own instanceof Box)) return orig.call(this, width);
           const { customType: title, timestamp } = this.message;
           if (own)
             return ["", ...frame(own, inner(own, width), width, theme(), title, clock(timestamp))];
           return ["", ...special(this.box, width, title, timestamp)];
+        },
+    );
+    // A click opens or closes a framed extension message (pi-bash-bg's end messages), like ctrl+o.
+    patch(
+      CustomMessageComponent.prototype as unknown as Proto,
+      "handleMouse",
+      (orig) =>
+        function (this: Proto, event: Mouse) {
+          const click = event.type === "click" && event.button === "left";
+          if (!click || !(this.customComponent instanceof Box)) return orig.call(this, event);
+          this.setExpanded(!this._expanded);
+          requestRender();
+          return { handled: true };
         },
     );
     // A skill's label leads its one line while closed, and has a line of its own while open.
@@ -1289,6 +1338,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_shutdown", () => {
     working = false;
+    runningBash.clear();
     for (const restore of restores.splice(0).reverse()) restore();
     for (const undo of overridden.values()) undo();
     overridden.clear();
