@@ -5,6 +5,8 @@
  *   ╭── ⠋ Working (12s) ─────────────────────╮   while running; the time turns yellow when the
  *                                                model has been silent for 30s
  *   ╭── ✓ Worked for 4m 12s · 3m ago ────────╮   after the run; ■ interrupted, ✗ failed
+ *   ╭── Waiting on 2 background jobs (1m 12s) ───╮   after the run, while pi-bash-bg jobs it
+ *                                                    watches run (their end wakes the agent)
  *
  * A run spans the first agent_start to agent_settled, so retries, compaction and follow-ups count.
  * Config (optional): ~/.pi/agent/extensions/pi-working.json
@@ -83,17 +85,27 @@ export default function (pi: ExtensionAPI) {
   // The finished run, shown until the next run or esc.
   let done: { verb: string; ms: number; endedAt: number; outcome?: string } | undefined;
   let shown = ""; // done label as last rendered
+  // pi-bash-bg's watched jobs still running after the run (from its bash-bg:update event).
+  let waiting = 0;
+  let waitingSince = 0;
 
   const icon = () => {
     if (!ctx) return "";
     const t = ctx.ui.theme;
+    if (waiting) return "";
     if (done?.outcome === "aborted") return t.fg("warning", "■");
     if (done?.outcome === "error") return t.fg("error", "✗");
     return t.fg("success", "✓");
   };
   const doneLabel = () => {
-    if (!done || !ctx) return "";
+    if (!ctx) return "";
     const t = ctx.ui.theme;
+    if (waiting) {
+      const jobs = `${waiting} background job${waiting === 1 ? "" : "s"}`;
+      const time = t.fg("dim", `(${duration(Date.now() - waitingSince, true)})`);
+      return `${t.fg("muted", `Waiting on ${jobs}`)} ${time}`;
+    }
+    if (!done) return "";
     const ago = Date.now() - done.endedAt;
     return (
       `${icon()} ${t.fg("muted", `${done.verb} for ${duration(done.ms, true)}`)}` +
@@ -121,12 +133,12 @@ export default function (pi: ExtensionAPI) {
         `(${duration(Date.now() - startedAt)})`,
       );
       ctx.ui.setWorkingMessage(`${verb} ${time}`);
-    } else if (done && editor) {
+    } else if ((done || waiting) && (editor ??= root && findEditor(root))) {
       const current = editor.workingStatusIndicator;
       // pi empties the border after its own indicators (e.g. an idle /compact): put the label back.
       if (!current) editor.setWorkingStatusIndicator(indicator);
       if (!current || (current === indicator && doneLabel() !== shown)) requestRender();
-    }
+    } else if (!done) clearDone(); // waiting ended with no label under it (e.g. after a /reload)
   };
 
   const stop = () => {
@@ -161,6 +173,13 @@ export default function (pi: ExtensionAPI) {
     });
   });
   pi.on("session_shutdown", stop);
+
+  pi.events.on("bash-bg:update", (data) => {
+    const n = (data as { waiting?: number }).waiting ?? 0;
+    if (n && !waiting) waitingSince = Date.now();
+    waiting = n;
+    tick();
+  });
 
   pi.on("agent_start", () => {
     if (!ctx) return;
