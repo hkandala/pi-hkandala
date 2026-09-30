@@ -94,7 +94,7 @@ export class Tabs {
       return this.focus ? theme.bg("selectedBg", on) : on;
     });
     const hint = dim(this.focus ? "←→ switch · ↑ close" : "↓ to focus");
-    const lines = [`  ${bar.join("")}  ${hint}`, ""];
+    const lines = [truncateToWidth(`  ${bar.join("")}  ${hint}`, width, "…"), ""];
 
     const body = (t: Tab) => {
       const out = [...t.lines];

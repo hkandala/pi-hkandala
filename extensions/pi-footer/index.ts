@@ -59,6 +59,7 @@ const PIE = [
   "\u{f0766}",
   ...Array.from({ length: 8 }, (_, i) => String.fromCodePoint(0xf0a9e + i)),
 ];
+const MARGIN = 3; // the dashboard's and statuses' right margin, like the box's and the transcript's
 const DEFAULT_CACHE_TTL_S = 300; // pi's own default when a model declares no prompt-cache lifetime
 
 type Color = Parameters<Theme["fg"]>[0];
@@ -397,10 +398,11 @@ function render(
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([, text]) => text.replace(/[\r\n\t]+/g, " "))
       .join(dot);
+    const room = Math.max(1, width - MARGIN);
     const w = visibleWidth(line);
-    lines.push(truncateToWidth(w < width ? " ".repeat(width - w) + line : line, width, "…"));
+    lines.push(truncateToWidth(w < room ? " ".repeat(room - w) + line : line, room, "…"));
   }
-  return { lines, spans, paint, tabs: tabData(pi, ctx, paint, bg, branch, g, s, width) };
+  return { lines, spans, paint, tabs: tabData(pi, ctx, paint, bg, branch, g, s, width - MARGIN) };
 }
 
 /** A piece of the footer line (its columns) and the dashboard tab a click on it opens. */
@@ -946,7 +948,8 @@ export default function (pi: ExtensionAPI) {
           const gap = lines[0] && editor?.isShowingAutocomplete?.() ? 1 : 0;
           footerRow = box ? -1 : gap;
           dashRow = gap + lines.length + 1;
-          if (tabs.expanded) lines.push("", ...tabs.render(shown, width, theme, drawn.paint));
+          if (tabs.expanded)
+            lines.push("", ...tabs.render(shown, width - MARGIN, theme, drawn.paint));
           return gap ? ["", ...lines] : lines;
         },
       };
