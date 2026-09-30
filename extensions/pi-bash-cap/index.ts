@@ -36,6 +36,8 @@ function readConfig(): { maxLines?: number; maxBytes?: number } {
 export default function (pi: ExtensionAPI) {
   const { maxLines = 1000, maxBytes = 25 * 1024 } = readConfig();
   const limits = `last ${maxLines} lines or ${formatSize(maxBytes)}`;
+  // pi-bash-bg asks for the limits (for its end messages) by emitting an object to fill in.
+  pi.events.on("bash-cap:limits", (data) => Object.assign(data as object, { maxLines, maxBytes }));
 
   // Tool declarations live on system messages; rewrite bash's for each request.
   pi.on("context_with_system", (event) => ({
@@ -89,7 +91,12 @@ export default function (pi: ExtensionAPI) {
 
     return {
       content: [{ type: "text", text }],
-      details: t.truncated ? { truncation: t, fullOutputPath: path } : {},
+      // Keeps other details (e.g. pi-bash-bg's durationMs); replaces pi's truncation ones.
+      details: {
+        ...(event.details as object),
+        truncation: t.truncated ? t : undefined,
+        fullOutputPath: t.truncated ? path : undefined,
+      },
     };
   });
 }

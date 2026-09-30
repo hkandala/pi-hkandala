@@ -28,5 +28,6 @@ Run `/reload` after editing.
 ## Notes
 
 - Limits can also go higher than pi's defaults: the rest is read back from pi's full-output file.
+- With [pi-bash-bg](../pi-bash-bg/README.md), its background jobs' end messages use these limits too.
 - While a command is running, the live preview in the TUI still uses pi's own limits. The cap applies to the final result.
 - The bash tool's description (the text sent to the model that explains the tool, including "Output is truncated to last 2000 lines or 50KB") is changed to state the configured limits. The change applies only to what is sent to the model, so the session file keeps pi's original text. If another extension replaces the bash tool with its own description, that description is left as is.
