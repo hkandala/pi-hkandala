@@ -113,11 +113,15 @@ type State = "running" | "done" | "error";
 /** Summary wording per tool: [verb, noun, plural noun]. Others read "ran <tool> N times". */
 type Wording = [string, string, string?];
 const SEARCHED: Wording = ["searched", "pattern"];
+const RAN: Wording = ["ran", "command"];
 const WORDING: Record<string, Wording> = {
   read: ["read", "file"],
   edit: ["edited", "file"],
   write: ["wrote", "file"],
-  bash: ["ran", "command"],
+  bash: RAN,
+  // pi-bash-bg's tools count as commands too.
+  bash_list: RAN,
+  bash_watch: RAN,
   grep: SEARCHED,
   find: SEARCHED,
   ls: ["listed", "directory", "directories"],
@@ -404,6 +408,8 @@ function describe(t: Tool): [target: string, result: string] {
         return path;
       case "web_fetch":
         return oneLine(Array.isArray(a.urls) ? a.urls.join(" ") : "");
+      case "bash_watch":
+        return a.pid === undefined ? "" : `pid ${a.pid}`;
       default:
         return oneLine(str(Object.values(a).find((v) => typeof v === "string")));
     }
