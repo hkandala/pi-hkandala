@@ -5,7 +5,8 @@
  * text expands or collapses the header, like ctrl+o.
  * Status lines pi posts before the first message are hidden so nothing sits under the header.
  *
- * Config (optional): ~/.pi/agent/extensions/pi-header.json  →  { "logo": "color" | "white" }
+ * Config (optional): ~/.pi/agent/extensions/pi-header.json
+ *   →  { "logo": "color" | "white", "compact": false }  (compact: 2-row half-block logo)
  * Pair with "quietStartup": true in ~/.pi/agent/settings.json to hide pi's built-in listing.
  */
 
@@ -38,7 +39,8 @@ const COLORS: Record<string, RGB> = { S: [240, 144, 130], B: [78, 154, 191], Y: 
 const WHITE: RGB = [255, 255, 255];
 const BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]; // left-aligned k/8 of a cell
 const SPACING = 1.5; // logo pixels left/right of the logo
-const ROWS = 2; // blank rows above/below (whole rows only; 2 is closest to SPACING)
+// Blank rows above/below, in whole rows closest to SPACING: 2 (1-row pixels), 1 compact (half-row).
+const rowsFor = (compact: boolean) => (compact ? 1 : 2);
 const SECTIONS = ["context", "skills", "prompts", "extensions", "themes"] as const;
 type Resources = Record<(typeof SECTIONS)[number], { name: string; path: string }[]>;
 
@@ -50,7 +52,8 @@ const bg = (c: RGB) => `\x1b[48;2;${c.join(";")}m`;
  * pi-tui's cell size), with edges placed in 1/8 cells. SPACING logo pixels of space
  * on each side. Returns lines padded to the text column.
  */
-function renderLogo(white: boolean) {
+function renderLogo(white: boolean, compact: boolean) {
+  if (compact) return renderCompactLogo(white);
   const { widthPx, heightPx } = getCellDimensions();
   const px = (8 * heightPx) / widthPx;
   const column = Math.round(((LOGO.length + 2 * SPACING) * px) / 8);
@@ -81,6 +84,29 @@ function renderLogo(white: boolean) {
   return { lines, pad: Math.floor(offset / 8), column };
 }
 
+/** Compact: each pixel is half a row tall (▀/▄ half blocks) and as wide as that in whole cells. */
+function renderCompactLogo(white: boolean) {
+  const { widthPx, heightPx } = getCellDimensions();
+  const w = Math.max(1, Math.round(heightPx / 2 / widthPx)); // cells per pixel
+  const pad = Math.round(SPACING * w);
+  const colorAt = (ch = "") => (COLORS[ch] && white ? WHITE : COLORS[ch]);
+  const lines: string[] = [];
+  for (let y = 0; y < LOGO.length; y += 2) {
+    let line = " ".repeat(pad);
+    for (let x = 0; x < LOGO[y].length; x++) {
+      const t = colorAt(LOGO[y][x]);
+      const b = colorAt(LOGO[y + 1]?.[x]);
+      if (!t && !b) line += " ".repeat(w);
+      else if (t === b) line += `${fg(t!)}${"█".repeat(w)}\x1b[39m`;
+      else if (!b) line += `${fg(t!)}${"▀".repeat(w)}\x1b[39m`;
+      else if (!t) line += `${fg(b)}${"▄".repeat(w)}\x1b[39m`;
+      else line += `${fg(t)}${bg(b)}${"▀".repeat(w)}\x1b[39;49m`;
+    }
+    lines.push(line + " ".repeat(pad));
+  }
+  return { lines, pad, column: 2 * pad + LOGO[0].length * w };
+}
+
 /** Text halfway between the theme's muted and text colors (muted when they aren't 24-bit). */
 function soft(theme: Theme): (s: string) => string {
   const rgb = (color: "muted" | "text") =>
@@ -96,6 +122,7 @@ function render(
   res: Resources,
   expanded: boolean,
   white: boolean,
+  compact: boolean,
   quiet: boolean,
   width: number,
   blanksBelow: number,
@@ -115,36 +142,40 @@ function render(
     .map((s) => gray(`${res[s].length} ${res[s].length === 1 ? s.replace(/s$/, "") : s}`))
     .join(dot);
 
-  const logo = renderLogo(white);
-  const info = [theme.bold("pi") + gray(` v${VERSION}`), hints, "", counts];
+  const logo = renderLogo(white, compact);
+  const title = theme.bold("pi") + gray(` v${VERSION}`);
+  const info = compact ? [title + dot + hints, counts] : [title, hints, "", counts];
+  const rows = rowsFor(compact);
   // Without quietStartup pi adds a blank row above the header and two below (after it, and before
   // [Context]). Blank lines the content below already starts with count toward the gap.
-  const top = Array<string>(quiet ? ROWS : ROWS - 1).fill("");
-  const bottom = Array<string>(Math.max(0, (quiet ? ROWS : ROWS - 2) - blanksBelow)).fill("");
+  const top = Array<string>(quiet ? rows : rows - 1).fill("");
+  const bottom = Array<string>(Math.max(0, (quiet ? rows : rows - 2) - blanksBelow)).fill("");
   const out = [...top, ...logo.lines.map((line, i) => line + info[i])];
   if (!expanded) return [...out, ...bottom];
 
-  // Lists: label under the logo, items in the text column, packed so " · " never ends a line.
-  out.push(...Array<string>(ROWS).fill(""));
+  // Lists: label under the logo, items in the text column (wider if a label needs it), packed so
+  // " · " never ends a line.
+  const column = Math.max(logo.column, logo.pad + Math.max(...SECTIONS.map((s) => s.length)) + 1);
+  out.push(...Array<string>(rows).fill(""));
   for (const s of SECTIONS) {
     const lines: string[] = [];
     for (const item of res[s].map((i) => gray(i.name))) {
       const last = lines.at(-1);
-      if (last !== undefined && visibleWidth(last + dot + item) <= width - logo.column)
+      if (last !== undefined && visibleWidth(last + dot + item) <= width - column)
         lines[lines.length - 1] += dot + item;
       else lines.push(item);
     }
     lines.forEach((line, i) =>
       out.push(
         (i
-          ? " ".repeat(logo.column)
-          : " ".repeat(logo.pad) + gray(s.padEnd(logo.column - logo.pad - 1)) + " ") + line,
+          ? " ".repeat(column)
+          : " ".repeat(logo.pad) + gray(s.padEnd(column - logo.pad - 1)) + " ") + line,
       ),
     );
   }
   out.push(
     "",
-    " ".repeat(logo.column) +
+    " ".repeat(column) +
       hint([
         ["/hotkeys", "all shortcuts"],
         ["/loaded", "full paths"],
@@ -246,13 +277,13 @@ function containersBelow(tui: Node, header: Node): Node[] {
   return document?.children?.slice(document.children.indexOf(headerContainer!) + 1) ?? [];
 }
 
-/** Blank lines (up to ROWS) the content below the header starts with: a spacer, or a block's own. */
-function leadingBlanks(below: Node[], width: number): number {
+/** Blank lines (up to rows) the content below the header starts with: a spacer, or a block's own. */
+function leadingBlanks(below: Node[], width: number, rows: number): number {
   let n = 0;
   for (const container of below)
     for (const child of container.children ?? [])
       for (const line of (child as unknown as Container).render(width)) {
-        if (n === ROWS || visibleWidth(line.replaceAll(" ", ""))) return n;
+        if (n === rows || visibleWidth(line.replaceAll(" ", ""))) return n;
         n++;
       }
   return n;
@@ -260,7 +291,7 @@ function leadingBlanks(below: Node[], width: number): number {
 
 const configPath = () => join(getAgentDir(), "extensions", "pi-header.json");
 
-function readConfig(): { logo?: string } {
+function readConfig(): { logo?: string; compact?: boolean } {
   try {
     return JSON.parse(readFileSync(configPath(), "utf8"));
   } catch {
@@ -282,7 +313,9 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-    let white = readConfig().logo === "white";
+    const config = readConfig();
+    let white = config.logo === "white";
+    const compact = config.compact === true;
     const quiet =
       !process.argv.includes("--verbose") &&
       SettingsManager.create(ctx.cwd, getAgentDir(), {
@@ -306,9 +339,10 @@ export default function (pi: ExtensionAPI) {
         // Mouse events only arrive in fullscreen TUI mode; x/y are relative to the header.
         handleMouse(event: { type: string; button: string; x: number; y: number }) {
           if (event.type !== "click" || event.button !== "left") return undefined;
-          const top = quiet ? ROWS : ROWS - 1;
-          const onLogo = event.y >= top && event.y < top + LOGO.length;
-          if (onLogo && event.x < renderLogo(white).column) {
+          const top = quiet ? rowsFor(compact) : rowsFor(compact) - 1;
+          const logo = renderLogo(white, compact);
+          const onLogo = event.y >= top && event.y < top + logo.lines.length;
+          if (onLogo && event.x < logo.column) {
             white = !white;
             saveLogo(white);
           } else if (visibleWidth(shown[event.y] ?? "")) expanded = !expanded;
@@ -319,9 +353,9 @@ export default function (pi: ExtensionAPI) {
           // The header renders before the chat, so dropped lines never reach the screen.
           below = below.length ? below : containersBelow(tui, header);
           if (fresh) fresh = dropEarlyStatuses(below);
-          const blanks = leadingBlanks(below, width);
-          shown = render(ctx.ui.theme, res, expanded, white, quiet, width, blanks).map((l) =>
-            truncateToWidth(l, width),
+          const blanks = leadingBlanks(below, width, rowsFor(compact));
+          shown = render(ctx.ui.theme, res, expanded, white, compact, quiet, width, blanks).map(
+            (l) => truncateToWidth(l, width),
           );
           return shown;
         },

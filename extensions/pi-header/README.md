@@ -19,6 +19,15 @@ Status lines pi would post under the header before your first message (e.g. `Thi
 
 The logo is rendered pixel-accurately: each pixel is one row tall and exactly one cell-height wide, measured from the terminal's reported cell size. Edges are placed with 1/8-cell block characters, so pixels stay square in any font.
 
+Set `"compact": true` for a header half the height:
+
+```
+  ▀▀█   pi v0.86.1 · esc interrupt · / commands · ! bash · ctrl+o expand
+  █▀ █  2 context · 7 skills · 11 extensions · 4 themes
+```
+
+The compact logo uses half-block characters (`▀▄`): each pixel is half a row tall and as wide as that in whole cells, so pixels stay close to square.
+
 ## Install
 
 ```bash
@@ -32,12 +41,13 @@ Or from a checkout of [pi-hkandala](../../README.md): `pi install <checkout>/ext
 Optional file: `~/.pi/agent/extensions/pi-header.json`
 
 ```json
-{ "logo": "color" }
+{ "logo": "color", "compact": false }
 ```
 
-| Key    | Values               | Default   |
-| ------ | -------------------- | --------- |
-| `logo` | `"color"`, `"white"` | `"color"` |
+| Key       | Values               | Default   |
+| --------- | -------------------- | --------- |
+| `logo`    | `"color"`, `"white"` | `"color"` |
+| `compact` | `true`, `false`      | `false`   |
 
 Clicking the logo updates `logo` for you; other keys are preserved.
 
