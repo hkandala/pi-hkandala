@@ -72,7 +72,7 @@ skills/
   <name>/SKILL.md     # skills, loaded by the root package
 herdr/
   patch/<version>/    # patch to herdr's pi integration, one folder per herdr version
-  plugin/             # herdr plugin (one popup), installed with `herdr plugin install` or `link`
+  plugin/             # herdr plugin (popups), installed with `herdr plugin install` or `link`
 ```
 
 See [AGENTS.md](AGENTS.md) for adding and publishing extensions.

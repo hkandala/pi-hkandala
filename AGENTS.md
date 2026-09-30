@@ -16,7 +16,7 @@ The root `package.json` intentionally has no `pi` manifest: pi then auto-discove
 
 ## herdr
 
-`herdr/` holds what extensions share for herdr: `patch/<version>/` patches herdr's pi integration (one patch covering every extension's needs, with `patch/test.mts`), and `plugin/` is a herdr plugin (a manifest only) with one generic popup pane that runs `POPUP_COMMAND`. Extensions must work without either. Extend the existing patch or plugin rather than adding one per extension.
+`herdr/` holds what extensions share for herdr: `patch/<version>/` patches herdr's pi integration (one patch covering every extension's needs, with `patch/test.mts`), and `plugin/` is a herdr plugin (a manifest only) with popup panes that run `POPUP_COMMAND`, one per way of closing (the border title says how). Extensions must work without either. Extend the existing patch or plugin rather than adding one per extension.
 
 ## Rules
 

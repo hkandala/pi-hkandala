@@ -118,10 +118,17 @@ dialogs as blocked and turns as settled.
 
 ## Plugin
 
-herdr opens a floating window (a **popup**) only from a plugin pane, and each pane's command is fixed
-in the manifest. So `plugin/` holds a manifest with no code: one popup pane, `popup`, that runs
+herdr opens a floating window (a **popup**) only from a plugin pane. A pane's command and its border
+title are fixed in the manifest. So `plugin/` holds a manifest with no code, and each pane runs
 whatever shell command the caller passes in `POPUP_COMMAND`. There is one popup per herdr session at
-a time anyway, so one generic pane covers every use.
+a time anyway.
+
+herdr's popup has no close button, and clicks outside it are ignored. The only hint a user sees is
+the border title, so there is one pane per way of closing, and its title says how:
+
+| Pane     | Title               | For                                                                                      |
+| -------- | ------------------- | ---------------------------------------------------------------------------------------- |
+| `attach` | `ctrl+b q to close` | `herdr agent attach`: `ctrl+b q` detaches, the popup closes, and the agent keeps running |
 
 ### Install
 
@@ -142,13 +149,13 @@ Plugins are global to your user and work in every herdr session.
 ### Open a popup
 
 ```bash
-herdr plugin pane open --plugin pi-hkandala --entrypoint popup --env POPUP_COMMAND='<command>'
+herdr plugin pane open --plugin pi-hkandala --entrypoint attach --env POPUP_COMMAND='<command>'
 ```
 
 For example, attach to a pane in another herdr session:
 
 ```bash
-herdr plugin pane open --plugin pi-hkandala --entrypoint popup \
+herdr plugin pane open --plugin pi-hkandala --entrypoint attach \
   --env POPUP_COMMAND='HERDR_SOCKET_PATH=<target socket> exec herdr agent attach <pane> --takeover'
 ```
 
@@ -162,10 +169,13 @@ herdr plugin pane open --plugin pi-hkandala --entrypoint popup \
 
 Checked live on herdr 0.9.3: the popup ran the passed command and attached to another session's pane.
 It closed on its own when its command exited, closed on request, and a second open returned
-`ui_busy`. Not yet checked: whether `ctrl+b q` reaches an attach client inside the popup, or is taken
-by the outer herdr (which would make it `ctrl+b ctrl+b q`).
+`ui_busy`. Inside an attach popup, `ctrl+b q` reaches the attach client: it detaches, the popup
+closes, and the attached agent keeps running.
 
 ### Future
 
-- pi-bash-bg: open a background job's log in the popup (`POPUP_COMMAND='tail -f <log>'`) from
-  `/background logs` and pi-footer's jobs tab, as an alternative to its in-pi log viewer.
+- pi-bash-bg: open a background job's log in a popup (`POPUP_COMMAND='tail -f <log>'`) from
+  `/background logs` and pi-footer's jobs tab, as an alternative to its in-pi log viewer. It needs a
+  `logs` pane titled `ctrl+c to close`.
+- Ask herdr upstream for a way to close a popup with the mouse (a close mark in the border, or a
+  click outside), and for a per-open title, which would allow one generic pane.

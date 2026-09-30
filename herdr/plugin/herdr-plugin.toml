@@ -5,11 +5,12 @@ min_herdr_version = "0.9.0"
 description = "A popup that runs a command given by the caller, for pi-hkandala extensions"
 platforms = ["linux", "macos"]
 
-# herdr opens popups only from plugin panes, and a pane's command is fixed here, so this one pane
-# runs whatever the caller passes: herdr plugin pane open ... --env POPUP_COMMAND='<shell command>'
+# herdr opens popups only from plugin panes. A pane's command and border title are fixed here, so
+# each pane runs whatever the caller passes (--env POPUP_COMMAND='<shell command>') and its title
+# says how to close it. Add a pane only for a new way of closing.
 [[panes]]
-id = "popup"
-title = "popup"
+id = "attach"
+title = " ctrl+b q to close "
 placement = "popup"
 width = "85%"
 height = "85%"
