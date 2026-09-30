@@ -1,0 +1,27 @@
+{
+  "name": "@hkandala/pi-ponytail",
+  "version": "0.1.0",
+  "description": "Ponytail's lazy-senior-dev ruleset as a cache-friendly system prompt section, plus its skills",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "README.md",
+    "skills"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
