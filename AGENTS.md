@@ -10,6 +10,10 @@ The root `package.json` intentionally has no `pi` manifest: pi then auto-discove
 - Add a row to the table in the root `README.md`.
 - Each extension README covers what it does, install, and configuration.
 
+## Skills
+
+`skills/<name>/` holds skills copied unchanged from upstream repos. Add a row to the Skills table in the root `README.md` naming the source and commit, so it can be re-synced.
+
 ## Rules
 
 - Import pi APIs from `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`. Pi provides them at runtime: list them only as `peerDependencies` (`"*"`), never as dependencies.

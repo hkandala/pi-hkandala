@@ -19,6 +19,14 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 | [pi-web](extensions/pi-web/README.md)                           | `web_search` and `web_fetch` tools backed by TinyFish's free APIs; fetched pages are saved to files, previewed only for a single URL |
 | [pi-working](extensions/pi-working/README.md)                   | Elapsed timer in the working label, and a `✓ Worked for 4m 12s` label after each run                                                 |
 
+## Skills
+
+| Skill                                            | Description                                                                                                                                                                                                                    |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [simple-english](skills/simple-english/SKILL.md) | Plain, layman-readable English (ASD-STE100 style) for docs and replies. Copied from [AminBlg/SimpleEnglish](https://github.com/AminBlg/SimpleEnglish) (commit `79b590f`); update by copying its `skills/simple-english/` again |
+
+Skills load with the root package only.
+
 ## Install
 
 **One extension** (see each extension's README for its package name):
@@ -56,6 +64,8 @@ extensions/
     package.json      # standalone pi package, publishable to npm
     index.ts          # entry point (a large one splits self-contained parts into files beside it)
     README.md         # what it does + configuration
+skills/
+  <name>/SKILL.md     # skills, loaded by the root package
 ```
 
 See [AGENTS.md](AGENTS.md) for adding and publishing extensions.
