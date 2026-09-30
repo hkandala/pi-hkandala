@@ -9,7 +9,13 @@
  */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { isKeyRelease, Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+  isKeyRelease,
+  Key,
+  matchesKey,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 
 export const PAGE = 3; // rows a list shows at once
 
@@ -73,7 +79,7 @@ export class Tabs {
   }
 
   /**
-   * The tab bar, a blank line, and the active tab, padded to the tallest tab so switching tabs
+   * The tab bar, a rule, and the active tab, padded to the tallest tab so switching tabs
    * doesn't move anything. Rows are counted from the first returned line.
    */
   render(
@@ -94,7 +100,9 @@ export class Tabs {
       return this.focus ? theme.bg("selectedBg", on) : on;
     });
     const hint = dim(this.focus ? "←→ switch · ↑ close" : "↓ to focus");
-    const lines = [truncateToWidth(`  ${bar.join("")}  ${hint}`, width, "…"), ""];
+    const header = truncateToWidth(`  ${bar.join("")}  ${hint}`, width, "…");
+    const rule = dim(`  ${"─".repeat(Math.max(0, visibleWidth(header) - 2))}`);
+    const lines = [header, rule];
 
     const body = (t: Tab) => {
       const out = [...t.lines];
