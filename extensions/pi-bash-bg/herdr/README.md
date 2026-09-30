@@ -47,7 +47,7 @@ herdr overwrites the file whenever the integration is reinstalled or updated, so
 node --experimental-strip-types herdr/test.mts v0.9.1
 ```
 
-Run it before adding a folder for a new herdr version.
+It needs the unpatched file: once the patch is applied, pass a fresh copy as a second argument (e.g. a backup taken before patching). Run it before adding a folder for a new herdr version.
 
 ## Versions
 
