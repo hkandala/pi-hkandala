@@ -51,9 +51,9 @@ It needs the unpatched file: once the patch is applied, pass a fresh copy as a s
 
 ## Versions
 
-| Folder    | herdr | pi integration |
-| --------- | ----- | -------------- |
-| `v0.9.1/` | 0.9.1 | v9             |
+| Folder    | herdr        | pi integration |
+| --------- | ------------ | -------------- |
+| `v0.9.1/` | 0.9.1, 0.9.3 | v9             |
 
 ## Known issues in herdr's pi integration (herdr 0.9.1, integration v9)
 
