@@ -27,6 +27,10 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 
 Skills load with the root package only.
 
+## herdr
+
+[herdr/](herdr/README.md) holds optional pieces for [herdr](https://herdr.dev), shared by the extensions: a patch to herdr's pi integration that keeps a pane `working` while pending work (background jobs, agent waits) will wake the agent, and a herdr plugin with a popup that runs any command (used to attach to another pane).
+
 ## Install
 
 **One extension** (see each extension's README for its package name):
@@ -66,6 +70,9 @@ extensions/
     README.md         # what it does + configuration
 skills/
   <name>/SKILL.md     # skills, loaded by the root package
+herdr/
+  patch/<version>/    # patch to herdr's pi integration, one folder per herdr version
+  plugin/             # herdr plugin (one popup), installed with `herdr plugin install` or `link`
 ```
 
 See [AGENTS.md](AGENTS.md) for adding and publishing extensions.

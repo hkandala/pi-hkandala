@@ -9,8 +9,7 @@
   "files": [
     "*.ts",
     "README.md",
-    "docs",
-    "herdr"
+    "docs"
   ],
   "type": "module",
   "publishConfig": {

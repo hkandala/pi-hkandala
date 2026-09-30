@@ -207,7 +207,7 @@ Events on `pi.events` are the only link. Nothing imports another extension, and 
   - A click on an extension's framed message toggles it, like ctrl+o.
   - Framed messages show pi's `(ctrl+o to expand)` all dim (pi paints the parentheses and words in the message color, with only the key dim).
   - The last running bash row, once it has run 30 s, gets a dim `ctrl+shift+b to run in background` line hanging under it. Only the last: the key moves every running call. The shortcut comes from `bash-bg:update`, so it only shows with pi-bash-bg.
-- **herdr:** pi-bash-bg emits `herdr:working { source: "pi-bash-bg", active }` for an optional patch to herdr's pi integration. The patch, its timing rules and tests are in [`../herdr/`](../herdr/README.md).
+- **herdr:** pi-bash-bg emits `herdr:working { source: "pi-bash-bg", active }` for an optional patch to herdr's pi integration. The patch, its timing rules and tests are in [`herdr/`](../../../herdr/README.md) at the repo root, shared with other extensions.
 
 ## 8. Config: `~/.pi/agent/extensions/pi-bash-bg.json`
 

@@ -1,7 +1,7 @@
 /**
  * Checks the herdr patch against a fake herdr socket and a fake pi.
  *
- *   node --experimental-strip-types herdr/test.mts v0.9.1 [integration file]
+ *   node --experimental-strip-types herdr/patch/test.mts v0.9.1 [integration file]
  *
  * Applies <version>/herdr-agent-state.patch to a temp copy of the integration file (default:
  * ~/.pi/agent/extensions/herdr-agent-state.ts), then replays pi events and compares the states

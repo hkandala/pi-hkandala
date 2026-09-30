@@ -49,7 +49,7 @@ Optional; install any of them for the extra:
 - [pi-working](../pi-working/README.md): `Waiting on 2 background jobs (1m 12s)` in the prompt's border while the agent waits.
 - [pi-content-layout](../pi-content-layout/README.md): end messages in its dashed frame (click to expand), a `ctrl+shift+b to run in background` hint under a bash call running 30s or more, and exact durations for parallel bash calls loaded from history.
 - [pi-bash-cap](../pi-bash-cap/README.md): end messages use its limits instead of pi's.
-- [herdr](https://herdr.dev): an optional patch keeps the pane `working` while jobs run; see [herdr/](herdr/README.md).
+- [herdr](https://herdr.dev): an optional patch keeps the pane `working` while jobs run; see [herdr/](../../herdr/README.md).
 
 Each works alone, and pi-bash-bg needs none of them.
 

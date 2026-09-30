@@ -14,6 +14,10 @@ The root `package.json` intentionally has no `pi` manifest: pi then auto-discove
 
 `skills/<name>/` holds skills copied unchanged from upstream repos. Add a row to the Skills table in the root `README.md` naming the source and commit, so it can be re-synced.
 
+## herdr
+
+`herdr/` holds what extensions share for herdr: `patch/<version>/` patches herdr's pi integration (one patch covering every extension's needs, with `patch/test.mts`), and `plugin/` is a herdr plugin (a manifest only) with one generic popup pane that runs `POPUP_COMMAND`. Extensions must work without either. Extend the existing patch or plugin rather than adding one per extension.
+
 ## Rules
 
 - Import pi APIs from `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`. Pi provides them at runtime: list them only as `peerDependencies` (`"*"`), never as dependencies.

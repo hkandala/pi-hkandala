@@ -306,7 +306,7 @@ export default function (pi: ExtensionAPI) {
     ...running(jobs(ids(".json").filter((id) => !watched.includes(id)))),
   ];
 
-  // herdr (optional patch, see herdr/README.md): working while watched jobs run after the turn.
+  // herdr (optional patch, see herdr/README.md at the repo root): working while watched jobs run after the turn.
   // It plays "done" on every working → idle change, so it must never see a gap.
   const emitHerdr = (active: boolean) => {
     g.herdr = active;
