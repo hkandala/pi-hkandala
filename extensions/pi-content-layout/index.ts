@@ -1,7 +1,8 @@
 /**
  * pi-content-layout: a compact, minimal transcript.
  * - Tool calls and thinking between two pieces of assistant text form one group: a summary line
- *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it.
+ *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it, each its target and
+ *   the other params passed ("grep  TODO in src · glob *.ts").
  *   Running calls show a live timer (and pulse, full screen), edits show their diff,
  *   the last bash call running 30s+ shows pi-bash-bg's "ctrl+shift+b to run in background" hint,
  *   failures are red. Code is colored by pi's own highlighter; diffs tint changed lines and mark
@@ -384,6 +385,39 @@ const linesOf = cached((r) => untab(outputOf(r)).split("\n"));
 function shortPath(path: string, cwd: string) {
   if (path.startsWith(`${cwd}/`)) return path.slice(cwd.length + 1);
   return path.startsWith(`${homedir()}/`) ? `~${path.slice(homedir().length)}` : path;
+}
+
+/** Params a tool's target shows; other tools' target is their first string param. */
+const IN_TARGET: Record<string, string[]> = {
+  read: ["path", "file_path", "offset"],
+  bash: ["command"],
+  grep: ["pattern", "path"],
+  find: ["pattern", "path"],
+  ls: ["path"],
+  web_fetch: ["urls"],
+  bash_watch: ["pid"],
+};
+const OPTION_WIDTH = 40; // closed, longer (or multi-line) values show just their name
+
+/**
+ * The params the call passed that its target leaves out: "key value", "key" for true, false ones
+ * dropped, lists joined. Closed rows cut big values to their name; `full` shows them whole.
+ * Edits and writes have none: their content shows as the diff or the code.
+ */
+function options(t: Tool, full: boolean): string {
+  const a = t.args ?? {};
+  if (t.toolName === "edit" || t.toolName === "write") return "";
+  const shown = IN_TARGET[t.toolName] ?? [Object.keys(a).find((k) => typeof a[k] === "string")];
+  return Object.entries(a)
+    .filter(([k, v]) => !shown.includes(k) && v !== undefined && v !== null && v !== false)
+    .map(([k, v]) => {
+      if (v === true) return k;
+      const flat = Array.isArray(v) && v.every((x) => typeof x !== "object");
+      const text = flat ? v.join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v);
+      const big = text.includes("\n") || text.length > OPTION_WIDTH;
+      return full || !big ? `${k} ${text}` : k;
+    })
+    .join(" · ");
 }
 
 /** What a call targets and, once settled, what came back. */
@@ -841,10 +875,19 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
   let toggle: string | undefined; // the input's toggle, under the result
   if (open) {
     const full = t.toolName === "bash" ? untab(str(t.args?.command).trim()) : target;
-    const colored =
-      t.toolName === "bash" && state !== "error"
+    // A copy: the highlighted command is memoized, and the options get appended to it.
+    const colored = [
+      ...(t.toolName === "bash" && state !== "error"
         ? memo(t, "clCommand", [full, theme], () => highlighted(full, "bash", theme))
-        : full.split("\n").map((l) => theme.fg(color, l));
+        : full.split("\n").map((l) => theme.fg(color, l))),
+    ];
+    // The options follow the input, dim, their own line breaks kept.
+    const opts = options(t, true);
+    if (opts) {
+      const [first, ...rest] = opts.split("\n").map((l) => theme.fg("dim", l));
+      colored[colored.length - 1] += (full ? theme.fg("dim", " · ") : "") + first;
+      colored.push(...rest);
+    }
     [lines, toggle] = capped(
       colored.flatMap((l) => wrapTextWithAnsi(l, room)),
       theme,
@@ -852,8 +895,12 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
     );
     if (tail && visibleWidth(lines.at(-1)! + tail) > room) lines.push("");
   } else {
+    // The options follow the target, dim, and give way first.
     const fit = Math.max(1, room - visibleWidth(tail));
-    lines = [paint(truncateToWidth(target, fit, paint("…")))];
+    const opts = options(t, false);
+    const dimmed = (x: string) => (pulsing ? paint(x) : theme.fg("dim", x));
+    const text = paint(target) + (opts ? dimmed((target ? " · " : "") + opts) : "");
+    lines = [truncateToWidth(text, fit, paint("…"))];
   }
   const painted = state === "running" ? pulse(theme, name, open) : theme.fg(color, name);
   const label = `${theme.bold(theme.italic(painted))} `;
