@@ -33,6 +33,13 @@ const clean = (line: string) => {
   );
 };
 
+/** Cuts `text` to `width` with a … in the style at the cut (pi's truncateToWidth resets it). */
+export function cut(text: string, width: number): string {
+  if (visibleWidth(text) <= width) return text;
+  // Cut with no ellipsis, pi's result ends in a reset ("\x1b[0m", 4 chars): drop it, add the ….
+  return width < 1 ? "" : `${truncateToWidth(text, width - 1, "").slice(0, -4)}…\x1b[0m`;
+}
+
 export class LogViewer {
   private lines: string[] = [];
   private size = -1;
@@ -89,7 +96,7 @@ export class LogViewer {
     const inner = Math.max(1, width - 4);
     const { pid, command, detail, running } = this.info();
     const bar = (label: string) => {
-      const text = truncateToWidth(label, width - 5, "…");
+      const text = cut(label, width - 5);
       return `${text} ${t.fg("border", "─".repeat(Math.max(0, width - 5 - visibleWidth(text))))}`;
     };
     const keys = this.armed
@@ -114,7 +121,7 @@ export class LogViewer {
     return [
       t.fg("border", "╭─ ") + bar(t.bold(`pid ${pid}`)) + t.fg("border", "╮"),
       ...[...head, ...log, ""].map((l) => {
-        const line = truncateToWidth(l, inner, "…");
+        const line = cut(l, inner);
         return `${side} ${line}${" ".repeat(Math.max(0, inner - visibleWidth(line)))} ${side}`;
       }),
       t.fg("border", "╰─ ") + bar(keys) + t.fg("border", "╯"),

@@ -31,18 +31,12 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { CustomEditor, estimateTokens, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import {
-  CURSOR_MARKER,
-  Key,
-  matchesKey,
-  truncateToWidth,
-  visibleWidth,
-} from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { EMPTY_GIT, type Git, git, readGit } from "./git.ts";
-import { type Sel, type Tab, Tabs, move } from "./tabs.ts";
+import { cut, type Sel, type Tab, Tabs, move } from "./tabs.ts";
 
 const ICON = {
   folder: "\u{f024b}", // 󰉋 md-folder
@@ -379,7 +373,7 @@ function render(
     if (visibleWidth(left) + 2 + visibleWidth(groups(right)) <= width) break;
   }
   const rightText = groups(right);
-  left = truncateToWidth(left, Math.max(8, width - visibleWidth(rightText) - 2), "…");
+  left = cut(left, Math.max(8, width - visibleWidth(rightText) - 2));
   // Clicks open the matching tab: folder and git → git, cold and context → usage, jobs → jobs,
   // model and effort → session.
   const spans: Span[] = [{ x0: 0, x1: visibleWidth(left), tab: "git" }];
@@ -391,7 +385,7 @@ function render(
     x += visibleWidth(dot);
   });
   left += " ".repeat(Math.max(2, width - visibleWidth(left + rightText)));
-  const lines = [truncateToWidth(left + rightText, width, "…")];
+  const lines = [cut(left + rightText, width)];
 
   if (statuses.size) {
     const line = [...statuses.entries()]
@@ -400,7 +394,7 @@ function render(
       .join(dot);
     const room = Math.max(1, width - MARGIN);
     const w = visibleWidth(line);
-    lines.push(truncateToWidth(w < room ? " ".repeat(room - w) + line : line, room, "…"));
+    lines.push(cut(w < room ? " ".repeat(room - w) + line : line, room));
   }
   return { lines, spans, paint, tabs: tabData(pi, ctx, paint, bg, branch, g, s, width - MARGIN) };
 }
@@ -435,7 +429,7 @@ function tabData(
   const val = (x: string) => paint("text", x);
   const LABEL = 11;
   const row = (label: string, value: string) =>
-    truncateToWidth(`   ${paint("muted", label.padEnd(LABEL))}${value}`, width, "…");
+    cut(`   ${paint("muted", label.padEnd(LABEL))}${value}`, width);
   const join = (parts: (string | false | null | undefined | 0)[]) =>
     parts
       .filter(Boolean)
@@ -657,7 +651,7 @@ function tabData(
         return (
           `   ${marker} ${val(String(j.pid).padEnd(7))}` +
           `${paint(color, j.state.padEnd(9))}${dim(duration((j.endedAt ?? Date.now()) - j.startedAt).padEnd(8))}` +
-          `${val(truncateToWidth(j.command.split("\n")[0]!, cmdWidth, "…").padEnd(cmdWidth))}  ${dim(tilde(j.cwd))}`
+          `${val(cut(j.command.split("\n")[0]!.padEnd(cmdWidth), cmdWidth))}  ${dim(tilde(j.cwd))}`
         );
       },
       keys: "↑↓ select · enter logs" + (selected?.state === "running" ? " · x kill" : ""),
@@ -715,7 +709,7 @@ class BoxEditor extends CustomEditor {
     const bottom = this.rows + 1;
     const b = (s: string) => this.borderColor(s);
     const side = (line: string) => ` ${b("│")} ${line} ${b("│")} `;
-    const footer = truncateToWidth(this.hooks.footer(inner), inner, "…");
+    const footer = cut(this.hooks.footer(inner), inner);
     // While the dashboard has the keys, drop pi's cursor (an inverse cell, and the hardware
     // cursor's marker) so it's clear typing isn't going to the prompt.
     const text = lines.slice(1, bottom);

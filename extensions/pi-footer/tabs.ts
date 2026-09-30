@@ -19,6 +19,13 @@ import {
 
 export const PAGE = 3; // rows a list shows at once
 
+/** Cuts `text` to `width` with a … in the style at the cut (pi's truncateToWidth resets it). */
+export function cut(text: string, width: number): string {
+  if (visibleWidth(text) <= width) return text;
+  // Cut with no ellipsis, pi's result ends in a reset ("\x1b[0m", 4 chars): drop it, add the ….
+  return width < 1 ? "" : `${truncateToWidth(text, width - 1, "").slice(0, -4)}…\x1b[0m`;
+}
+
 /** A list's selected row and first shown row. */
 export type Sel = { selected: number; top: number };
 
@@ -100,7 +107,7 @@ export class Tabs {
       return this.focus ? theme.bg("selectedBg", on) : on;
     });
     const hint = dim(this.focus ? "←→ switch · ↑ close" : "↓ to focus");
-    const header = truncateToWidth(`  ${bar.join("")}  ${hint}`, width, "…");
+    const header = cut(`  ${bar.join("")}  ${hint}`, width);
     const rule = dim(`  ${"─".repeat(Math.max(0, visibleWidth(header) - 2))}`);
     const lines = [header, rule];
 
@@ -111,7 +118,7 @@ export class Tabs {
       for (let i = list.sel.top; i < Math.min(list.length, list.sel.top + PAGE); i++) {
         const marker = this.focus && i === list.sel.selected ? paint("accent", "▸") : " ";
         if (t === active) this.clicks.push({ y: 2 + out.length, x0: 0, x1: width, row: i });
-        out.push(truncateToWidth(list.row(i, marker), width, "…"));
+        out.push(cut(list.row(i, marker), width));
       }
       const counter = list.length > PAGE ? `${list.sel.selected + 1}/${list.length}` : "";
       const hint = list.note ?? dim([this.focus && list.keys, counter].filter(Boolean).join(" · "));

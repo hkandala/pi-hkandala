@@ -135,6 +135,13 @@ const WORDING: Record<string, Wording> = {
 const mark = (code: string) => `\x1b]133;${code}\x07`;
 // oxlint-disable-next-line no-control-regex
 const marksOf = (line: string) => /^(?:\x1b\]133;[A-Z]\x07)*/.exec(line)![0];
+/** Cuts `text` to `width` with a … in the style at the cut (pi's truncateToWidth resets it). */
+function cut(text: string, width: number): string {
+  if (visibleWidth(text) <= width) return text;
+  // Cut with no ellipsis, pi's result ends in a reset ("\x1b[0m", 4 chars): drop it, add the ….
+  return width < 1 ? "" : `${truncateToWidth(text, width - 1, "").slice(0, -4)}…\x1b[0m`;
+}
+
 /** Prefixes a line, keeping any leading prompt marks at column 0. */
 function indent(line: string, prefix: string) {
   const marks = marksOf(line);
@@ -552,7 +559,7 @@ function boxed(lines: string[], width: number, theme: Theme, title?: string, sta
   return [
     top,
     ...lines.map((l) => {
-      const text = truncateToWidth(l, inner);
+      const text = cut(l, inner);
       return `${side} ${text}${" ".repeat(Math.max(0, inner - visibleWidth(text)))} ${side}`;
     }),
     theme.fg("muted", `╰${bar("")}╯`),
@@ -900,7 +907,7 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
     const opts = options(t, false);
     const dimmed = (x: string) => (pulsing ? paint(x) : theme.fg("dim", x));
     const text = paint(target) + (opts ? dimmed((target ? " · " : "") + opts) : "");
-    lines = [truncateToWidth(text, fit, paint("…"))];
+    lines = [cut(text, fit)];
   }
   const painted = state === "running" ? pulse(theme, name, open) : theme.fg(color, name);
   const label = `${theme.bold(theme.italic(painted))} `;
@@ -1037,10 +1044,13 @@ export default function (pi: ExtensionAPI) {
         return lines.length && !blank(lines.at(-1)!) ? [...lines, ""] : lines;
       });
     // Queued steering and follow-up lines (pi pads them 1 column) sit at column 3, inside the
-    // prompt box's edges, with the same 3 columns free on the right.
+    // prompt box's edges, with the same 3 columns free on the right. pi cuts long ones with a
+    // plain "..." after a reset; they're dim, so the … is too.
     if (pending)
       override(pending, (orig, width) =>
-        orig(Math.max(1, width - 4)).map((l) => (blank(l) ? l : indent(l, "  "))),
+        orig(Math.max(1, width - 4)).map((l) =>
+          blank(l) ? l : indent(l.replace("\x1b[0m...\x1b[0m", "…\x1b[0m  "), "  "),
+        ),
       );
 
     const tool = ToolExecutionComponent.prototype as unknown as Proto;

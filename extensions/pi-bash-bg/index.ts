@@ -38,7 +38,6 @@ import {
   type KeyId,
   Spacer,
   Text,
-  truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
@@ -58,7 +57,7 @@ import {
 import { readdir, unlink } from "node:fs/promises";
 import { constants, homedir } from "node:os";
 import { join } from "node:path";
-import { LogViewer } from "./viewer.ts";
+import { cut, LogViewer } from "./viewer.ts";
 
 const DIR = join(getAgentDir(), "bash-bg");
 const TYPE = "background job";
@@ -622,9 +621,9 @@ export default function (pi: ExtensionAPI) {
             const tail = r.meta + (!more && i === shown.length - 1 ? hint : "");
             const room = Math.max(1, width - 2 - visibleWidth(tail));
             const cmd = r.command.length > 1 ? `${r.command[0]} …` : r.command[0]!;
-            return truncateToWidth(`${r.icon} ${truncateToWidth(cmd, room, "…")}${tail}`, width);
+            return cut(`${r.icon} ${cut(cmd, room)}${tail}`, width);
           });
-          if (more) lines.push(truncateToWidth(dim(`+${more} more`) + hint, width));
+          if (more) lines.push(cut(dim(`+${more} more`) + hint, width));
           return lines;
         },
       });

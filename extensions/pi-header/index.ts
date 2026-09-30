@@ -107,6 +107,13 @@ function renderCompactLogo(white: boolean) {
   return { lines, pad, column: 2 * pad + LOGO[0].length * w };
 }
 
+/** Cuts `text` to `width` with a … in the style at the cut (pi's truncateToWidth resets it). */
+function cut(text: string, width: number): string {
+  if (visibleWidth(text) <= width) return text;
+  // Cut with no ellipsis, pi's result ends in a reset ("\x1b[0m", 4 chars): drop it, add the ….
+  return width < 1 ? "" : `${truncateToWidth(text, width - 1, "").slice(0, -4)}…\x1b[0m`;
+}
+
 /** Text halfway between the theme's muted and text colors (muted when they aren't 24-bit). */
 function soft(theme: Theme): (s: string) => string {
   const rgb = (color: "muted" | "text") =>
@@ -355,7 +362,7 @@ export default function (pi: ExtensionAPI) {
           if (fresh) fresh = dropEarlyStatuses(below);
           const blanks = leadingBlanks(below, width, rowsFor(compact));
           shown = render(ctx.ui.theme, res, expanded, white, compact, quiet, width, blanks).map(
-            (l) => truncateToWidth(l, width),
+            (l) => cut(l, width),
           );
           return shown;
         },
