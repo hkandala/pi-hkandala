@@ -34,12 +34,13 @@ The agent stops a job with `kill <pid>`. Output always goes to a log file under 
 
 ## Commands
 
-| Command                            | Does                                                                                                                              |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `/background`                      | Moves the running bash calls to the background                                                                                    |
-| `/background list [jobs] [status]` | Prints jobs, with `bash_list`'s two params in order: `watching` (default) or `all`, then `running` (default), `finished` or `any` |
-| `/background logs [pid]`           | Opens a log viewer that follows the output (↑↓, PgUp PgDn or the wheel scroll, End follows, `x` twice kills, Esc closes)          |
-| `/background kill <pid\|all>`      | Kills one job, or all of this session's                                                                                           |
+| Command                            | Does                                                                                                                                                                           |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/background`                      | Moves the running bash calls to the background                                                                                                                                 |
+| `/background list [jobs] [status]` | Prints jobs, with `bash_list`'s two params in order: `watching` (default) or `all`, then `running` (default), `finished` or `any`                                              |
+| `/background logs [pid]`           | Opens a full-screen log viewer that follows the output (↑↓, PgUp PgDn or the wheel scroll, End follows, `x` twice kills, Esc closes)                                           |
+| `/background kill <pid\|all>`      | Kills one job, or all of this session's                                                                                                                                        |
+| `/background dashboard`            | Opens the jobs dashboard: this session's jobs on a full-screen page, running first, then finished ones (`e` hides them); Enter opens a job's logs, `x` twice kills, Esc closes |
 
 ## Works with
 

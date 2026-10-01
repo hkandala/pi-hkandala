@@ -5,10 +5,10 @@ Background bash for pi. The `bash` tool can run a command in the background, eit
 - **Starting a job:** `bash({ command, background: true })`. A running foreground call moves to the background with ctrl+shift+b, `/background`, or automatically after 120 s. The process keeps running; only the tool call stops waiting.
 - **Identity:** a job is its **pid**. Nothing records who started or killed it, and anyone can kill any job.
 - **Output:** always goes to a log file.
-- **Stopping:** Esc kills the running foreground call, as in pi, and never touches background jobs. The agent stops a job with `kill <pid>`. The user stops one with `/background kill`, the log viewer, or pi-footer's jobs tab.
+- **Stopping:** Esc kills the running foreground call, as in pi, and never touches background jobs. The agent stops a job with `kill <pid>`. The user stops one with `/background kill`, the log viewer, the jobs dashboard, or pi-footer's jobs tab.
 - **Ending:** however a watched job ends (exit, any kill, timeout), its session gets one steer message shaped like a bash result.
 
-Code: `index.ts` (everything except the viewer) and `viewer.ts` (the log viewer overlay).
+Code: `index.ts` (everything except the pages), `dashboard.ts` (the jobs dashboard, and the full-screen page it shares with the log viewer) and `viewer.ts` (the log viewer).
 
 ## 1. Files
 
@@ -171,13 +171,18 @@ Command exited with code 1
 | `/background`                      | Moves the running bash calls to the background.                                                                                                                                                |
 | `/background list [jobs] [status]` | Prints jobs filtered like `bash_list`, with its two params in order: `jobs` is `watching` (default) or `all`, `status` is `running` (default), `finished` or `any`. Newest first, at most 100. |
 | `/background logs [pid]`           | Opens the log viewer; without a pid, first a picker (watched + others' running).                                                                                                               |
+| `/background dashboard`            | Opens the jobs dashboard (below).                                                                                                                                                              |
 | `/background kill <pid\|all>`      | SIGTERM to one job's group, or to all of this session's running watched jobs.                                                                                                                  |
 
 `list` prints like `/hotkeys`: `appendEntry("bash-bg-list", { title, jobs, more })` with an entry renderer that skips entries from before this load, so it is never sent to the model and is gone after `/reload` or a restart. The title names the filter (`Background jobs · running · this session`). One bullet per job, newest first: `• ● 12400 · 18:28:51 · running · 4m12s · ~/proj` (● running, ✓ exit 0, ■ killed, ✗ otherwise; the start time, with the date when it isn't today), then the log path; only the path is dim. Listing `all`, jobs this session watches end in `· watching`. Commands stay out: they can be long; the log viewer shows them.
 
-**Log viewer** (`viewer.ts`): `ctx.ui.custom(…, { overlay: true, overlayOptions: { anchor: "center", width: "90%", maxHeight: "70%" } })`.
+**Pages** (`dashboard.ts`): the jobs dashboard and the log viewer are full-screen pages, `ctx.ui.custom(…, { overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%" } })`. A page draws its own equal margin (1 row, 2 columns: a row is about two columns wide) and pads every row to the full width and the page to the full height, so nothing of pi's screen shows. Inside: a bold title, a dim description line, a blank line, the body, and the keys pinned to the bottom (with a `3/12` counter on the right when the body scrolls). No border.
 
-- The title shows only `pid 12345`. Inside: the command, colored as bash and wrapped, a dim `running · 27s · ~/proj` line, a blank line, then the log indented two columns. The log area is what's left of 70% of the terminal's rows.
+**Jobs dashboard** (`/background dashboard`, `bash-bg:dashboard` from pi-footer's `d`): this session's jobs, running first, then finished ones; `e` hides or shows the finished ones (`e hide finished` / `e show finished (2)`). The description counts them: `1 running · 2 finished · this session's background jobs`. ↑↓ and PgUp/PgDn select, Enter opens the log viewer on top (Esc there returns to the dashboard), `x` twice kills a running job, Esc or `q` closes.
+
+**Log viewer** (`viewer.ts`), a page titled `logs`:
+
+- The description is `pid 12345 · running · 27s · ~/proj`. The body is the command, colored as bash and wrapped (at most a third of the page), a blank line, then the log; the counter shows which lines are in view (`120-150/400`).
 - It shows the last 1 MB of the log, re-read every 250 ms when it grows. It follows new output until you scroll up; then the view stays put (it keeps an absolute top line) until you scroll back to the bottom or press End.
 - Only color escapes are kept: after the last `\r` in a line (progress bars), with tabs expanded.
 - ↑/↓, PgUp/PgDn and the mouse wheel scroll, Home jumps to the top, End follows, `x` twice kills (running jobs only), Esc or `q` closes.
@@ -199,7 +204,7 @@ Events on `pi.events` are the only link. Nothing imports another extension, and 
 - **`bash-cap:limits`:** before building an end message, pi-bash-bg emits `{ maxLines, maxBytes }` holding pi's defaults; pi-bash-cap, when loaded, overwrites them with its own (the bus calls listeners synchronously).
 - **pi-footer**, after its first `bash-bg:update` (its dashboard itself is described in pi-footer's README):
   - The footer line gets `󰦖 2` (md-progress-clock) on its right, before the context, while jobs run. It is never dropped on narrow terminals. A click on it opens the dashboard at the jobs tab, and so do ↓ and `/footer` while jobs run.
-  - With jobs in this session, the dashboard gets a `jobs` tab after its other tabs, and the overview a `waiting` line with the running jobs' count (shared with pi-herd's watched agents: `waiting  3 agents · 2 jobs`). The tab lists running jobs (finished ones are in pi-footer's full view, on `e`), 3 rows at a time (kept short: the dashboard takes its tallest tab's height), scrolling with the selection (`3/12` when there are more). With the keys on the dashboard, ↑/↓ select, Enter opens the log viewer (`bash-bg:logs`), `x` twice kills (`bash-bg:kill`); a click selects a row, and a click on the selected row opens its log.
+  - While jobs in this session run, the dashboard gets a `jobs` tab after its other tabs (`jobs 2`: the running count), and the overview a `waiting` line with the running jobs' count (shared with pi-herd's watched agents: `waiting  3 agents · 2 jobs`). The tab lists the running jobs (finished ones are in `/background dashboard`, which `d` opens: `bash-bg:dashboard`), 3 rows at a time (kept short: the dashboard takes its tallest tab's height), scrolling with the selection (`3/12` when there are more). With the keys on the dashboard, ↑/↓ select, Enter opens the log viewer (`bash-bg:logs`), `x` twice kills (`bash-bg:kill`); a click selects a row, and a click on the selected row opens its log.
   - While an overlay is up, the keys go to it: `onTerminalInput` runs before overlay focus, so without that check the tab would eat the log viewer's keys. Raw input also carries key releases (kitty protocol); they are skipped, or each press would count twice.
   - The selection follows its job across updates while the tab is open, and starts at the top otherwise.
 - **pi-working:** while `waiting > 0` after a run, the prompt's top border shows `Waiting on 2 background jobs (1m 12s)` (text only) instead of `✓ Worked for …`, timed from when waiting started. This is the only place the waiting state shows without pi-footer.
