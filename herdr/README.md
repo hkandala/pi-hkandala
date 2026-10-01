@@ -132,7 +132,7 @@ whatever shell command the caller passes in `POPUP_COMMAND`. There is one popup 
 a time anyway.
 
 herdr's popup has no close button, and clicks outside it are ignored. The caller shows how to close
-it: the agent pi-herd shows in it shows `ctrl+b q or /detach to close` above its prompt while a popup shows it.
+it: the agent pi-herd shows in it shows `ctrl+b q or /detach to close` in its prompt (as the placeholder, or above it without pi-footer) while a popup shows it.
 herdr requires a non-blank title, so a pane's title only names what it shows:
 
 | Pane     | Title      | For                                                                                      |
