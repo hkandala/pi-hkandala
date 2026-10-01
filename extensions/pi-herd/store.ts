@@ -1,7 +1,7 @@
 /**
  * The files every agent shares in ~/.pi/agent/pi-herd/: agents/<id>.json (who is live),
- * messages/<toId>/<msgId>.json (one file per message), attached/<id> (a popup shows this agent),
- * stopped/<id> (it was stopped, or ended with the agent that started it: shown as stopped).
+ * messages/<toId>/<msgId>.json (one file per message), attached/<pid> (a popup shell and the agent
+ * it shows), stopped/<id> (it was stopped, or ended with the agent that started it).
  */
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -9,6 +9,7 @@ import friendly from "friendly-words";
 import { createHash } from "node:crypto";
 import {
   readdirSync,
+  statSync,
   readFileSync,
   renameSync,
   rmdirSync,
@@ -18,7 +19,7 @@ import {
 import { join } from "node:path";
 import { HIDDEN, rpc } from "./herdr.ts";
 
-export const DIR = join(getAgentDir(), "pi-herd");
+const DIR = join(getAgentDir(), "pi-herd");
 export const AGENTS = join(DIR, "agents");
 export const MESSAGES = join(DIR, "messages");
 export const ATTACHED = join(DIR, "attached");
@@ -68,11 +69,11 @@ export const list = (dir: string) => {
     return [];
   }
 };
-export const readPid = (path: string) => {
+const mtime = (path: string) => {
   try {
-    return parseInt(readFileSync(path, "utf8"));
+    return statSync(path).mtimeMs;
   } catch {
-    return 0;
+    return Date.now();
   }
 };
 export const rm = (path: string) => {
@@ -110,14 +111,16 @@ export async function cleanup() {
   const live = liveAgents();
   for (const to of list(MESSAGES)) {
     const dir = join(MESSAGES, to);
-    for (const f of list(dir)) if (Date.now() - parseInt(f) > 7 * DAY) rm(join(dir, f));
+    // Named <epochMs>-…; a write's leftover temp file starts with a dot.
+    for (const f of list(dir))
+      if (Date.now() - parseInt(f.replace(/^\./, "")) > 7 * DAY) rm(join(dir, f));
     try {
       if (!live.some((a) => a.id === to)) rmdirSync(dir); // fails unless empty
     } catch {}
   }
-  for (const f of list(ATTACHED)) if (!alive(readPid(join(ATTACHED, f)))) rm(join(ATTACHED, f));
+  for (const f of list(ATTACHED)) if (!alive(parseInt(f))) rm(join(ATTACHED, f)); // named by pid
   for (const id of list(STOPPED))
-    if (!live.some((a) => a.id === id) && Date.now() - readPid(join(STOPPED, id)) > 7 * DAY)
+    if (!live.some((a) => a.id === id) && Date.now() - mtime(join(STOPPED, id)) > 7 * DAY)
       rm(join(STOPPED, id));
   // A pane in the dedicated session is an orphan when no live agent is registered for it, or its
   // agent's parent isn't live. Only what is an orphan on two checks a minute apart is closed.

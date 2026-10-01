@@ -43,7 +43,7 @@ export type Item =
 export const tilde = (p: string) =>
   p === homedir() || p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p;
 const lines = (s: string) => s.split("\n").length;
-export const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /**
  * The workflow brief, the same for every agent: one of agent_send's prompt guidelines. Those are

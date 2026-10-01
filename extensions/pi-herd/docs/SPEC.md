@@ -15,7 +15,7 @@ The design in brief:
   background jobs, and waits on other agents. pi-herd computes no state of its own.
 - **Transcripts, not screens.** Every agent is pi, so pi-herd reads another agent's pi session file
   to show what it has been doing. herdr's screen capture is only the fallback.
-- **No broker, no locks, no polling.** Files are written atomically and watched with `fs.watch`,
+- **No broker, no locks, no polling of the files.** Files are written atomically and watched with `fs.watch`,
   herdr events report status changes, and state survives `/reload` on `globalThis`.
 
 Tools: `agent_start`, `agent_send`, `agent_watch`, `agent_list`, `agent_read`, `agent_stop`.
@@ -23,8 +23,8 @@ v1 supports pi only.
 
 **herdr only.** pi-herd does nothing unless pi runs inside a herdr pane:
 
-- **The gate.** The extension's factory returns right away unless `HERDR_ENV=1` and `HERDR_PANE_ID`
-  are set. Without them it registers no tools, writes no record, starts no watchers, and doesn't
+- **The gate.** The extension's factory returns right away unless `HERDR_ENV=1`, `HERDR_PANE_ID`
+  and `HERDR_SOCKET_PATH` are set. Without them it registers no tools, writes no record, starts no watchers, and doesn't
   appear in any list.
 - **TUI only.** Inside herdr it also requires TUI mode. In print, JSON or RPC mode (for example,
   `pi -p` run in a pane), `session_start` skips registration and removes pi-herd's tools from the
@@ -46,8 +46,8 @@ watched.
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `agents/<id>.json`             | the agent, on `session_start` (atomic write: temp file + rename), again only if its name changes. Deleted when the session ends. | the agent record                                                          |
 | `messages/<toId>/<msgId>.json` | the sender, once. The temp file is `.<msgId>.tmp`, then renamed.                                                                 | one message. It is never moved or changed, so it can always be read back. |
-| `attached/<id>`                | the attach popup's shell, removed by the same shell when the popup closes (section 11)                                           | the popup shell's pid, while the agent is shown in a popup                |
-| `stopped/<id>`                 | whoever stops the agent (`agent_stop`), or the agent itself when it ends with the agent that started it; removed when it resumes | the time; lists show the ended agent as `stopped`, not `done`             |
+| `attached/<pid>`               | the attach popup's shell (named by its pid), removed by the same shell when the popup closes (section 11)                        | the agent the popup shows: its id, socket and pane, one per line          |
+| `stopped/<id>`                 | whoever stops the agent (`agent_stop`), or the agent itself when it ends with the agent that started it; removed when it resumes | the time; lists show the ended agent as `stopped`, not `exited`           |
 
 **Ids.** `<id>` is the pi session id.
 
@@ -104,7 +104,7 @@ watched.
 
 ## 3. Status
 
-An agent's status is herdr's status for its pane, read on the agent's socket (`herdr agent get`,
+An agent's status is herdr's status for its pane, read on the agent's socket (`pane.get`,
 and `pane.agent_status_changed` events). pi-herd adds no status logic.
 
 | herdr status                         | meaning for pi-herd                                                                                                                                       |
@@ -204,7 +204,7 @@ been doing, pi-herd reads that file instead of scraping the screen:
 - **What is read.** The last `transcriptMessages` (default 20) entries on the session's active
   branch. pi-herd starts at the last line and follows `parentId`, so abandoned branches are skipped.
 - **Format.** One compact block per entry:
-  - `user:` / `agent message from main:` and the text
+  - `user:` / `agent message:` (the sender is in its `<agent-message from=…>` text) and the text
   - `assistant:` and the text, plus the tool calls it made (`→ bash npm test`, `→ edit src/a.ts`)
   - `tool result:` the tool name, ok or error, and the first line of output
 - **Caps.** Each entry is capped at 1 KB, and the whole transcript at 16 KB.
@@ -223,7 +223,7 @@ A watch belongs to the watching agent. It asks: "wake me when agent X stops work
 
 - **How it follows X.** One herdr event subscription per watched pane, on X's socket
   (`events.subscribe` for `pane.agent_status_changed`, `pane.closed` and `pane.exited`), plus one
-  `herdr agent get` when the watch starts. On disconnect it reconnects and reads the status again.
+  `pane.get` when the watch starts. On disconnect it reconnects and reads the status again.
   There is no polling.
 - **Starting.**
   - `agent_start` and `agent_send` start a watch right after sending, when `needsReply` is
@@ -294,7 +294,7 @@ A watch belongs to the watching agent. It asks: "wake me when agent X stops work
   - `󰗎 reviewer still working after 30m`
   - `󰅚 reviewer exited`
 
-## 7. Creating or resuming an agent it started
+## 7. Starting or resuming an agent
 
 `agent_start({ name?, session?, message?, model?, thinking?, cwd?, placement? })` is registered with
 sequential execution, so parallel calls in one message don't race on the server, the workspace, or
@@ -335,7 +335,6 @@ the name check.
 
    The agent gets these env vars:
    - `PI_HERD_PARENT=<my id>`
-   - `PI_HERD_NAME=<its name>`, so it can tell its own name
    - `EDITOR=true VISUAL=true GIT_EDITOR=true PAGER=cat GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 CI=1`
      (the no-stall set, from orchestratr)
 
@@ -452,7 +451,8 @@ Agents (agent_* tools):
   - A clean parent exit deletes the parent's record. The started agent sees that through `fs.watch` on
     `agents/`.
   - A crashed or SIGKILLed parent leaves its record behind, and `fs.watch` can't see a process die.
-    So a spawned agent also checks `kill(parent pid, 0)` every 2 s. This is pi-herd's only timer.
+    So a spawned agent also checks `kill(parent pid, 0)` every 2 s: pi-herd's only poll, apart from
+    the open dashboard's status read of other sessions' agents.
   - Either way, the started agent sends itself `SIGTERM`, so pi shuts down cleanly. In a pane pi-herd
     created, the pane closes with it (`exec`), and herdr removes the tab and, if it was the last
     one, the workspace. A given pane goes back to its shell. The parent closes nothing itself.
@@ -489,20 +489,33 @@ The only link to other extensions is the event bus.
     doesn't list its parent. `parent` makes the tree; `mine` says the agent is below this one in
     it (it can be stopped from here). `name` is always set (section 2); `sent` and `received`
     count messages with that agent, kept on `globalThis` (so across `/reload`, not a restart).
-  - `state` is herdr's status for the agent, except that herdr's `done` (idle, not yet looked at)
-    is reported as `idle`. pi-herd follows each listed agent's status through herdr events
+  - `state` is herdr's status while the agent is live (`working`, `blocked`, `idle`, or `done`: idle
+    that the user hasn't looked at), `unknown` until herdr reports; once it ended, `stopped` or
+    `exited`. pi-herd follows each listed agent's status through herdr events
     (section 6).
   - **Agents that ended stay listed** for the rest of the session, like finished jobs, with
     `live: false` and `state` `stopped` (it has a `stopped/<id>` marker: someone stopped it, or it
-    ended with the agent that started it) or `done` (it ended any other way); `since` is when it
+    ended with the agent that started it) or `exited` (it ended any other way); `since` is when it
     ended. The marker makes an agent several levels down read `stopped` for everyone above it. An agent resumed with `agent_start` is live
     again.
 
 - **pi-herd listens for** `herd:attach { id }` (opens the attach popup, section 11) and
   `herd:stop { id }` (the same as `agent_stop`: any live agent below this one).
-- **`/agents`**: lists the agents. Choosing one attaches to it in the repo's popup (section 11).
-  Inside the popup, the started agent shows how to close it and offers `/detach` (section 11).
-  Detaching closes the popup and leaves the agent running.
+- **`/agents`** (`/agents list [children|cwd|all]`): prints the agents like `/background list`
+  prints jobs: `appendEntry("pi-herd-list", …)` with a framed entry renderer (never sent to the
+  model). `/agents stop <id|name …|all>` stops like `agent_stop`.
+- **`/agents dashboard`** (also `herd:dashboard`, from pi-footer's `d`): a full-screen page
+  (`dashboard.ts`), the same page as pi-bash-bg's dashboard and log viewer: an equal margin all
+  round (1 row, 2 columns: a row is about two columns wide), every row padded to the full width so nothing of pi's screen shows,
+  no border. Inside: the bold title `agents`, a dim line of counts (`2 live · 3 ended · 3 other ·
+…`), the list, and the keys pinned to the bottom.
+  - The list: `herd:update`'s agents as a tree (`├ └ │`, by `parent`), ended ones included; at
+    every level stopped ones go last, otherwise pi-herd's order. Then `other agents`: every other
+    live agent, its status read every 2 s while the page is open.
+  - Keys: ↑↓ and PgUp/PgDn select, Enter views a live agent (attach, section 11), `x` twice stops
+    a live agent below this one, `e` hides or shows the ended ones, Esc or `q` closes.
+  - Inside the popup, the attached agent shows how to close it and offers `/detach` (section 11).
+    Detaching closes the popup and leaves the agent running.
 - **In other extensions.** Both read `herd:update` next to pi-bash-bg's `bash-bg:update`.
   - **pi-working**: one label in the prompt box's border while the agent is idle and waiting:
     - `Waiting on 3 agents and 2 background jobs (1m 12s)`
@@ -517,7 +530,8 @@ job (2m)`
       watches run.
     - **`agents` tab:** present while `herd:update` lists a live top-level agent (one not
       under another listed agent), placed before the `jobs` tab. Its rows look like the jobs
-      tab's. Tab labels carry no counts.
+      tab's. Its label counts the agents this session waits on (`agents 2`; no count when none),
+      and the jobs tab's the running jobs (`jobs 1`).
       - **A flat list** of the live top-level agents, in the order pi-herd first listed them (the
         order they were started or watched). A status change never moves a row.
       - Each row, in aligned columns (padded by display width): the name with its markers, status,
@@ -525,20 +539,17 @@ job (2m)`
         `▸ frog-thunder 󱖡 󰅐  working  40s  ~/code/lib  󱉱 1 󱉰 0`
       - Markers after the name, dim: `󱖡` (md-handshake-outline) on an agent this session didn't
         start, `󰅐` (md-clock-outline) while this session waits on the agent.
-      - Time: how long in this status; for an ended agent, how long ago it ended (`1m ago`).
-      - Colors: only `working` (accent) and `blocked` (warning) stand out. `idle`, `stopped` and
+      - Time: how long in this status.
+      - Colors: only `working` (accent) and `blocked` (warning) stand out. `idle` and
         `done` are dim, and the time is always dim.
       - 3 rows at a time; it scrolls with the selection (`3/12`).
       - Keys, with the keys on the dashboard: ↑/↓ select, Enter views a live agent
-        (`herd:attach`), `x` twice stops a live agent this session started (`herd:stop`), `o`
-        opens the full view. A click selects a row, and a click on the selected row views it. The
-        hint reads `↑↓ select · enter view · x stop`, less what doesn't apply.
+        (`herd:attach`), `x` twice stops a live agent this session started (`herd:stop`), `d`
+        opens `/agents dashboard` (`herd:dashboard`). A click selects a row, and a click on the selected row views it. The
+        hint reads `↑↓ select · enter view · x stop · d dashboard` (`x stop` only on its own).
       - The selection follows its agent across updates while the tab is open.
-    - **Full view** (`o`, `/footer full`): the dashboard over the whole screen, no border, with
-      info, agents and jobs tabs. Its agents tab shows every listed agent as a tree (`├ └ │`,
-      by `parent`); at every level stopped ones go last, otherwise pi-herd's order. Ended
-      agents are hidden until `e` (`e show ended (3)` / `e hide ended`; the jobs tab has its
-      own). With none live it reads `no live agents`. `x` stops any live agent below this one.
+    - A live agent with live agents below it shows their count, dim, after its name:
+      `reviewer +2`.
     - **Overview:** one `waiting` line for what the session still waits on, agents it watches
       and jobs it watches running (`waiting  3 agents · 2 jobs`); none when nothing is
       pending. It replaces pi-footer's own `jobs` line.
@@ -557,26 +568,37 @@ caller passes in `POPUP_COMMAND`. herdr's popup has no close button and ignores 
 How to close it is shown by the started agent inside, above its prompt (below), so the pane's border title
 only names what it shows: `pi agent` (herdr requires a non-blank title).
 
-- **Attach.** `/agents` runs:
+- **Attach.** Viewing an agent (the dashboard's Enter, pi-footer's Enter) runs:
 
   ```bash
   herdr plugin pane open --plugin pi-hkandala --entrypoint attach \
-    --env POPUP_COMMAND="trap 'rm -f <marker>' EXIT; echo \$\$ > <marker>; HERDR_SOCKET_PATH=<agent socket> herdr agent attach <agent pane> --takeover"
+    --env POPUP_COMMAND='M=~/.pi/agent/pi-herd/attached/$$; trap "rm -f $M" EXIT
+      printf "%s\n" <agent id> <agent socket> <agent pane> > "$M"
+      while { read -r ID; read -r S; read -r P; } < "$M" && [ -n "$P" ]; do
+        HERDR_SOCKET_PATH="$S" herdr agent attach "$P" --takeover
+        { read -r NEXT; } < "$M"; [ "$NEXT" != "$ID" ] || break
+      done'
   ```
 
-  `<marker>` is `~/.pi/agent/pi-herd/attached/<agent id>`.
+  The marker, `attached/<shell pid>`, names the agent the popup shows (its id, socket and pane).
+  - **Switching:** an agent shown in a popup that views another agent (its dashboard's or
+    pi-footer's Enter, say on an agent it started) doesn't open a second popup: it writes that
+    agent into the marker and ends the current attach (`pkill -TERM -P <shell pid>`). The loop sees
+    a new agent and attaches it, so the same popup now shows it. Tested with a stub `herdr`.
+  - Any other end of an attach (detach, `/detach`, the agent exits) leaves the marker as it was,
+    so the loop ends and the popup closes.
 
   - The popup opens over the caller's herdr session, even when the agent lives in the dedicated
     session. herdr sets its own `HERDR_*` variables in the popup, which is why the command sets
     `HERDR_SOCKET_PATH`.
   - The popup takes all keyboard input and closes when the attach detaches (`ctrl+b q`).
-  - If another popup, Settings or copy mode is up, herdr returns `ui_busy`, and `/agents` shows that
+  - If another popup, Settings or copy mode is up, herdr returns `ui_busy`, and viewing shows that
     error as it is.
 
 - **Install.** The user installs the plugin once (`herdr plugin install hkandala/pi-hkandala/herdr/plugin`,
   or `herdr plugin link` from a checkout). The npm package doesn't ship it, and pi-herd never
-  installs it. If the plugin is missing, `/agents` shows the install command and the plain attach
-  command (`herdr --session pi-herd agent attach <pane>`) to run in a terminal.
+  installs it. If the plugin is missing, viewing shows the install command and the plain attach
+  command (`HERDR_SOCKET_PATH=<socket> herdr agent attach <pane>`) to run in a terminal.
 - **Measured** on herdr 0.9.3: the popup ran the passed command, attached to a pane in another
   session, closed when its command exited and on `popup.close`, and a second open returned `ui_busy`.
   Inside the popup, `ctrl+b q` detaches: the popup closes and the agent keeps running.
@@ -586,12 +608,13 @@ only names what it shows: `pi agent` (herdr requires a non-blank title).
 herdr doesn't say which clients are attached to a pane. But pi-herd writes the popup's command, so
 the command leaves a marker for the started agent, and removes it again:
 
-1. **Marker.** The popup's shell writes its own pid to `attached/<agent id>`, then runs
+1. **Marker.** The popup's shell writes the agent it shows to `attached/<its pid>`, then runs
    `herdr agent attach` as its child. Its `trap … EXIT` deletes the file when the attach ends, however
    it ends. The write is a shell builtin: about 1 ms, inside a shell that starts anyway (~17 ms). There
    is no visible delay.
 2. **Detection.** The started agent's pi-herd sees the file appear and disappear through `fs.watch` on
-   `attached/`. It is **in a popup** while its file exists and `kill(pid, 0)` succeeds. A file left
+   `attached/`. It is **in a popup** while a marker names it and `kill(pid, 0)` succeeds for that
+   marker's pid. A file left
    by a shell that was SIGKILLed fails that check and is deleted. The popup never waits for this;
    the hint may appear a moment after the agent's screen.
 3. **While in a popup**, the started agent shows and enables:
@@ -653,7 +676,7 @@ The file is optional, and every key has a default.
 | `watchTimeoutMinutes` | `30`             | the default watch timeout. `0` means none.                                                   |
 | `transcriptMessages`  | `20`             | entries in a transcript (`agent_read` with `transcript`, and timeout endings)                |
 | `captureLines`        | `100`            | lines in the screen-capture fallback, used when an agent has no session file                 |
-| `detachKey`           | `"ctrl+shift+q"` | in an agent it started shown in a popup: closes the popup, like `/detach` (section 11)       |
+| `detachKey`           | `"ctrl+shift+q"` | in an agent shown in a popup: closes the popup, like `/detach` (section 11)                  |
 
 These are constants: the session name `pi-herd`, the 16 KB transcript and capture caps, the 1 KB
 cap per transcript entry, the 4 KB last-text cap, the 32 KB message cap, and the 30 s spawn wait.
@@ -674,10 +697,10 @@ cap per transcript entry, the 4 KB last-text cap, the 32 KB message cap, and the
 | 10  | An `immediate` message to an idle agent                                                            | Delivered like a steer: it wakes the agent.                                                                                                                                                                                                                                                                            |
 | 11  | A message without `needsReply`                                                                     | No watch, and the recipient is told no reply is expected. If it replies anyway, the reply arrives as a normal message.                                                                                                                                                                                                 |
 | 12  | The recipient's turn ends before the watcher sees the delivered marker                             | herdr already says idle; pi-herd checks again a second later and ends the watch `idle`.                                                                                                                                                                                                                                |
-| 13  | Esc aborts the recipient's run while the steer is queued                                           | The recipient stops working, so the watch ends `idle`. The message runs with its next turn.                                                                                                                                                                                                                            |
+| 13  | Esc aborts the recipient's run while the steer is queued                                           | The watch isn't armed until the message reaches the model (its delivered marker), so this idle doesn't end it. The message runs with the recipient's next turn, and that turn's end ends the watch; if pi drops the queued steer, the watch ends by timeout.                                                           |
 | 14  | The recipient waits on its own background jobs                                                     | `working` (with the patch), so the watch keeps going until those finish and the woken turn ends.                                                                                                                                                                                                                       |
 | 15  | The recipient waits on agents it watches                                                           | `working` (with the patch), so the watch keeps going until those end too.                                                                                                                                                                                                                                              |
-| 16  | A and B watch each other                                                                           | Both stay `working` until their timeouts. The defaults prevent it: messages watch only your children, and replies never watch.                                                                                                                                                                                         |
+| 16  | A and B watch each other                                                                           | Both stay `working` until their timeouts. The defaults avoid it: only `needsReply` messages watch, it defaults to false for `agent_send`, and replies use false.                                                                                                                                                       |
 | 17  | The recipient is blocked                                                                           | The watch ends `blocked`. If it was blocked before the message, it ends at once.                                                                                                                                                                                                                                       |
 | 18  | The recipient reloads                                                                              | Messages wait in its folder, and the new runtime takes in anything not yet queued.                                                                                                                                                                                                                                     |
 | 19  | Several messages or endings arrive at once                                                         | Batched into one steer.                                                                                                                                                                                                                                                                                                |
@@ -690,7 +713,7 @@ cap per transcript entry, the 4 KB last-text cap, the 32 KB message cap, and the
 | 26  | The watcher does `/new`                                                                            | Its watches are dropped. The new session is a new agent.                                                                                                                                                                                                                                                               |
 | 27  | A crash leaves a record, and the pid is reused                                                     | A false positive: it looks live. It needs both a crash, since every clean exit deletes the record, and a reused pid. Messages to it are never taken in, and a watch on it ends only by timeout. **Accepted for v1.** The upgrade, if it ever bites, is to compare the stored start time with `ps -o lstart= -p <pid>`. |
 | 28  | Two processes open one session                                                                     | The second doesn't register (fails closed).                                                                                                                                                                                                                                                                            |
-| 29  | A `/new` inside an agent it started pane                                                           | New id, same parent. The old id is gone, so the watcher gets `exited`.                                                                                                                                                                                                                                                 |
+| 29  | A `/new` inside a started agent                                                                    | New id, same parent. The old id is gone, so the watcher gets `exited`.                                                                                                                                                                                                                                                 |
 | 30  | The created pi never registers (a trust dialog, or pi-herd not loaded)                             | `agent_start` fails after 30 s with the screen capture. A pane pi-herd created is closed; in a given pane, the pi is stopped and the pane kept.                                                                                                                                                                        |
 | 31  | Parallel `agent_start` calls                                                                       | They run one at a time (sequential execution).                                                                                                                                                                                                                                                                         |
 | 32  | Two parents spawn into the same cwd at once                                                        | They may create two workspaces for that cwd. Harmless; each disappears with its last tab.                                                                                                                                                                                                                              |
@@ -711,8 +734,8 @@ cap per transcript entry, the 4 KB last-text cap, the 32 KB message cap, and the
 | 47  | Text over 32 KB                                                                                    | Refused: write a file and send the path.                                                                                                                                                                                                                                                                               |
 | 48  | pi runs outside herdr, or in a non-TUI mode                                                        | pi-herd is inert: no tools, no record. Such sessions can't be messaged or watched.                                                                                                                                                                                                                                     |
 | 49  | Trust                                                                                              | Only pi-herd writes `messages/`, and the folder is the user's own. "Not from the user" is a label for the model, not a security boundary.                                                                                                                                                                              |
-| 50  | The popup plugin isn't installed                                                                   | `/agents` shows the install command and the plain attach command. Spawning, messages and watches don't need the plugin.                                                                                                                                                                                                |
-| 51  | A popup is already open, or herdr is in a modal                                                    | `/agents` reports `ui_busy`, and nothing opens.                                                                                                                                                                                                                                                                        |
+| 50  | The popup plugin isn't installed                                                                   | Viewing an agent shows the install command and the plain attach command. Spawning, messages and watches don't need the plugin.                                                                                                                                                                                         |
+| 51  | A popup is already open, or herdr is in a modal                                                    | Viewing reports `ui_busy`, and nothing opens.                                                                                                                                                                                                                                                                          |
 | 52  | `fs.watch` fails (for example, the folder is on a network drive)                                   | pi-herd shows one warning. Messages to that agent wait until its next `session_start` scan.                                                                                                                                                                                                                            |
 
 **Checked during the build:**
@@ -741,8 +764,8 @@ working and end with the agent's last text or transcript. That is what pi-herd a
 
 ## 16. Size and scope
 
-- About 1,750 lines as formatted, in five files: `index.ts` (registry, messages, watches, spawn,
-  tools, `/agents`, about 1,250), `store.ts` (the shared files and agent names), `herdr.ts` (the
+- About 2,250 lines as formatted, in six files: `index.ts` (registry, messages, watches, spawn,
+  tools, `/agents`, about 1,430), `dashboard.ts` (the agents dashboard), `store.ts` (the shared files and agent names), `herdr.ts` (the
   socket API and the hidden session), `transcript.ts` (transcripts and saved sessions) and
   `text.ts` (the brief, steer texts, and their renderer). The popup plugin and the herdr patch
   live in the repo's `herdr/` folder.

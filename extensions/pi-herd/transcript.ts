@@ -8,7 +8,7 @@ import { list, type Agent } from "./store.ts";
 
 export const KB = 1024;
 const [TRANSCRIPT_MAX, ENTRY_MAX, LAST_MAX] = [16 * KB, KB, 4 * KB];
-export const cap = (s: string, max: number) =>
+const cap = (s: string, max: number) =>
   Buffer.byteLength(s) <= max ? s : `${Buffer.from(s).subarray(0, max).toString()}… [cut]`;
 
 /** A pane's recent screen, the fallback when an agent has no session file. */

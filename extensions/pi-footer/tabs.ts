@@ -3,8 +3,8 @@
  * tab, clicks, and a steady height. What each tab shows comes from index.ts as `Tab`s.
  *
  * Keys, once focused: ←→ switch tabs, ↑↓ move in the tab's list, ↑ at its top (or on a tab
- * without one) and esc close, o opens the full view (`onExpand`); the list's own keys (enter, x)
- * go to its `onKey`. Anything else is typing: the keys go back to the prompt. Raw input includes key releases (kitty protocol):
+ * without one) and esc close; the list's own keys (enter, x) go to its `onKey`. Anything else
+ * is typing: the keys go back to the prompt. Raw input includes key releases (kitty protocol):
  * they're skipped, or every press would count twice.
  */
 
@@ -17,7 +17,7 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 
-export const PAGE = 3; // rows a list shows at once, unless it sets its own `page`
+export const PAGE = 3; // rows a list shows at once
 
 /** Cuts `text` to `width` with a … in the style at the cut (pi's truncateToWidth resets it). */
 export function cut(text: string, width: number): string {
@@ -37,7 +37,6 @@ export type Tab = {
   list?: {
     sel: Sel;
     length: number;
-    page?: number; // rows shown at once (default PAGE)
     row: (i: number, marker: string) => string;
     keys: string; // hint while focused
     note?: string; // replaces the hint (e.g. "press x again to kill")
@@ -50,9 +49,9 @@ export type Tab = {
 type Click = { y: number; x0: number; x1: number; tab?: string; row?: number };
 
 /** Moves a list's selection to `i`, scrolling to keep it in view. */
-export const move = (sel: Sel, i: number, length: number, page = PAGE) => {
+export const move = (sel: Sel, i: number, length: number) => {
   sel.selected = Math.max(0, Math.min(length - 1, i));
-  sel.top = Math.max(0, Math.min(sel.top, sel.selected, length - page), sel.selected - page + 1);
+  sel.top = Math.max(0, Math.min(sel.top, sel.selected, length - PAGE), sel.selected - PAGE + 1);
 };
 
 export class Tabs {
@@ -64,9 +63,6 @@ export class Tabs {
   pick: () => string | undefined = () => undefined;
   /** Runs when the dashboard closes (e.g. lists scroll back to the top). */
   onClose = () => {};
-  /** o: opens the full view at the active tab. */
-  onExpand = (_tab: string) => {};
-  keys = "←→ switch · o expand · ↑ close"; // the tab bar's hint while focused
   private clicks: Click[] = [];
 
   /** Closes, giving the keys back to the prompt (a click on its text). */
@@ -114,7 +110,7 @@ export class Tabs {
       const on = theme.bold(paint("accent", text));
       return this.focus ? theme.bg("selectedBg", on) : on;
     });
-    const hint = dim(this.focus ? this.keys : "↓ to focus");
+    const hint = dim(this.focus ? "←→ switch · ↑ close" : "↓ to focus");
     const header = cut(`  ${bar.join("")}  ${hint}`, width);
     const rule = dim(`  ${"─".repeat(Math.max(0, visibleWidth(header) - 2))}`);
     const lines = [header, rule];
@@ -123,13 +119,12 @@ export class Tabs {
       const out = [...t.lines];
       const list = t.list;
       if (!list) return out;
-      const page = list.page ?? PAGE;
-      for (let i = list.sel.top; i < Math.min(list.length, list.sel.top + page); i++) {
+      for (let i = list.sel.top; i < Math.min(list.length, list.sel.top + PAGE); i++) {
         const marker = this.focus && i === list.sel.selected ? paint("accent", "▸") : " ";
         if (t === active) this.clicks.push({ y: 2 + out.length, x0: 0, x1: width, row: i });
         out.push(cut(list.row(i, marker), width));
       }
-      const counter = list.length > page ? `${list.sel.selected + 1}/${list.length}` : "";
+      const counter = list.length > PAGE ? `${list.sel.selected + 1}/${list.length}` : "";
       const hint = list.note ?? dim([this.focus && list.keys, counter].filter(Boolean).join(" · "));
       out.push("", hint && `   ${hint}`);
       return out;
@@ -148,7 +143,7 @@ export class Tabs {
     if (hit.tab) this.tab = hit.tab;
     else if (list && hit.row !== undefined) {
       if (this.focus && hit.row === list.sel.selected) list.onPick?.(hit.row);
-      move(list.sel, hit.row, list.length, list.page);
+      move(list.sel, hit.row, list.length);
     }
     this.focus = true;
     return true;
@@ -170,17 +165,15 @@ export class Tabs {
     const active = this.active(tabs);
     const list = active.list?.length ? active.list : undefined;
     if (list?.onKey?.(data, list.sel.selected)) return true;
-    if (matchesKey(data, "o")) this.onExpand(active.id);
-    else if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
+    if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
       const i = tabs.indexOf(active) + (matchesKey(data, Key.left) ? -1 : 1);
       this.tab = tabs[(i + tabs.length) % tabs.length]!.id;
     } else if (matchesKey(data, Key.escape)) this.unfocus(true);
     else if (matchesKey(data, Key.up)) {
-      if (list && list.sel.selected > 0)
-        move(list.sel, list.sel.selected - 1, list.length, list.page);
+      if (list && list.sel.selected > 0) move(list.sel, list.sel.selected - 1, list.length);
       else this.unfocus(true);
     } else if (matchesKey(data, Key.down)) {
-      if (list) move(list.sel, list.sel.selected + 1, list.length, list.page);
+      if (list) move(list.sel, list.sel.selected + 1, list.length);
     } else if (!matchesKey(data, Key.enter)) {
       this.unfocus(false); // typing: it goes to the prompt (enter never submits it from here)
       return false;

@@ -2,7 +2,8 @@
  * pi-herd: every pi session running in a herdr pane is an agent that others can list, message,
  * watch, and start and stop agents of its own (and theirs).
  *
- * Shared files: store.ts. Status comes only from herdr (its pi integration, plus the repo's patch
+ * Files: store.ts (the shared folder), herdr.ts (its socket API), transcript.ts, text.ts (what
+ * agents read, and its renderer), dashboard.ts (/agents dashboard). Status comes only from herdr (its pi integration, plus the repo's patch
  * in herdr/). A message is a steer that wakes an idle agent; a watch wakes the watcher when the
  * target stops working. Tools: agent_start, agent_stop, agent_send, agent_watch, agent_read,
  * agent_list. Commands: /agents, /detach.
@@ -12,13 +13,23 @@
 
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import {
+  DynamicBorder,
   getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { type KeyId, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, type KeyId, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
+import { AgentsDashboard, FULL_SCREEN, type Row } from "./dashboard.ts";
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  watch,
+  writeFileSync,
+  type FSWatcher,
+} from "node:fs";
 import net from "node:net";
 import { join, relative, resolve } from "node:path";
 import { ensureServer, HIDDEN, parseLine, PLUGIN, rpc, SESSION } from "./herdr.ts";
@@ -36,7 +47,6 @@ import {
   MESSAGES,
   readAgent,
   readJson,
-  readPid,
   rm,
   short,
   STAMP,
@@ -109,6 +119,7 @@ const g = ((globalThis as { __piHerd?: unknown }).__piHerd ??= {}) as {
   ended?: Map<string, { at: number; stopped: boolean }>;
   since?: Map<string, number>; // when each followed agent's status last changed (for the footer)
   herdr?: boolean;
+  toolsOff?: boolean; // this process removed the agent tools (a session where pi-herd is off)
 };
 
 const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
@@ -163,6 +174,8 @@ export default function (pi: ExtensionAPI) {
   let warned = false;
   let popupPid: number | undefined; // the popup shell showing this agent
   let lastUpdate = "";
+  let rows: Row[] = []; // herd:update's agents, for /agents dashboard
+  let dashboard: (() => void) | undefined; // redraws the open dashboard
   const waiters = new Set<() => void>(); // agent_start waits for a registration
   /** herdr status of children and watched agents, from one event subscription each. */
   const follows = new Map<
@@ -170,6 +183,17 @@ export default function (pi: ExtensionAPI) {
     { agent: Agent; status: Status; since: number; stop: () => void }
   >();
 
+  /** A new session's state (not on /reload, which keeps it). */
+  const reset = () =>
+    Object.assign(g, {
+      queued: new Set(),
+      watches: new Map(),
+      counts: new Map(),
+      ended: new Map(),
+      listed: new Map(),
+      watched: new Set(),
+      since: new Map(),
+    });
   const watches = () => (g.watches ??= new Map());
   const counts = () => (g.counts ??= new Map());
   const ended = () => (g.ended ??= new Map());
@@ -188,7 +212,8 @@ export default function (pi: ExtensionAPI) {
       if (p === me?.id) return true;
     return false;
   };
-  const descendants = (agents = liveAgents()) => {
+  const descendants = () => {
+    const agents = liveAgents();
     const byId = new Map(agents.map((x) => [x.id, x]));
     return agents.filter((a) => below(a, byId));
   };
@@ -214,12 +239,15 @@ export default function (pi: ExtensionAPI) {
     for (let grew = true; grew;) {
       grew = false;
       for (const a of agents)
-        if (!live.has(a.id) && a.parent && live.has(a.parent)) {
+        // Also under a listed agent that ended: until its own record goes (by then it has marked
+        // itself stopped), an agent whose parent just ended is still live.
+        if (!live.has(a.id) && a.parent && (live.has(a.parent) || listed().has(a.parent))) {
           live.set(a.id, a);
           grew = true;
         }
     }
-    for (const a of live.values()) {
+    // New ones are listed in the order they started (liveAgents() is newest first).
+    for (const a of [...live.values()].sort((x, y) => x.startedAt - y.startedAt)) {
       listed().set(a.id, a);
       ended().delete(a.id); // resumed
     }
@@ -240,14 +268,8 @@ export default function (pi: ExtensionAPI) {
         return {
           id: a.id,
           name: label(a),
-          // herdr's done is idle the user hasn't looked at; here done means the agent ended.
-          state: e
-            ? e.stopped
-              ? "stopped"
-              : "done"
-            : f?.status === "done"
-              ? "idle"
-              : (f?.status ?? "unknown"),
+          // herdr's status while it is live; once it ended, stopped or exited.
+          state: e ? (e.stopped ? "stopped" : "exited") : (f?.status ?? "unknown"),
           since: e?.at ?? f?.since ?? a.startedAt,
           live: !e,
           cwd: a.cwd,
@@ -264,10 +286,12 @@ export default function (pi: ExtensionAPI) {
     const json = JSON.stringify(update);
     if (json !== lastUpdate) pi.events.emit("herd:update", update);
     lastUpdate = json;
+    rows = update.agents;
+    dashboard?.();
     // Working while watches run, also during the turn (herdr publishes idle when the turn settles,
     // before this could say otherwise) and while an ending waits for its steer (watches().size
     // still counts it): an agent watching this one would take any idle as finished.
-    const active = watches().size > 0 || !!waking;
+    const active = watches().size > 0 || !!waking || afterSettle.length > 0;
     if (active !== g.herdr) emitHerdr(active);
   };
 
@@ -365,7 +389,8 @@ export default function (pi: ExtensionAPI) {
     void status(a).then(async (s) => {
       if (!idle(s)) return;
       await new Promise((r) => setTimeout(r, 1000));
-      if (idle(await status(a))) void end(w, "idle");
+      // Not when a newer message re-armed it meanwhile (it waits for that one's delivery).
+      if (w.armed && !w.awaiting && idle(await status(a))) void end(w, "idle");
     });
   };
   /** A followed agent's status changed: may end its watch (spec section 6). */
@@ -379,15 +404,21 @@ export default function (pi: ExtensionAPI) {
 
   /** Queues a steer item; items within BATCH_MS share one steer. */
   const post = (it: Item) => {
+    if (!me) return; // an old runtime's late ending, after /reload
     outbox.push(it);
     clearTimeout(flushTimer);
     flushTimer = setTimeout(flush, BATCH_MS);
   };
   const flush = () => {
+    if (!me) return;
     const items = outbox;
     outbox = [];
-    for (const [id, w] of watches()) if (w.ending) watches().delete(id);
-    if (!items.length || !me) return;
+    // Drop the watches this steer ends; others marked ending may still be gathering their ending.
+    for (const it of items) {
+      const id = it.kind === "watch" ? it.agent.id : it.endsWatch ? it.msg.from.id : undefined;
+      if (id && watches().get(id)?.ending) watches().delete(id);
+    }
+    if (!items.length) return;
     // Messages go by their delivery; watch endings on their own, in an "agent watcher" box.
     const groups = new Map<string, Item[]>();
     for (const it of items) {
@@ -426,7 +457,7 @@ export default function (pi: ExtensionAPI) {
 
   /** Ends a watch with an event, gathering what that ending carries. */
   const end = async (w: Watch, event: Exclude<End, "message">) => {
-    if (w.ending || watches().get(w.agent.id) !== w) return;
+    if (!me || w.ending || watches().get(w.agent.id) !== w) return;
     w.ending = true;
     armDeadline();
     refresh();
@@ -485,7 +516,7 @@ export default function (pi: ExtensionAPI) {
       Object.assign(old, { minutes, deadline }, awaiting && { awaiting, armed: false });
       armDeadline();
       checkDelivered(a);
-      return follows.get(a.id)?.status ?? "working";
+      return "working"; // watched (agent_watch reports it so)
     }
     const s = follows.get(a.id)?.status ?? (await status(a));
     if (s === "exited") return s;
@@ -541,7 +572,7 @@ export default function (pi: ExtensionAPI) {
   /** A stopped/<id> marker: lists show the agent as stopped once it ends. Never blocks a stop. */
   const markStopped = (id: string) => {
     try {
-      writeFileSync(join(STOPPED, id), String(Date.now()));
+      writeFileSync(join(STOPPED, id), "");
     } catch {}
   };
   /** Agents die with the agent that started them: SIGTERM ourselves so pi shuts down cleanly. */
@@ -553,13 +584,18 @@ export default function (pi: ExtensionAPI) {
     process.kill(process.pid, "SIGTERM");
   };
 
-  /** A popup opened by /agents shows this agent while attached/<id> holds a live pid. */
+  /**
+   * A popup shows this agent while a live popup shell's marker, attached/<its pid>, names it (its
+   * first line; then the socket and pane it attaches to). Dead shells' markers are removed.
+   */
   const onAttached = () => {
     if (!me || !ctx) return;
-    const file = join(ATTACHED, me.id);
-    const pid = readPid(file);
-    if (existsSync(file) && !alive(pid)) rm(file);
-    popupPid = alive(pid) ? pid : undefined;
+    popupPid = undefined;
+    for (const f of list(ATTACHED)) {
+      const pid = parseInt(f);
+      if (!alive(pid)) rm(join(ATTACHED, f));
+      else if (markerAgent(join(ATTACHED, f)) === me.id) popupPid = pid;
+    }
     // Right-aligned above the prompt, in the margin pi-footer's box uses.
     ctx.ui.setWidget(
       "pi-herd",
@@ -574,8 +610,17 @@ export default function (pi: ExtensionAPI) {
         : undefined,
     );
   };
+  /** A marker's first line: the agent the popup shows. */
+  const markerAgent = (path: string) => {
+    try {
+      return readFileSync(path, "utf8").split("\n")[0];
+    } catch {
+      return undefined;
+    }
+  };
   const detach = () => {
-    if (!popupPid) return ctx?.ui.notify("Not shown in a pi-herd popup.", "info");
+    if (!popupPid || !alive(popupPid))
+      return ctx?.ui.notify("Not shown in a pi-herd popup.", "info");
     execFile("pkill", ["-TERM", "-P", String(popupPid)], () => {});
   };
 
@@ -657,24 +702,45 @@ export default function (pi: ExtensionAPI) {
       process.kill(a.pid, "SIGTERM");
     } catch {}
     setTimeout(() => {
-      if (readAgent(a.id)?.pid === a.pid && alive(a.pid))
+      if (alive(a.pid))
+        // pi-herd's record may already be gone while pi hangs
         try {
           process.kill(a.pid, "SIGKILL");
         } catch {}
     }, 5000).unref();
   };
 
-  /** Opens a popup attached to another session's agent; an agent in this herdr session is focused. */
+  /**
+   * Views an agent: in a popup showing this agent, that popup switches to it (the marker names it,
+   * and ending the current attach makes the popup's loop attach it); an agent in this herdr
+   * session is focused; any other opens a popup.
+   */
   const attach = async (a: Agent) => {
     if (!ctx || !me) return;
+    if (popupPid && alive(popupPid)) {
+      try {
+        writeFileSync(
+          join(ATTACHED, String(popupPid)),
+          `${a.id}\n${a.herdr.socket}\n${a.herdr.pane}\n`,
+        );
+      } catch {
+        return ctx.ui.notify("Can't switch the popup to that agent.", "warning");
+      }
+      execFile("pkill", ["-TERM", "-P", String(popupPid)], () => {});
+      return;
+    }
     if (a.herdr.socket === me.herdr.socket)
       return rpc(socket, "pane.focus", { pane_id: a.herdr.pane }).catch((err) =>
         ctx?.ui.notify(`herdr: ${err.message}`, "error"),
       );
-    const marker = join(ATTACHED, a.id);
+    // The shell attaches to the agent its marker names, again after a switch (a new agent there);
+    // when an attach ends any other way (detach, the agent exits), the popup closes.
     const command =
-      `M=${q(marker)}; trap 'rm -f "$M"' EXIT; echo $$ > "$M"; ` +
-      `HERDR_SOCKET_PATH=${q(a.herdr.socket)} herdr agent attach ${q(a.herdr.pane)} --takeover`;
+      `M=${q(ATTACHED)}/$$; trap 'rm -f "$M"' EXIT; ` +
+      `printf '%s\\n' ${q(a.id)} ${q(a.herdr.socket)} ${q(a.herdr.pane)} > "$M"; ` +
+      `while { read -r ID; read -r S; read -r P; } < "$M" && [ -n "$P" ]; do ` +
+      `HERDR_SOCKET_PATH="$S" herdr agent attach "$P" --takeover; ` +
+      `{ read -r NEXT; } < "$M"; [ "$NEXT" != "$ID" ] || break; done`;
     try {
       await rpc(socket, "plugin.pane.open", {
         plugin_id: PLUGIN,
@@ -689,6 +755,97 @@ export default function (pi: ExtensionAPI) {
           `Or attach in a terminal:\n  HERDR_SOCKET_PATH=${q(a.herdr.socket)} herdr agent attach ${a.herdr.pane}`,
         "warning",
       );
+    }
+  };
+
+  /** Live agents other than this one: its children (default), in `cwd` or below, or all. */
+  const scoped = (scope: string, cwd: string) => {
+    const others = liveAgents().filter((a) => a.id !== me?.id);
+    if (scope === "all") return others;
+    return scope === "cwd" ? others.filter((a) => inside(cwd, a.cwd)) : children(others);
+  };
+  /** agent_stop and /agents stop: "all" is this agent's children (theirs stop with them). */
+  const stopMany = (ids: "all" | string[]) => {
+    const targets = ids === "all" ? children() : resolveAll(ids, descendants());
+    targets.forEach(stop);
+    const lines = targets.map(
+      (a) =>
+        `Stopped ${label(a)}.` +
+        (a.session && existsSync(a.session)
+          ? ` To resume it: agent_start({ session: "${a.id}" })`
+          : " It has no saved session to resume."),
+    );
+    return { lines, stopped: targets.length };
+  };
+
+  /** Views or stops an agent by id (pi-footer's tab, the dashboard). */
+  const attachId = (id: string) => {
+    const a = readAgent(id);
+    if (a && alive(a.pid)) void attach(a);
+  };
+  const stopId = (id: string) => {
+    const a = descendants().find((x) => x.id === id);
+    if (a) stop(a);
+  };
+  /** An agent's status, and how long it has had it when followed (`working 3m12s`). */
+  const statusText = async (a: Agent) => {
+    const f = follows.get(a.id);
+    const s = f?.status ?? (await status(a));
+    return f ? `${s} ${duration(Date.now() - f.since)}` : s;
+  };
+  /** How this agent relates to `a`: it started it, it watches it. */
+  const tags = (a: Agent) =>
+    [a.parent === me?.id && "child", watches().has(a.id) && "watched"].filter(Boolean) as string[];
+
+  /** The /agents dashboard, over the whole screen until esc. */
+  const openDashboard = async () => {
+    if (!ctx || ctx.mode !== "tui" || !me || dashboard) return;
+    // Other sessions' live agents aren't followed: their status is read every 2 s while open.
+    const statuses = new Map<string, Status>();
+    const others = () => liveAgents().filter((a) => a.id !== me?.id && !listed().has(a.id));
+    let polling = false;
+    const poll = async () => {
+      if (polling) return; // a slow herdr: skip, don't pile up
+      polling = true;
+      const list = others();
+      const read = await Promise.all(list.map(status));
+      list.forEach((a, i) => statuses.set(a.id, read[i]!));
+      polling = false;
+      dashboard?.();
+    };
+    const timer = setInterval(poll, 2000);
+    void poll();
+    try {
+      await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+        dashboard = () => tui.requestRender();
+        return new AgentsDashboard(
+          tui,
+          theme,
+          () => ({
+            agents: rows,
+            others: others().map((a) => {
+              const s = statuses.get(a.id);
+              return {
+                id: a.id,
+                name: label(a),
+                state: s ?? "unknown",
+                since: 0, // not followed: no time in this status
+                live: true,
+                cwd: a.cwd,
+                mine: false,
+                watched: false,
+                sent: counts().get(a.id)?.sent ?? 0,
+                received: counts().get(a.id)?.received ?? 0,
+              };
+            }),
+          }),
+          { attach: attachId, stop: stopId },
+          done,
+        );
+      }, FULL_SCREEN);
+    } finally {
+      clearInterval(timer);
+      dashboard = undefined;
     }
   };
 
@@ -720,20 +877,8 @@ export default function (pi: ExtensionAPI) {
       { description },
     );
 
-  const line = async (a: Agent) => {
-    const f = follows.get(a.id);
-    const s = f?.status ?? (await status(a));
-    return [
-      short(a.id),
-      label(a),
-      f ? `${s} ${duration(Date.now() - f.since)}` : s,
-      tilde(a.cwd),
-      a.parent === me?.id && "child",
-      watches().has(a.id) && "watched",
-    ]
-      .filter(Boolean)
-      .join("  ");
-  };
+  const line = async (a: Agent) =>
+    [short(a.id), label(a), await statusText(a), tilde(a.cwd), ...tags(a)].join("  ");
   // Registered in this order, the order of the tools list in the system prompt.
   pi.registerTool({
     name: "agent_start",
@@ -796,7 +941,7 @@ export default function (pi: ExtensionAPI) {
         (resumed ? undefined : (config.model ?? (c.model && `${c.model.provider}/${c.model.id}`)));
       const thinking =
         params.thinking ?? (resumed ? undefined : (config.thinking ?? pi.getThinkingLevel()));
-      const env = { PI_HERD_PARENT: me.id, PI_HERD_NAME: name!, ...NO_STALL };
+      const env = { PI_HERD_PARENT: me.id, ...NO_STALL };
       const flags = [
         ...(resumed ? ["--session", resumed.file] : []),
         ...(params.name ? ["--name", params.name] : []),
@@ -942,19 +1087,10 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, { ids }) {
       if (!me) throw new Error("pi-herd isn't registered in this session.");
-      // "all": the agents this one started; theirs stop with them.
-      const targets = ids === "all" ? children() : resolveAll(refs(ids), descendants());
-      targets.forEach(stop);
-      const lines = targets.map(
-        (a) =>
-          `Stopped ${label(a)}.` +
-          (a.session && existsSync(a.session)
-            ? ` To resume it: agent_start({ session: "${a.id}" })`
-            : " It has no saved session to resume."),
-      );
+      const { lines, stopped } = stopMany(ids === "all" ? "all" : refs(ids));
       return {
         content: [{ type: "text" as const, text: lines.join("\n") || "No agents to stop." }],
-        details: { stopped: targets.length },
+        details: { stopped },
       };
     },
   });
@@ -998,8 +1134,9 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, { to, timeout }) {
       if (!me) throw new Error("pi-herd isn't registered in this session.");
       const out: string[] = [];
-      for (const a of resolveAll(refs(to))) {
-        if (a.id === me.id) throw new Error("Can't watch yourself.");
+      const targets = resolveAll(refs(to));
+      if (targets.some((a) => a.id === me!.id)) throw new Error("Can't watch yourself.");
+      for (const a of targets) {
         const s = await startWatch(a, undefined, timeout ?? config.watchTimeoutMinutes);
         out.push(
           s === "working"
@@ -1072,13 +1209,7 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, { scope = "children" }, _s, _u, c) {
       if (!me) throw new Error("pi-herd isn't registered in this session.");
-      const others = liveAgents().filter((a) => a.id !== me!.id);
-      const shown =
-        scope === "all"
-          ? others
-          : scope === "cwd"
-            ? others.filter((a) => inside(c.cwd, a.cwd))
-            : children(others);
+      const shown = scoped(scope, c.cwd);
       const rows = [`${short(me.id)}  ${label(me)}  (you)  ${tilde(me.cwd)}`];
       rows.push(...(await Promise.all(shown.map(line))));
       if (scope === "children" && !shown.length)
@@ -1092,16 +1223,81 @@ export default function (pi: ExtensionAPI) {
 
   // ---- Commands ----
 
+  // /agents list prints agents like /background list does jobs: a framed entry, not sent to the model.
+  const loadedAt = Date.now();
+  pi.registerEntryRenderer<{ title: string; rows: string[][] }>(
+    "pi-herd-list",
+    (entry, _o, theme) => {
+      if (Date.parse(entry.timestamp) < loadedAt) return undefined;
+      const dim = (s: string) => theme.fg("dim", s);
+      const { title, rows: list = [] } = entry.data!;
+      const lines = list.map(
+        ([name, id, state, cwd, tags]) =>
+          `${dim("•")} ${theme.fg("accent", name!)} ${dim(id!)} ${theme.fg("text", `· ${state} · ${cwd}`)}` +
+          (tags ? ` ${theme.fg("accent", `· ${tags}`)}` : ""),
+      );
+      const box = new Container();
+      box.addChild(new DynamicBorder());
+      box.addChild(new Text(theme.bold(theme.fg("accent", title)), 1, 0));
+      box.addChild(new Spacer(1));
+      box.addChild(new Text(lines.join("\n") || dim("No matching agents."), 1, 0));
+      box.addChild(new DynamicBorder());
+      return box;
+    },
+  );
+
+  const SCOPES = ["children", "cwd", "all"];
+  const USAGE = "Usage: /agents [list [children|cwd|all] | stop <id|name ...|all> | dashboard]";
   pi.registerCommand("agents", {
-    description: "List pi agents; pick one to attach to it in a herdr popup",
-    handler: async (_args, c) => {
+    description: "List pi agents, stop yours, or open the agents dashboard",
+    getArgumentCompletions: (prefix) => {
+      const [sub = "", ...rest] = prefix.split(/\s+/);
+      const options = (head: string, last: string, all: string[]) => {
+        const items = all.filter((o) => o.startsWith(last));
+        return items.length ? items.map((o) => ({ value: `${head}${o}`, label: o })) : null;
+      };
+      if (!rest.length) return options("", sub, ["list", "stop", "dashboard"]);
+      if (sub === "list" && rest.length === 1) return options("list ", rest[0]!, SCOPES);
+      if (sub === "stop")
+        return options(
+          `stop ${rest
+            .slice(0, -1)
+            .map((r) => `${r} `)
+            .join("")}`,
+          rest.at(-1)!,
+          [...descendants().map(label), "all"],
+        );
+      return null;
+    },
+    handler: async (args, c) => {
       if (!me) return c.ui.notify("pi-herd isn't registered in this session.", "info");
-      const others = liveAgents().filter((a) => a.id !== me!.id);
-      if (!others.length) return c.ui.notify("No other agents.", "info");
-      const rows = await Promise.all(others.map(line));
-      const choice = await c.ui.select("Agents", rows);
-      const a = others[rows.indexOf(choice ?? "")];
-      if (a) await attach(a);
+      const [sub = "list", ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      if (sub === "dashboard") return openDashboard();
+      if (sub === "stop") {
+        if (!rest.length) return c.ui.notify(USAGE, "warning");
+        try {
+          const { lines } = stopMany(rest[0] === "all" ? "all" : rest);
+          return c.ui.notify(lines.join("\n") || "No agents to stop.", "info");
+        } catch (err) {
+          return c.ui.notify((err as Error).message, "warning");
+        }
+      }
+      if (sub !== "list" || (rest[0] && !SCOPES.includes(rest[0])))
+        return c.ui.notify(USAGE, "warning");
+      const scope = rest[0] ?? "children";
+      const shown = scoped(scope, c.cwd);
+      pi.appendEntry("pi-herd-list", {
+        title: `Agents · ${scope === "children" ? "started by this session" : scope === "cwd" ? "in this folder" : "all"}`,
+        rows: await Promise.all(
+          shown.map(async (a) => [
+            label(a),
+            short(a.id),
+            await statusText(a),
+            tilde(a.cwd),
+            tags(a).join(" · "),
+          ]),
+        ),
+      });
     },
   });
   pi.registerCommand("detach", {
@@ -1114,41 +1310,36 @@ export default function (pi: ExtensionAPI) {
   });
 
   // From pi-footer's agents tab.
-  pi.events.on("herd:attach", (data) => {
-    const a = readAgent((data as { id: string }).id);
-    if (a && alive(a.pid)) void attach(a);
-  });
-  pi.events.on("herd:stop", (data) => {
-    const a = descendants().find((x) => x.id === (data as { id: string }).id);
-    if (a) stop(a);
-  });
+  pi.events.on("herd:dashboard", () => void openDashboard());
+  pi.events.on("herd:attach", (data) => attachId((data as { id: string }).id));
+  pi.events.on("herd:stop", (data) => stopId((data as { id: string }).id));
 
   // ---- Lifecycle ----
 
+  /** Off in this session: no tools, and herdr hears no pending work from here. */
+  const off = () => {
+    pi.setActiveTools(pi.getActiveTools().filter((t) => !TOOLS.includes(t)));
+    g.toolsOff = true;
+    if (g.herdr) emitHerdr(false);
+  };
   pi.on("session_start", (event, c) => {
     ctx = c;
-    if (c.mode !== "tui") {
-      pi.setActiveTools(pi.getActiveTools().filter((t) => !TOOLS.includes(t)));
-      return;
-    }
+    if (c.mode !== "tui") return off();
     const id = c.sessionManager.getSessionId();
     const old = readAgent(id);
     if (old && old.pid !== process.pid && alive(old.pid)) {
-      pi.setActiveTools(pi.getActiveTools().filter((t) => !TOOLS.includes(t)));
+      off();
       return c.ui.notify(
         `pi-herd is off: this session is already live as pid ${old.pid}.`,
         "warning",
       );
     }
-    if (g.me !== id || event.reason !== "reload") {
-      g.queued = new Set();
-      g.watches = new Map();
-      g.counts = new Map();
-      g.ended = new Map();
-      g.listed = new Map();
-      g.watched = new Set();
-      g.since = new Map();
+    // Back on (after a session that was off in this process): the tools again.
+    if (g.toolsOff) {
+      pi.setActiveTools([...new Set([...pi.getActiveTools(), ...TOOLS])]);
+      g.toolsOff = false;
     }
+    if (g.me !== id || event.reason !== "reload") reset();
     // Endings queued when the old runtime stopped weren't sent: let them fire again.
     for (const w of watches().values()) w.ending = false;
     g.me = id;
@@ -1247,13 +1438,7 @@ export default function (pi: ExtensionAPI) {
     waking = undefined;
     if (me && event.reason !== "reload") {
       if (readAgent(me.id)?.pid === process.pid) rm(agentFile(me.id));
-      g.watches = new Map();
-      g.queued = new Set();
-      g.counts = new Map();
-      g.ended = new Map();
-      g.listed = new Map();
-      g.watched = new Set();
-      g.since = new Map();
+      reset();
       g.me = undefined;
     }
     me = ctx = undefined;
