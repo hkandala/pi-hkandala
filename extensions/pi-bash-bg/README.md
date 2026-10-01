@@ -34,19 +34,18 @@ The agent stops a job with `kill <pid>`. Output always goes to a log file under 
 
 ## Commands
 
-| Command                            | Does                                                                                                                                                                           |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/background`                      | Moves the running bash calls to the background                                                                                                                                 |
-| `/background list [jobs] [status]` | Prints jobs, with `bash_list`'s two params in order: `watching` (default) or `all`, then `running` (default), `finished` or `any`                                              |
-| `/background logs [pid]`           | Opens a full-screen log viewer that follows the output (↑↓, PgUp PgDn or the wheel scroll, End follows, `x` twice kills, Esc closes)                                           |
-| `/background kill <pid\|all>`      | Kills one job, or all of this session's                                                                                                                                        |
-| `/background dashboard`            | Opens the jobs dashboard: this session's jobs on a full-screen page, running first, then finished ones (`e` hides them); Enter opens a job's logs, `x` twice kills, Esc closes |
+| Command                            | Does                                                                                                                              |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `/background`                      | Moves the running bash calls to the background                                                                                    |
+| `/background list [jobs] [status]` | Prints jobs, with `bash_list`'s two params in order: `watching` (default) or `all`, then `running` (default), `finished` or `any` |
+| `/background logs [pid]`           | Opens a log viewer that follows the output (↑↓, PgUp PgDn or the wheel scroll, End follows, `x` twice kills, Esc closes)          |
+| `/background kill <pid\|all>`      | Kills one job, or all of this session's                                                                                           |
 
 ## Works with
 
 Optional; install any of them for the extra:
 
-- [pi-footer](../pi-footer/README.md): the job count in the footer line, and a jobs tab in the dashboard (↓ opens it while jobs run) to browse jobs, open their logs, and kill them.
+- [pi-footer](../pi-footer/README.md): the job count in the footer line, and a jobs tab in the dashboard (↓ opens it while jobs run) to browse the running jobs (`e` shows finished ones), open their logs, and kill them.
 - [pi-working](../pi-working/README.md): `Waiting on 2 background jobs (1m 12s)` in the prompt's border while the agent waits.
 - [pi-content-layout](../pi-content-layout/README.md): end messages in its dashed frame (click to expand), a `ctrl+shift+b to run in background` hint under a bash call running 30s or more, and exact durations for parallel bash calls loaded from history.
 - [pi-bash-cap](../pi-bash-cap/README.md): end messages use its limits instead of pi's.

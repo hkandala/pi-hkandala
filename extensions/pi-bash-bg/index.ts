@@ -57,8 +57,7 @@ import {
 import { readdir, unlink } from "node:fs/promises";
 import { constants, homedir } from "node:os";
 import { join } from "node:path";
-import { cut, FULL_SCREEN, JobsDashboard } from "./dashboard.ts";
-import { LogViewer } from "./viewer.ts";
+import { cut, LogViewer } from "./viewer.ts";
 
 const DIR = join(getAgentDir(), "bash-bg");
 const TYPE = "background job";
@@ -743,46 +742,8 @@ export default function (pi: ExtensionAPI) {
           () => kill(job(j.id) ?? j),
           () => done(),
         ),
-      FULL_SCREEN,
+      { overlay: true, overlayOptions: { anchor: "center", width: "90%", maxHeight: "70%" } },
     );
-  };
-  /** /background dashboard: this session's jobs over the whole screen, until esc. */
-  let dashboardOpen = false;
-  const openDashboard = async () => {
-    if (ctx?.mode !== "tui" || dashboardOpen) return;
-    dashboardOpen = true;
-    try {
-      await ctx.ui.custom<void>(
-        (tui, theme, _kb, done) =>
-          new JobsDashboard(
-            tui,
-            theme,
-            () =>
-              jobs(watchedIds()).map((j) => ({
-                pid: j.pid,
-                state: state(j),
-                elapsed: elapsed(j),
-                command: j.command,
-                cwd: j.cwd,
-              })),
-            {
-              logs: (pid) => {
-                const j = byPid(pid);
-                if (j) void openLogs(j);
-              },
-              kill: (pid) => {
-                const j = byPid(pid);
-                if (j) kill(j);
-              },
-            },
-            tilde,
-            done,
-          ),
-        FULL_SCREEN,
-      );
-    } finally {
-      dashboardOpen = false;
-    }
   };
   const pick = async (title: string, list: Job[]) => {
     if (!list.length) return ctx?.ui.notify("No background jobs.", "info");
@@ -791,12 +752,11 @@ export default function (pi: ExtensionAPI) {
   };
 
   pi.registerCommand("background", {
-    description:
-      "Move running bash calls to the background, or list, view, and kill jobs, or open the jobs dashboard",
+    description: "Move running bash calls to the background, or list, view, and kill jobs",
     getArgumentCompletions: (prefix) => {
       const [sub = "", arg, ...more] = prefix.split(/\s+/);
       if (arg === undefined)
-        return ["list", "logs", "kill", "dashboard"]
+        return ["list", "logs", "kill"]
           .filter((s) => s.startsWith(sub))
           .map((s) => ({ value: s, label: s }));
       if (sub === "list") {
@@ -829,7 +789,6 @@ export default function (pi: ExtensionAPI) {
     handler: async (args, c) => {
       const [sub = "", arg = "", arg2 = ""] = args.trim().split(/\s+/);
       if (!sub) return moveAll();
-      if (sub === "dashboard") return openDashboard();
       if (sub === "list") {
         // bash_list's two params, in order: jobs (watching | all), status (running | finished |
         // any). Defaults: watching, running.
@@ -867,7 +826,7 @@ export default function (pi: ExtensionAPI) {
         return j ? kill(j) : c.ui.notify(`pid ${arg} is not a background job.`, "warning");
       }
       c.ui.notify(
-        "Usage: /background [list [watching|all] [running|finished|any] | logs [pid] | kill <pid|all> | dashboard]",
+        "Usage: /background [list [watching|all] [running|finished|any] | logs [pid] | kill <pid|all>]",
         "warning",
       );
     },
@@ -878,7 +837,6 @@ export default function (pi: ExtensionAPI) {
   });
 
   // From pi-footer's jobs tab.
-  pi.events.on("bash-bg:dashboard", () => void openDashboard());
   pi.events.on("bash-bg:kill", (data) => {
     const j = byPid((data as { pid: number }).pid);
     if (j) kill(j);
