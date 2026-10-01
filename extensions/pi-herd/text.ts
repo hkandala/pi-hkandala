@@ -42,8 +42,6 @@ export type Item =
 
 export const tilde = (p: string) =>
   p === homedir() || p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p;
-const lines = (s: string) => s.split("\n").length;
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /**
  * The workflow brief, the same for every agent: one of agent_send's prompt guidelines. Those are
@@ -127,22 +125,15 @@ const GLYPH = {
 function itemLine(it: Item, theme: Theme, expanded: boolean): { line: string; more?: string } {
   const dim = (s: string) => theme.fg("dim", s);
   if (it.kind === "message") {
+    // Messages and replies alike: a one-line one shows whole on its line (no expanding); a longer
+    // one shows its first line.
     const who = theme.fg("accent", label(it.msg.from));
-    const n = dim(` · ${plural(lines(it.msg.text), "line")}`);
-    if (it.endsWatch)
-      return {
-        line: `${theme.fg("accent", GLYPH.received)} ${who} replied${n}`,
-        more: it.msg.text,
-      };
-    if (it.msg.replyTo)
-      return {
-        line: `${theme.fg("accent", GLYPH.received)} ${who}${dim(" · reply")}${n}`,
-        more: it.msg.text,
-      };
-    const first = it.msg.text.trim().split("\n")[0]!;
+    const kind = it.endsWatch ? " replied" : it.msg.replyTo ? dim(" · reply") : "";
+    const [first, ...rest] = it.msg.text.trim().split("\n");
+    const quote = expanded && rest.length ? "" : `${dim(" · ")}"${first}"`;
     return {
-      line: `${theme.fg("accent", GLYPH.received)} ${who}${expanded ? "" : dim(` · "${first}"`)}`,
-      more: it.msg.text,
+      line: `${theme.fg("accent", GLYPH.received)} ${who}${kind}${quote}`,
+      more: rest.length ? it.msg.text : undefined,
     };
   }
   const who = theme.fg("accent", label(it.agent));

@@ -5,7 +5,7 @@ pi agents in [herdr](https://herdr.dev). Every pi session running in a herdr pan
 ```
  ● I started reviewer with the review request. I'll be woken when it replies.
  ╭┄┄ agent message ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╮
- ┆ 󱉰 reviewer replied · 38 lines (ctrl+o to expand)                ┆
+ ┆ 󱉰 reviewer replied · "Found 3 issues:" (ctrl+o to expand)      ┆
  ╰┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╯
 ```
 
@@ -59,9 +59,11 @@ A new agent gets your model and thinking level unless config or the call names o
 
 **The dashboard** opens with ← on an empty prompt (or `/agents dashboard`): a full-screen page with a margin all round, a title, a line of counts by status (`2 working · 1 idle · 1 stopped`, ended agents counted even while hidden), a rule, and three sections:
 
-- **this agent**, on top and selected; Enter on it closes the dashboard.
-- **your agents**: the agents you started or watched, each with the agents it started under it (`├ └ │`), to any depth. Ended ones show once `e` shows them.
+- **this agent**, on top and selected; Enter on it closes the dashboard. It reads `working` while it runs or waits on agents it watches, as herdr shows it.
+- **your agents**: the agents you started or watched.
 - **other agents**: every other live agent, from any session.
+
+Both lists are trees: each agent with the agents it started under it (`├ └ │`), to any depth, and the ended ones once `e` shows them (in both lists alike, also after the session was resumed: an agent's record stays once it ends). Columns: name, status, folder, messages, and time last (it grows). Their widths come from every row `e` can show, so toggling it doesn't move them.
 
 Rows stay in the order the agents came (started or watched; other agents by when they started), with ended ones last at every level of the tree: only an agent ending moves a row. pi-footer's agents tab orders by status instead: working first.
 
@@ -73,14 +75,14 @@ The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent 
     ──────────────────────────────────────────────────────
 
     this agent
-    ◆ main             working          ~/code/app
+    ◆ main             working  ~/code/app
 
     your agents
-    ◇ reviewer 󰅐       working  2m      ~/code/app  󱉱 1 󱉰 0
-    ◇ └ tests          working  40s     ~/code/app
+    ◇ reviewer 󰅐       working  ~/code/app  󱉱 1 󱉰 0  2m
+    ◇ └ tests          working  ~/code/app             40s
 
     other agents
-    ◇ frog-thunder     idle             ~/code/lib
+    ◇ frog-thunder     idle     ~/code/lib
 
 
     ↑↓ select · e show ended (1) · esc close
@@ -92,7 +94,7 @@ The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent 
 
 Optional; install any of them for the extra:
 
-- [pi-footer](../pi-footer/README.md): `󰫣 3` in the footer line while this session watches agents, a `waiting  3 agents · 2 jobs` line in the dashboard's overview, an agents tab (↓ opens it while watches run): the live agents you started and the ones you watched (ended ones on `e`), working ones first, with how many live agents run below each (`reviewer +2`), on the tab how many it waits on (`agents 2`), messages sent and received, `󱖡` on agents you didn't start and `󰅐` on the ones you wait on. Enter opens an agent in a popup, `x` twice stops one of yours. And the session's name on the prompt box's border.
+- [pi-footer](../pi-footer/README.md): `󰫣 3` in the footer line while this session watches agents, the cost of the agents you started (any depth, ended ones too) in the usage tab's total, an agents tab (↓ opens it while watches run): the live agents you started and the ones you watched (ended ones on `e`), working ones first, with how many live agents run below each (`reviewer +2`), on the tab how many it waits on (`agents 2`), messages sent and received, `󱖡` on agents you didn't start and `󰅐` on the ones you wait on. Enter opens an agent in a popup, `x` twice stops one of yours. And the session's name on the prompt box's border.
 - [pi-working](../pi-working/README.md): `Waiting on 3 agents and 2 background jobs (1m 12s)` in the prompt's border while the agent waits.
 - [pi-content-layout](../pi-content-layout/README.md): agent messages and watch endings in its dashed frames (`agent message`, `agent watcher`; click to expand, markdown highlighted), messages in open tool calls as highlighted markdown, and tool groups that read `Started 2 agents, talked to 3 agents, stopped 2 agents`.
 - [herdr/](../../herdr/README.md) in this repo:
@@ -139,6 +141,6 @@ Optional: `~/.pi/agent/extensions/pi-herd.json`. Every key has a default.
 
 ## Files
 
-Everything lives in `~/.pi/agent/pi-herd/`: `agents/<id>.json` (one per live agent), `messages/<to>/<id>.json` (one per message, and a `.delivered` marker once it reaches the model), `attached/<pid>` (a popup's shell, naming the agent it shows), and `stopped/<id>` (it was stopped, or ended with the agent that started it). Once a day, the first session to start deletes records of dead agents, messages older than 7 days, stale popup markers, and stop markers of dead agents older than 7 days, and closes orphaned panes in the `pi-herd` herdr session.
+Everything lives in `~/.pi/agent/pi-herd/`: `agents/<id>.json` (one per agent; once it ends, it stays with its end time and cost, for the lists and costs of the agents above it), `messages/<to>/<id>.json` (one per message, and a `.delivered` marker once it reaches the model), `attached/<pid>` (a popup's shell, naming the agent it shows), and `stopped/<id>` (it was stopped, or ended with the agent that started it). Once a day, the first session to start deletes records of dead agents (of ended ones after 7 days), messages older than 7 days, stale popup markers, and stop markers of dead agents older than 7 days, and closes orphaned panes in the `pi-herd` herdr session.
 
 See [docs/SPEC.md](docs/SPEC.md) for the design.

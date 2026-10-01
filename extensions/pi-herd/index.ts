@@ -44,13 +44,14 @@ import net from "node:net";
 import { join, relative, resolve } from "node:path";
 import { ensureServer, HIDDEN, parseLine, PLUGIN, rpc, SESSION } from "./herdr.ts";
 import {
-  agentFile,
   AGENTS,
   alive,
+  allAgents,
   ATTACHED,
   cleanup,
   DAY,
   derived,
+  isLive,
   label,
   list,
   liveAgents,
@@ -255,6 +256,25 @@ export default function (pi: ExtensionAPI) {
     return agents.filter((a) => below(a, byId));
   };
 
+  /** This session's cost so far, counted as pi-footer does: every response and usage entry. */
+  const ownCost = (c: ExtensionContext) => {
+    type Usage = { cost?: { total?: number } };
+    type E = { type: string; usage?: Usage; message?: { role: string; usage?: Usage } };
+    let sum = 0;
+    for (const e of c.sessionManager.getEntries() as E[]) {
+      const m = e.type === "message" && e.message?.role !== "user" ? e.message : undefined;
+      sum += (e.type === "usage" ? e.usage : m?.usage)?.cost?.total ?? 0;
+    }
+    return sum;
+  };
+  /** Puts this session's cost in its record, for the agents above it to add up. */
+  const publishCost = (c: ExtensionContext) => {
+    const cost = ownCost(c);
+    if (!me || cost === me.cost) return;
+    me.cost = cost;
+    writeAtomic(AGENTS, `${me.id}.json`, me);
+  };
+
   // herdr (optional patch, see herdr/README.md): working while watches run. herdr plays "done" on
   // every working → idle change, so it must never see a gap.
   const emitHerdr = (active: boolean) => {
@@ -269,10 +289,19 @@ export default function (pi: ExtensionAPI) {
     // The agents this one started and the ones it has watched, and below them the agents they
     // started (any depth). Listed ones that are gone stay listed, as stopped or done (like
     // finished jobs).
-    const agents = liveAgents();
+    const all = allAgents();
+    const agents = all.filter(isLive);
+    // Every agent started below this one (any depth), live or ended: their costs add to this one's.
+    const byId = new Map(all.map((a) => [a.id, a]));
+    const subs = all.filter((a) => below(a, byId));
     const live = new Map(
       agents.filter((a) => a.parent === me!.id || watched().has(a.id)).map((a) => [a.id, a]),
     );
+    // Ended ones this process never saw (the session was resumed): from their records.
+    for (const a of subs.filter((x) => x.ended && !listed().has(x.id)).reverse()) {
+      listed().set(a.id, a);
+      ended().set(a.id, { at: a.ended!, stopped: existsSync(join(STOPPED, a.id)) });
+    }
     for (let grew = true; grew;) {
       grew = false;
       for (const a of agents)
@@ -289,8 +318,10 @@ export default function (pi: ExtensionAPI) {
       ended().delete(a.id); // resumed
     }
     for (const id of listed().keys())
-      if (!live.has(id) && !ended().has(id))
-        ended().set(id, { at: Date.now(), stopped: existsSync(join(STOPPED, id)) });
+      if (!live.has(id) && !ended().has(id)) {
+        const at = byId.get(id)?.ended ?? Date.now();
+        ended().set(id, { at, stopped: existsSync(join(STOPPED, id)) });
+      }
     for (const [id, f] of follows)
       if (!live.has(id)) {
         f.stop();
@@ -321,6 +352,8 @@ export default function (pi: ExtensionAPI) {
       agents: byGroup(rows),
       watching: n,
       waiting: busy ? 0 : n,
+      // The agents below this one, ended ones too: what they cost, and how many.
+      subagents: { cost: subs.reduce((sum, a) => sum + (a.cost ?? 0), 0), count: subs.length },
       // While a popup shows this agent: pi-footer's prompt box shows it as its placeholder.
       placeholder: inPopup() ? CLOSE_HINT : undefined,
     };
@@ -604,11 +637,11 @@ export default function (pi: ExtensionAPI) {
   const onAgents = () => {
     if (!me) return;
     if (!parentAlive()) return die();
-    for (const id of watches().keys()) if (!alive(readAgent(id)?.pid ?? 0)) void endExited(id);
+    for (const id of watches().keys()) if (!isLive(readAgent(id))) void endExited(id);
     for (const w of waiters) w();
     refresh();
   };
-  const parentAlive = () => !parentId || alive(readAgent(parentId)?.pid ?? 0);
+  const parentAlive = () => !parentId || isLive(readAgent(parentId));
   /** A stopped/<id> marker: lists show the agent as stopped once it ends. Never blocks a stop. */
   const markStopped = (id: string) => {
     try {
@@ -825,7 +858,7 @@ export default function (pi: ExtensionAPI) {
   /** Views or stops an agent by id (pi-footer's tab, the dashboard). */
   const attachId = (id: string) => {
     const a = readAgent(id);
-    if (a && alive(a.pid)) void attach(a);
+    if (isLive(a)) void attach(a);
   };
   const stopId = (id: string) => {
     const a = descendants().find((x) => x.id === id);
@@ -848,13 +881,25 @@ export default function (pi: ExtensionAPI) {
     dashboard = () => {}; // open: a second ← during the first read below does nothing
     // Other sessions' live agents aren't followed: their status is read every 2 s while open.
     const statuses = new Map<string, Status>();
-    // Read with the statuses, not per frame (it reads every agent's file).
-    let others: ReturnType<typeof liveAgents> = [];
+    // Read with the statuses, not per frame (it reads every agent's file). Other agents: the live
+    // ones, and the ended ones below them (like ended agents of yours, shown with e).
+    let others: Agent[] = [];
     let polling = false;
     const poll = async () => {
       if (polling) return; // a slow herdr: skip, don't pile up
       polling = true;
-      const list = (others = liveAgents().filter((a) => a.id !== me?.id && !listed().has(a.id)));
+      const all = allAgents().filter((a) => a.id !== me?.id && !listed().has(a.id));
+      const list = all.filter(isLive);
+      const shown = new Set(list.map((a) => a.id));
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const a of all)
+          if (!shown.has(a.id) && a.parent && shown.has(a.parent)) {
+            shown.add(a.id);
+            grew = true;
+          }
+      }
+      others = all.filter((a) => shown.has(a.id));
       const read = await Promise.all(list.map(status));
       list.forEach((a, i) => statuses.set(a.id, read[i]!));
       polling = false;
@@ -875,7 +920,7 @@ export default function (pi: ExtensionAPI) {
             self: {
               id: me!.id,
               name: label(me!),
-              state: busy ? "working" : "idle",
+              state: busy || g.herdr ? "working" : "idle", // as herdr shows it
               since: 0,
               live: true,
               cwd: me!.cwd,
@@ -893,10 +938,15 @@ export default function (pi: ExtensionAPI) {
               .map((a) => ({
                 id: a.id,
                 name: label(a),
-                state: statuses.get(a.id) ?? "unknown",
-                since: 0, // not followed: no time in this status
-                live: true,
+                state: isLive(a)
+                  ? (statuses.get(a.id) ?? "unknown")
+                  : existsSync(join(STOPPED, a.id))
+                    ? "stopped"
+                    : "exited",
+                since: a.ended ?? 0, // live ones aren't followed: no time in their status
+                live: isLive(a),
                 cwd: a.cwd,
+                parent: a.parent,
                 mine: false,
                 watched: false,
                 sent: counts().get(a.id)?.sent ?? 0,
@@ -1391,7 +1441,7 @@ export default function (pi: ExtensionAPI) {
     if (c.mode !== "tui") return off();
     const id = c.sessionManager.getSessionId();
     const old = readAgent(id);
-    if (old && old.pid !== process.pid && alive(old.pid)) {
+    if (isLive(old) && old.pid !== process.pid) {
       off();
       return c.ui.notify(
         `pi-herd is off: this session is already live as pid ${old.pid}.`,
@@ -1415,10 +1465,11 @@ export default function (pi: ExtensionAPI) {
       name: pi.getSessionName(),
       pid: process.pid,
       cwd: c.cwd,
-      startedAt: old?.pid === process.pid ? old.startedAt : Date.now(),
+      startedAt: old?.pid === process.pid && !old.ended ? old.startedAt : Date.now(),
       parent: parentId,
       herdr: { socket, pane },
       session: c.sessionManager.getSessionFile(),
+      cost: ownCost(c),
     };
     writeAtomic(AGENTS, `${id}.json`, me);
     busy = !c.isIdle();
@@ -1474,6 +1525,7 @@ export default function (pi: ExtensionAPI) {
     waking = undefined;
     refresh();
   });
+  pi.on("turn_end", (_e, c) => publishCost(c));
   pi.on("agent_settled", () => {
     busy = false;
     const items = afterSettle;
@@ -1502,7 +1554,7 @@ export default function (pi: ExtensionAPI) {
         } catch {}
   });
 
-  pi.on("session_shutdown", (event) => {
+  pi.on("session_shutdown", (event, c) => {
     closeDashboard?.();
     stopInput?.();
     stopInput = undefined;
@@ -1522,7 +1574,9 @@ export default function (pi: ExtensionAPI) {
     clearInterval(parentTimer);
     waking = undefined;
     if (me && event.reason !== "reload") {
-      if (readAgent(me.id)?.pid === process.pid) rm(agentFile(me.id));
+      // The record stays, ended: the agents above it still list it and count its cost.
+      if (readAgent(me.id)?.pid === process.pid)
+        writeAtomic(AGENTS, `${me.id}.json`, { ...me, cost: ownCost(c), ended: Date.now() });
       reset();
       g.me = undefined;
     }

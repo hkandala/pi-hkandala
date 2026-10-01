@@ -1,7 +1,8 @@
 /**
  * The agent dashboard (← on an empty prompt, /agents dashboard), in three sections: this agent;
- * your agents (the ones this session started or watched, as a tree with the agents they started
- * under them; ended ones once `e` shows them); other agents (every other live agent). A clean
+ * your agents (the ones this session started or watched, and the agents they started); other
+ * agents (every other live agent, and the agents they started). Both as trees, ended agents once
+ * `e` shows them. Columns: name, status, folder, messages, time. A clean
  * full-screen page: a margin, a title, a description, the list, and the keys pinned to the
  * bottom.
  * Keys: ↑↓ (PgUp PgDn) select, enter opens the agent in a popup (on this agent: closes), x twice
@@ -188,18 +189,22 @@ export class AgentsDashboard {
     const t = this.theme;
     const dim = (s: string) => t.fg("dim", s);
     const { self, agents, others } = this.data();
-    const ended = agents.filter((a) => !a.live).length;
-    const shown = tree(this.showEnded ? agents : agents.filter((a) => a.live));
+    const ended = [...agents, ...others].filter((a) => !a.live).length;
     const section = (title: string, rows: Line[]) => (rows.length ? ["", title, ...rows] : []);
-    this.rows = [
-      "this agent",
-      { a: self, guide: "" },
-      ...section("your agents", shown),
-      ...section(
-        "other agents",
-        others.map((a) => ({ a, guide: "", other: true })),
-      ),
-    ];
+    // Both sections alike: a tree, ended agents only while e shows them.
+    const rowsWith = (showEnded: boolean) => {
+      const pick = (list: Row[]) => tree(showEnded ? list : list.filter((a) => a.live));
+      return [
+        "this agent",
+        { a: self, guide: "" },
+        ...section("your agents", pick(agents)),
+        ...section(
+          "other agents",
+          pick(others).map((r) => ({ ...r, other: true })),
+        ),
+      ];
+    };
+    this.rows = rowsWith(this.showEnded);
     // Rows move (an agent ends, one starts): keep the selection on its agent; x disarms if it's gone.
     const at = this.rows.findIndex((r) => typeof r !== "string" && r.a.id === this.pickedId);
     if (at >= 0) this.selected = at;
@@ -208,7 +213,8 @@ export class AgentsDashboard {
       this.move(0);
     }
 
-    // Columns padded to their widest cell (by display width, for the glyphs).
+    // Columns padded to their widest cell (by display width, for the glyphs) among every row e can
+    // show, so e doesn't move them. The status has a fixed width, and the time (it grows) goes last.
     const marks = (r: Line) =>
       // 󱖡 only on an agent you watch but didn't start (not on other agents, or ones under it).
       [!r.a.mine && !r.a.self && !r.other && !r.guide && ICON.other, r.a.watched && ICON.watching]
@@ -218,19 +224,15 @@ export class AgentsDashboard {
     const named = (r: Line) => [name(r), marks(r)].filter(Boolean).join(" ");
     const when = (a: Row) =>
       a.since ? duration(Date.now() - a.since) + (a.live ? "" : " ago") : ""; // others: no time
-    const all = this.rows.filter((r) => typeof r !== "string");
+    const all = [...this.rows, ...rowsWith(!this.showEnded)].filter((r) => typeof r !== "string");
     const widest = (f: (r: Line) => string) => Math.max(0, ...all.map((r) => visibleWidth(f(r))));
-    const [nameW, stateW, timeW] = [
-      widest(named),
-      widest((r) => r.a.state),
-      widest((r) => when(r.a)),
-    ];
+    const nameW = widest(named);
+    const stateW = 7; // working, blocked, unknown, stopped
     // The folder takes what the other columns leave: it is cut only when the page is too narrow.
     const counts = (a: Row) =>
       a.sent + a.received ? `${ICON.sent} ${a.sent} ${ICON.received} ${a.received}` : "";
     const countsW = widest((r) => counts(r.a));
-    const room =
-      bodyWidth(width) - (2 + nameW + 2 + stateW + 2 + timeW + 2) - (countsW && countsW + 2);
+    const room = bodyWidth(width) - (2 + nameW + 2 + stateW + 2) - (countsW && countsW + 2) - 9; // 9: 2 + "59m ago"
     const cwdW = Math.max(
       10,
       Math.min(
@@ -248,8 +250,9 @@ export class AgentsDashboard {
       return (
         `${marker} ${dim(r.guide)}${t.fg("text", cut(r.a.name, 28))}${mark ? ` ${dim(mark)}` : ""}` +
         `${" ".repeat(Math.max(0, nameW - visibleWidth(named(r))))}  ` +
-        `${t.fg(color(r.a.state), pad(r.a.state, stateW))}  ${dim(pad(when(r.a), timeW))}  ` +
-        `${dim(pad(cut(tilde(r.a.cwd), cwdW), cwdW))}  ${dim(counts(r.a))}`
+        `${t.fg(color(r.a.state), pad(r.a.state, stateW))}  ` +
+        `${dim(pad(cut(tilde(r.a.cwd), cwdW), cwdW))}  ` +
+        `${countsW ? `${dim(pad(counts(r.a), countsW))}  ` : ""}${dim(when(r.a))}`
       );
     };
 

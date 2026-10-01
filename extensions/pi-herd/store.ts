@@ -1,5 +1,6 @@
 /**
- * The files every agent shares in ~/.pi/agent/pi-herd/: agents/<id>.json (who is live),
+ * The files every agent shares in ~/.pi/agent/pi-herd/: agents/<id>.json (every agent, live or
+ * ended),
  * messages/<toId>/<msgId>.json (one file per message), attached/<pid> (a popup shell and the agent
  * it shows), stopped/<id> (it was stopped, or ended with the agent that started it).
  */
@@ -36,6 +37,8 @@ export type Agent = {
   parent?: string;
   herdr: { socket: string; pane: string };
   session?: string;
+  cost?: number; // its own session's cost so far, in $ (not its agents')
+  ended?: number; // when its session ended: the record stays for its parents' lists and costs
 };
 
 export const short = (id: string) => id.slice(-8);
@@ -90,23 +93,29 @@ export const writeAtomic = (path: string, name: string, data: unknown) => {
 
 export const agentFile = (id: string) => join(AGENTS, `${id}.json`);
 export const readAgent = (id: string) => readJson<Agent>(agentFile(id));
-/** Live agents (the record exists and its pid runs), newest first. */
-export const liveAgents = () =>
+/** Live: its session hasn't ended and its pid runs. */
+export const isLive = (a?: Agent): a is Agent => !!a && !a.ended && alive(a.pid);
+/** Every record, live or ended, newest first. */
+export const allAgents = () =>
   list(AGENTS)
     .filter((f) => f.endsWith(".json") && !f.startsWith("."))
     .map((f) => readJson<Agent>(join(AGENTS, f)))
-    .filter((a): a is Agent => !!a?.id && alive(a.pid))
+    .filter((a): a is Agent => !!a?.id)
     .sort((a, b) => b.startedAt - a.startedAt);
+/** Live agents, newest first. */
+export const liveAgents = () => allAgents().filter(isLive);
 
 /**
- * Daily: deletes dead records, old messages, stale popup markers, and stop markers of dead agents
+ * Daily: deletes dead records (an ended session's after 7 days), old messages, stale popup markers, and stop markers of dead agents
  * older than 7 days; closes orphaned panes.
  */
 export async function cleanup() {
   for (const f of list(AGENTS)) {
     const a = readJson<Agent>(join(AGENTS, f));
+    const old = !a?.ended || Date.now() - a.ended > 7 * DAY; // a crash leaves no end time
     // Re-read just before unlink, so a record a restarted session just wrote survives.
-    if (a && !alive(a.pid) && readJson<Agent>(join(AGENTS, f))?.pid === a.pid) rm(join(AGENTS, f));
+    if (a && old && !isLive(a) && readJson<Agent>(join(AGENTS, f))?.pid === a.pid)
+      rm(join(AGENTS, f));
   }
   const live = liveAgents();
   for (const to of list(MESSAGES)) {
