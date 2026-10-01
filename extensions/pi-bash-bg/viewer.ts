@@ -1,12 +1,14 @@
 /**
- * The log viewer overlay: pid in the title; inside, the command (colored as bash, wrapped) and its
- * details, then the log's tail, indented. Scrolls, follows new output, kills on a double x.
+ * The log viewer, a full-screen page like pi-herd's dashboard: the pid and the job's details on
+ * the title line, a rule, `> ` and the command (colored as bash, wrapped), then the log's tail,
+ * and the keys at the bottom. Scrolls, follows new output, kills on a double x.
  */
 
 import { highlightCode, type Theme } from "@earendil-works/pi-coding-agent";
 import {
   Key,
   matchesKey,
+  type OverlayOptions,
   type TUI,
   truncateToWidth,
   visibleWidth,
@@ -40,8 +42,20 @@ export function cut(text: string, width: number): string {
   return width < 1 ? "" : `${truncateToWidth(text, width - 1, "").slice(0, -4)}…\x1b[0m`;
 }
 
+const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - visibleWidth(s)));
+
+/** The page's margin, as pi-herd's dashboard: 2 rows on top, 1 below, 4 columns on each side. */
+const MARGIN = { top: 2, bottom: 1, cols: 4 };
+
+/** ctx.ui.custom options for the viewer: the whole screen (it draws its own margin). */
+export const FULL_SCREEN: { overlay: true; overlayOptions: OverlayOptions } = {
+  overlay: true,
+  overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%" },
+};
+
 export class LogViewer {
-  private lines: string[] = []; // raw: only the ones shown get cleaned
+  private lines: string[] = []; // raw
+  private wrapped = { size: -1, width: 0, rows: [] as string[] }; // the lines cleaned and wrapped
   private now!: ViewerInfo; // the job, read by the timer (not per frame: it can read files)
   private command!: string[]; // highlighted once
   private size = -1;
@@ -66,13 +80,23 @@ export class LogViewer {
   ) {
     Object.assign(this, { tui, theme, log, info, kill, done });
     this.now = info();
-    this.command = highlightCode(this.now.command.trim(), "bash");
+    // A token across lines (a quoted string) has its color reopened on each, as pi-content-layout does.
+    let open = "";
+    this.command = highlightCode(this.now.command.trim(), "bash").map((l) => {
+      const line = open + l;
+      // oxlint-disable-next-line no-control-regex
+      const last = line.match(/\x1b\[(?:38;[\d;]*|39)m/g)?.at(-1) ?? "";
+      open = last.startsWith("\x1b[38") ? last : "";
+      return line;
+    });
     this.load();
     let ticks = 0;
     this.timer = setInterval(() => {
+      const was = this.now.running;
       this.now = info();
-      // As the log grows; the running time once a second.
-      if (this.load() || (this.now.running && ++ticks % 4 === 0)) tui.requestRender();
+      // As the log grows, when the job ends, and the running time once a second.
+      const ended = was !== this.now.running;
+      if (this.load() || ended || (this.now.running && ++ticks % 4 === 0)) tui.requestRender();
     }, 250);
   }
 
@@ -100,44 +124,71 @@ export class LogViewer {
 
   render(width: number): string[] {
     const t = this.theme;
-    const inner = Math.max(1, width - 4);
+    const dim = (s: string) => t.fg("dim", s);
+    const inner = Math.max(10, width - 2 * MARGIN.cols);
     const { pid, detail, running } = this.now;
-    const bar = (label: string) => {
-      const text = cut(label, width - 5);
-      return `${text} ${t.fg("border", "─".repeat(Math.max(0, width - 5 - visibleWidth(text))))}`;
-    };
     const keys = this.armed
       ? t.fg("warning", "press x again to kill")
-      : t.fg(
-          "dim",
+      : dim(
           `↑↓ PgUp PgDn scroll · ${this.top === undefined ? "following" : "End follow"}${running ? " · x kill" : ""} · esc close`,
         );
-    // The command and its details, a blank line, then the log indented under them.
-    const head = [
-      ...this.command.flatMap((l) => wrapTextWithAnsi(l, inner)),
-      t.fg("dim", detail),
-      "",
-    ];
-    // 70% of the terminal: two borders, the head, the log, and a blank line under it.
-    this.rows = Math.max(3, Math.floor(this.tui.terminal.rows * 0.7) - 3 - head.length);
-    const start = this.top ?? Math.max(0, this.lines.length - this.rows);
-    const log = this.lines.slice(start, start + this.rows).map((l) => `  ${clean(l)}`);
-    if (!this.lines.length) log.push(t.fg("dim", "  (no output yet)"));
+    // `> ` and the command (at most a third of the page), a blank line, then the log.
+    const height = this.tui.terminal.rows;
+    const body = Math.max(4, height - MARGIN.top - MARGIN.bottom - 5); // title, rule, blanks, keys
+    const cmd = this.command
+      .flatMap((l) => wrapTextWithAnsi(l, inner - 2))
+      .map((l, i) => (i ? "  " : dim("> ")) + l);
+    const head = [...cmd.slice(0, Math.max(1, Math.floor(body / 3))), ""];
+    this.rows = Math.max(1, body - head.length);
+    const all = this.wrap(inner);
+    const start = this.top ?? Math.max(0, all.length - this.rows);
+    const log = all.slice(start, start + this.rows);
+    if (!all.length) log.push(dim(running ? "(no output yet)" : "(no output)"));
     while (log.length < this.rows) log.push("");
-    const side = t.fg("border", "│");
-    return [
-      t.fg("border", "╭─ ") + bar(t.bold(`pid ${pid}`)) + t.fg("border", "╮"),
-      ...[...head, ...log, ""].map((l) => {
-        const line = cut(l, inner);
-        return `${side} ${line}${" ".repeat(Math.max(0, inner - visibleWidth(line)))} ${side}`;
-      }),
-      t.fg("border", "╰─ ") + bar(keys) + t.fg("border", "╯"),
+    const counter =
+      all.length > this.rows
+        ? dim(`${start + 1}-${Math.min(all.length, start + this.rows)}/${all.length}`)
+        : "";
+    // A full-screen page, as pi-herd's dashboard: a margin, the title, a rule, the body, and the
+    // keys pinned to the bottom. Every row is padded to the full width (and the page to the full
+    // height), so nothing of pi's screen shows around it.
+    const lines = [
+      `${t.bold(t.fg("accent", `pid ${pid}`))}  ${dim(detail)}`,
+      dim("─".repeat(inner)),
+      "",
+      ...head,
+      ...log,
+      "",
+      pad(cut(keys, inner - visibleWidth(counter) - 2), inner - visibleWidth(counter)) + counter,
     ];
+    const left = " ".repeat(MARGIN.cols);
+    const out = [
+      ...Array(MARGIN.top).fill(""),
+      ...lines.map((l) => left + pad(cut(l, inner), inner)),
+    ];
+    while (out.length < height) out.push("");
+    return out.slice(0, height).map((l) => pad(l, width));
   }
 
-  /** Scrolls by `delta` lines; reaching the bottom follows new output again. */
+  /**
+   * The log's lines cleaned and wrapped to `width`, again only when the log grew or the width
+   * changed. None when it is only whitespace.
+   * ponytail: rewraps the whole tail (up to 1MB) on each growth; wrap only new lines if it lags.
+   */
+  private wrap(width: number): string[] {
+    const w = this.wrapped;
+    if (w.size !== this.size || w.width !== width) {
+      const rows = this.lines.flatMap((l) => wrapTextWithAnsi(clean(l), width));
+      // oxlint-disable-next-line no-control-regex
+      const blank = rows.every((r) => !r.replace(/\x1b\[[0-9;]*m/g, "").trim());
+      this.wrapped = { size: this.size, width, rows: blank ? [] : rows };
+    }
+    return this.wrapped.rows;
+  }
+
+  /** Scrolls by `delta` rows; reaching the bottom follows new output again. */
   private scrollBy(delta: number) {
-    const max = Math.max(0, this.lines.length - this.rows);
+    const max = Math.max(0, this.wrapped.rows.length - this.rows);
     const top = Math.max(0, Math.min(max, (this.top ?? max) + delta));
     this.top = top === max ? undefined : top;
   }

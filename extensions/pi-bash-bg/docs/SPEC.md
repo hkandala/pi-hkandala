@@ -8,7 +8,7 @@ Background bash for pi. The `bash` tool can run a command in the background, eit
 - **Stopping:** Esc kills the running foreground call, as in pi, and never touches background jobs. The agent stops a job with `kill <pid>`. The user stops one with `/background kill`, the log viewer, or pi-footer's jobs tab.
 - **Ending:** however a watched job ends (exit, any kill, timeout), its session gets one steer message shaped like a bash result.
 
-Code: `index.ts` (everything except the viewer) and `viewer.ts` (the log viewer overlay).
+Code: `index.ts` (everything except the viewer) and `viewer.ts` (the log viewer).
 
 ## 1. Files
 
@@ -175,10 +175,10 @@ Command exited with code 1
 
 `list` prints like `/hotkeys`: `appendEntry("bash-bg-list", { title, jobs, more })` with an entry renderer that skips entries from before this load, so it is never sent to the model and is gone after `/reload` or a restart. The title names the filter (`Background jobs · running · this session`). One bullet per job, newest first: `• ● 12400 · 18:28:51 · running · 4m12s · ~/proj` (● running, ✓ exit 0, ■ killed, ✗ otherwise; the start time, with the date when it isn't today), then the log path; only the path is dim. Listing `all`, jobs this session watches end in `· watching`. Commands stay out: they can be long; the log viewer shows them.
 
-**Log viewer** (`viewer.ts`): `ctx.ui.custom(…, { overlay: true, overlayOptions: { anchor: "center", width: "90%", maxHeight: "70%" } })`.
+**Log viewer** (`viewer.ts`): a full-screen page like pi-herd's dashboard, `ctx.ui.custom(…, { overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%" } })`. No border: it draws its own margin (2 rows on top, 1 below, 4 columns on each side) and pads every row to the full width and the page to the terminal's rows, so nothing of pi's screen shows.
 
-- The title shows only `pid 12345`. Inside: the command, colored as bash and wrapped, a dim `running · 27s · ~/proj` line, a blank line, then the log indented two columns. The log area is what's left of 70% of the terminal's rows.
-- It shows the last 1 MB of the log, re-read every 250 ms when it grows (only the lines shown are cleaned of control codes); a running job's time updates once a second. It follows new output until you scroll up; then the view stays put (it keeps an absolute top line) until you scroll back to the bottom or press End.
+- The title line is `pid 12345` (accent, bold) and a dim `running · 27s · ~/proj`, then a rule. The body is `> ` and the command, colored as bash and wrapped (at most a third of the page), a blank line, then the log, wrapped (`(no output yet)` while it runs, `(no output)` once done, also for only whitespace). The keys are pinned to the bottom row, with a counter on the right when the log scrolls (`120-150/400`).
+- It shows the last 1 MB of the log, re-read every 250 ms when it grows (cleaned of control codes and wrapped again only then, or when the width changes); a running job's time updates once a second. It follows new output until you scroll up; then the view stays put (it keeps an absolute top line) until you scroll back to the bottom or press End.
 - Only color escapes are kept: after the last `\r` in a line (progress bars), with tabs expanded.
 - ↑/↓, PgUp/PgDn and the mouse wheel scroll, Home jumps to the top, End follows, `x` twice kills (running jobs only), Esc or `q` closes.
 

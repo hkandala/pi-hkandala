@@ -57,7 +57,7 @@ import {
 import { readdir, unlink } from "node:fs/promises";
 import { constants, homedir } from "node:os";
 import { join } from "node:path";
-import { cut, LogViewer } from "./viewer.ts";
+import { cut, FULL_SCREEN, LogViewer } from "./viewer.ts";
 
 const DIR = join(getAgentDir(), "bash-bg");
 const TYPE = "background job";
@@ -651,7 +651,7 @@ export default function (pi: ExtensionAPI) {
           );
           lines.push(...cmd.map((l, i) => `${i ? dim("│") : icon} ${l}`));
           if (cmd.length > 1) lines.push(dim("│"));
-          const out = [j.output, j.note].filter(Boolean).join("\n");
+          const out = [j.output?.trim() && j.output, j.note].filter(Boolean).join("\n");
           const outLines = (out ? out.split("\n") : ["(no output)"]).flatMap((l) =>
             wrapTextWithAnsi(theme.fg(out ? "toolOutput" : "dim", l), fit),
           );
@@ -746,7 +746,7 @@ export default function (pi: ExtensionAPI) {
           () => kill(job(j.id) ?? j),
           () => done(),
         ),
-      { overlay: true, overlayOptions: { anchor: "center", width: "90%", maxHeight: "70%" } },
+      FULL_SCREEN,
     );
   };
   const pick = async (title: string, list: Job[]) => {
