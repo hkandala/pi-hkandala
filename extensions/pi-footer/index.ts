@@ -12,7 +12,7 @@
  * running jobs, context, model and effort. A click on a piece opens its tab (folder/git → git,
  * cold/context → usage, agents → agents, jobs → jobs, model/effort → session); a click on the
  * prompt's text closes the dashboard. The dashboard has tabs: overview (a line per area), session,
- * usage (after the first prompt), git (in a repo), agents (pi-herd) and jobs (pi-bash-bg).
+ * usage (after the first response), git (in a repo), jobs (pi-bash-bg) and agents (pi-herd).
  * Narrow terminals drop git, then context. Folder, cold, agents, jobs and model always stay.
  * Config (optional): ~/.pi/agent/extensions/pi-footer.json
  *   { "promptEditor": "box" | "default", "disableEffortColors": true, "style": "color" | "white",
@@ -81,13 +81,7 @@ type Usage = {
   output: number;
   cacheRead: number;
   cacheWrite: number;
-  cost?: {
-    total: number;
-    input?: number;
-    output?: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-  };
+  cost?: { total: number };
 };
 type Entry = {
   type: string;
@@ -101,6 +95,7 @@ type Entry = {
     content?: unknown;
     provider?: string;
     model?: string;
+    stopReason?: string;
   };
 };
 type CacheModel = {
@@ -158,6 +153,8 @@ type Herd = Sel & {
   list: Agent[];
   below: Map<string, number>;
   watching: number;
+  subagents: { cost: number; count: number }; // the agents below this one, ended ones too
+
   armed: boolean; // x pressed once
 };
 
@@ -213,7 +210,6 @@ const sessionStats = perLeaf((ctx) => {
     cacheRead: 0,
     cacheWrite: 0,
     cost: 0,
-    costParts: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     turnCost: 0, // since the last user message: the running turn, or the last one
     cacheHit: undefined as number | undefined,
     responses: 0,
@@ -236,18 +232,32 @@ const sessionStats = perLeaf((ctx) => {
   };
   let runStart: number | undefined;
   let runEnd = 0;
+  let idle = true; // the last response ended its run (or there is none yet)
+  let woke: number | undefined; // a custom message while idle (another agent's, a job's end)
+  const startRun = (ts: number) => {
+    s.turnCost = 0;
+    if (runStart !== undefined) s.workingMs += runEnd - runStart;
+    runStart = runEnd = ts;
+  };
   for (const e of ctx.sessionManager.getEntries() as Entry[]) {
     const ts = e.timestamp ? Date.parse(e.timestamp) : undefined;
+    const assistant = e.type === "message" && e.message?.role === "assistant";
     if (ts !== undefined) {
       s.startedAt ??= ts;
-      // Working time: from each user message to the last entry before the next one.
+      // A run (working time, the turn's cost): from a user message, or a custom message that woke
+      // the idle agent (once a response follows it), to the last entry before the next run.
       if (e.type === "message" && e.message?.role === "user") {
         s.userMessages++;
-        s.turnCost = 0;
-        if (runStart !== undefined) s.workingMs += runEnd - runStart;
-        runStart = runEnd = ts;
+        woke = undefined;
+        startRun(ts);
+      } else if (e.type === "custom_message" && idle) woke ??= ts;
+      else if (assistant && woke !== undefined) {
+        startRun(woke);
+        runEnd = ts;
+        woke = undefined;
       } else if (runStart !== undefined) runEnd = ts;
     }
+    if (assistant) idle = e.message!.stopReason !== "toolUse";
     if (e.type === "compaction") {
       s.compactions++;
       s.compactedSince = true;
@@ -265,8 +275,6 @@ const sessionStats = perLeaf((ctx) => {
     s.cacheWrite += usage.cacheWrite;
     s.cost += usage.cost?.total ?? 0;
     s.turnCost += usage.cost?.total ?? 0;
-    for (const k of ["input", "output", "cacheRead", "cacheWrite"] as const)
-      s.costParts[k] += usage.cost?.[k] ?? 0;
     if (e.type === "usage" && e.kind === "cache_warm") s.cachedAt = ts ?? s.cachedAt; // refresh extends the cache
     if (e.message?.role !== "assistant") continue;
     s.lastCached = usage.cacheRead + usage.cacheWrite > 0;
@@ -407,11 +415,12 @@ function render(
       ((cacheModel.cost?.cacheWrite ?? 0) - (cacheModel.cost?.cacheRead ?? 0))) /
     1e6;
   const coldPiece = cold
-    ? paint("warning", "cold") + (coldExtra >= 0.01 ? dim(` (~$${coldExtra.toFixed(2)})`) : "")
+    ? paint("warning", "cold") +
+      (coldExtra >= 0.01 ? paint("text", ` (~$${coldExtra.toFixed(2)})`) : "")
     : undefined;
   const pct = ctxUsage?.percent ?? undefined;
   const window = ctxUsage?.contextWindow ?? model?.contextWindow ?? 0;
-  const ctxColor: Color = (pct ?? 0) > 90 ? "error" : (pct ?? 0) > 75 ? "warning" : "dim";
+  const ctxColor: Color = (pct ?? 0) > 90 ? "error" : (pct ?? 0) > 75 ? "warning" : "text";
   const contextPiece = ctxUsage?.tokens
     ? paint(
         ctxColor,
@@ -427,8 +436,12 @@ function render(
     (model ? paint("text", shortModel(model.id)) : dim("no model")) +
     (model?.reasoning ? dot + paint(levelColor, level) : "");
 
-  const agentsPiece = herd?.watching ? dim(`${ICON.agents} ${herd.watching}`) : undefined;
-  const jobsPiece = bg?.running ? dim(`${ICON.jobs} ${bg.running}`) : undefined;
+  const agentsPiece = herd?.watching
+    ? `${icon(ICON.agents)} ${paint("text", String(herd.watching))}`
+    : undefined;
+  const jobsPiece = bg?.running
+    ? `${icon(ICON.jobs)} ${paint("text", String(bg.running))}`
+    : undefined;
 
   // Left: folder and git. Right: cold, agents, jobs, context, model. Drop whole sections until the
   // line fits: git, then context; folder, cold, agents, jobs and model always stay.
@@ -507,8 +520,8 @@ const hint = (parts: (string | false | undefined)[]) => parts.filter(Boolean).jo
 
 /**
  * The dashboard's tabs, as data (tabs.ts draws them): overview (a line per area), session, usage
- * (after the first prompt), git (in a repo), agents while pi-herd lists any, and jobs while
- * pi-bash-bg reports any: their running ones, and ended ones while `e` shows them.
+ * (after the first response), git (in a repo), jobs while pi-bash-bg reports any, and agents while
+ * pi-herd lists any (last): their running ones, and ended ones while `e` shows them.
  */
 function tabData(
   pi: ExtensionAPI,
@@ -572,24 +585,18 @@ function tabData(
       : row("path", val(tilde(ctx.cwd))),
   ];
   if (model) overview.push(row("model", join([modelName, thinking, context])));
+  // Cost: this session's and its agents' (any depth, ended ones too).
+  const usd = (n: number) => `$${n.toFixed(2)}`;
+  const subs = herd?.subagents ?? { cost: 0, count: 0 };
+  const total = s.cost + subs.cost;
   if (s.responses)
     overview.push(
       row(
         "usage",
-        join([
-          `↑${fmt(s.input)} ↓${fmt(s.output)}`,
-          s.cost > 0 && `$${s.cost.toFixed(2)}`,
-          ...cache,
-        ]),
+        join([`↑${fmt(s.input)} ↓${fmt(s.output)}`, total > 0 && `${usd(total)} total`, ...cache]),
       ),
     );
   overview.push(row("session", join([...messages, `${duration(s.workingMs)} working`])));
-  // What the agent still waits on: the agents it watches and the jobs it watches running.
-  const pending = [
-    herd?.watching && plural(herd.watching, "agent"),
-    bg?.running && plural(bg.running, "job"),
-  ];
-  if (pending.some(Boolean)) overview.push(row("waiting", join(pending)));
 
   // Git: only in a git repo. The repo's URL and the folder share a line.
   const git: string[] = [];
@@ -645,7 +652,7 @@ function tabData(
     }
   }
 
-  // Session: model, messages, time, speed. Usage (after the first prompt): context, tokens, cost,
+  // Session: model, messages, time, speed. Usage (after the first response): context, tokens, cost,
   // cache.
   const session: string[] = [];
   if (model) session.push(row("model", join([modelName, thinking])));
@@ -692,23 +699,19 @@ function tabData(
         ]),
       ),
     );
-  // Cost: the total, the running or last turn's, then split like the tokens row.
-  if (s.cost > 0) {
-    const usd = (n: number) => `$${n.toFixed(2)}`;
-    const c = s.costParts;
+  // Cost: the total, this session's and its agents' when it has any, then the running or last turn's.
+  if (total > 0)
     usage.push(
       row(
         "cost",
         join([
-          `${usd(s.cost)} total`,
+          `${usd(total)} total`,
+          subs.count > 0 && `${usd(s.cost)} session`,
+          subs.count > 0 && `${usd(subs.cost)} subagents (${subs.count})`,
           `${usd(s.turnCost)} ${turnStartedAt ? "this" : "last"} turn`,
-          `input ${usd(c.input)}`,
-          `output ${usd(c.output)}`,
-          `cache ${usd(c.cacheRead)} read, ${usd(c.cacheWrite)} write`,
         ]),
       ),
     );
-  }
   if (s.lastCached) {
     const price = cold ? cacheModel.cost?.cacheWrite : cacheModel.cost?.cacheRead;
     const next = ((ctxUsage?.tokens ?? 0) * (price ?? 0)) / 1e6;
@@ -719,8 +722,9 @@ function tabData(
     { id: "overview", label: "overview", lines: overview },
     { id: "session", label: "session", lines: session },
   ];
-  if (s.userMessages) tabs.push({ id: "usage", label: "usage", lines: usage });
+  if (s.responses || total > 0) tabs.push({ id: "usage", label: "usage", lines: usage });
   if (branch) tabs.push({ id: "git", label: "git", lines: git });
+  let agentsTab: Tab | undefined; // the last tab
   if (herd && herd.live.length + herd.ended.length) {
     const list = herd.list;
     const picked = list[herd.selected];
@@ -736,19 +740,20 @@ function tabData(
     const named = (a: Agent) => [cut(a.name, 28), below(a), marks(a)].filter(Boolean).join(" ");
     const counts = (a: Agent) =>
       a.sent + a.received ? `${ICON.sent} ${a.sent} ${ICON.received} ${a.received}` : "";
-    // Columns padded to their widest cell (by display width, for the glyphs).
+    // Columns padded to their widest cell (by display width, for the glyphs) among the rows e can
+    // show, so e doesn't move them. The status has a fixed width, and the time (it grows) goes last.
     const pad = (x: string, w: number) => x + " ".repeat(Math.max(0, w - visibleWidth(x)));
-    const widest = (f: (a: Agent) => string) => Math.max(0, ...list.map((a) => visibleWidth(f(a))));
-    const [nameW, stateW, timeW, cwdW] = [
-      widest(named),
-      widest((a) => a.state),
-      widest(when),
-      Math.min(
-        32,
-        widest((a) => tilde(a.cwd)),
-      ),
-    ];
-    tabs.push({
+    const every = [...herd.live, ...herd.ended];
+    const widest = (f: (a: Agent) => string) =>
+      Math.max(0, ...every.map((a) => visibleWidth(f(a))));
+    const nameW = widest(named);
+    const stateW = 7; // working, blocked, unknown, stopped
+    const cwdW = Math.min(
+      32,
+      widest((a) => tilde(a.cwd)),
+    );
+    const countsW = widest(counts);
+    agentsTab = {
       id: "agents",
       label: herd.watching ? `agents ${herd.watching}` : "agents", // the agents it waits on
       lines: [],
@@ -762,9 +767,8 @@ function tabData(
             `   ${marker} ${val(name)}${dim([below(a), marks(a)].map((x) => x && ` ${x}`).join(""))}` +
             `${pad("", nameW - visibleWidth(named(a)))}  ` +
             `${paint(stateColor(a.state), pad(a.state, stateW))}  ` +
-            `${dim(pad(when(a), timeW))}  ` +
             `${dim(pad(cut(tilde(a.cwd), cwdW), cwdW))}  ` +
-            dim(counts(a))
+            `${countsW ? `${dim(pad(counts(a), countsW))}  ` : ""}${dim(when(a))}`
           );
         },
         keys: hint([
@@ -793,10 +797,16 @@ function tabData(
         },
         onPick: (i) => list[i]?.live && pi.events.emit("herd:attach", { id: list[i]!.id }),
       },
-    });
+    };
   }
-  if (!bg || !(bg.live.length + bg.ended.length)) return tabs;
+  if (!bg || !(bg.live.length + bg.ended.length)) return agentsTab ? [...tabs, agentsTab] : tabs;
   const cmdWidth = Math.max(10, Math.min(40, width - 42));
+  const pad = (x: string, w: number) => x + " ".repeat(Math.max(0, w - visibleWidth(x)));
+  // Over every job e can show, so e doesn't move the time.
+  const cwdW = Math.min(
+    32,
+    Math.max(0, ...[...bg.live, ...bg.ended].map((j) => tilde(j.cwd).length)),
+  );
   const selected = bg.list[bg.selected];
   tabs.push({
     id: "jobs",
@@ -815,10 +825,12 @@ function tabData(
               : j.state === "killed"
                 ? "warning"
                 : "error";
+        // The time last (it grows), as on the agents tab.
         return (
-          `   ${marker} ${val(String(j.pid).padEnd(7))}` +
-          `${paint(color, j.state.padEnd(9))}${dim(duration((j.endedAt ?? Date.now()) - j.startedAt).padEnd(8))}` +
-          `${val(cut(j.command.split("\n")[0]!.padEnd(cmdWidth), cmdWidth))}  ${dim(tilde(j.cwd))}`
+          `   ${marker} ${val(String(j.pid).padEnd(7))}${paint(color, j.state.padEnd(9))}` +
+          `${val(cut(j.command.split("\n")[0]!.padEnd(cmdWidth), cmdWidth))}  ` +
+          `${dim(pad(cut(tilde(j.cwd), cwdW), cwdW))}  ` +
+          dim(duration((j.endedAt ?? Date.now()) - j.startedAt))
         );
       },
       keys: hint([
@@ -847,7 +859,7 @@ function tabData(
       onPick: (i) => pi.events.emit("bash-bg:logs", { pid: bg.list[i]!.pid }),
     },
   });
-  return tabs;
+  return agentsTab ? [...tabs, agentsTab] : tabs;
 }
 
 type MouseEvent = { type: string; button: string; x: number; y: number; width: number };
@@ -1080,7 +1092,12 @@ export default function (pi: ExtensionAPI) {
   // pi-herd sends the agents grouped (working, other live, ended). The tab shows the top-level ones
   // (not under another listed agent), each with how many live agents are below it.
   pi.events.on("herd:update", (data) => {
-    const u = data as { agents: Agent[]; watching: number; placeholder?: string };
+    const u = data as {
+      agents: Agent[];
+      watching: number;
+      placeholder?: string;
+      subagents?: { cost: number; count: number };
+    };
     // Top level: not under another listed agent. Live ones first, then ended (while e shows them).
     const ids = new Set(u.agents.map((a) => a.id));
     const top = u.agents.filter((a) => !(a.parent && ids.has(a.parent)));
@@ -1098,6 +1115,7 @@ export default function (pi: ExtensionAPI) {
       list: [],
       below,
       watching: u.watching,
+      subagents: u.subagents ?? { cost: 0, count: 0 },
       placeholder: u.placeholder,
       selected: 0,
       top: 0,
