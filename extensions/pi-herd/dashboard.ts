@@ -1,10 +1,11 @@
 /**
- * /agents dashboard: the agents this session started or watched, as a tree with the agents they
- * started under them (ended ones too, until `e` hides them), then the other live agents. A clean
- * full-screen page: an equal margin, a title, a description, the list, and the keys pinned to the
- * bottom (the same page as pi-bash-bg's dashboard and log viewer).
- * Keys: ↑↓ (PgUp PgDn) select, enter views, x twice stops one of yours, e hides or shows ended
- * ones, esc or q closes.
+ * The agent dashboard (← on an empty prompt, /agents dashboard), in three sections: this agent;
+ * your agents (the ones this session started or watched, as a tree with the agents they started
+ * under them; ended ones once `e` shows them); other agents (every other live agent). A clean
+ * full-screen page: a margin, a title, a description, the list, and the keys pinned to the
+ * bottom.
+ * Keys: ↑↓ (PgUp PgDn) select, enter opens the agent in a popup (on this agent: closes), x twice
+ * stops one of yours, e shows or hides ended ones, esc or q closes.
  */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -30,6 +31,7 @@ export type Row = {
   parent?: string;
   mine: boolean; // below this session: it can stop it
   watched: boolean;
+  self?: boolean; // this agent
   sent: number;
   received: number;
 };
@@ -44,7 +46,7 @@ const ICON = {
 
 /**
  * Agents as a tree: each one's children (by parent) right under it, with guides (`├ └ │`). At
- * every level, stopped ones go last; otherwise the order given (the order pi-herd first listed them).
+ * every level, ended ones go last; otherwise the order given (the order pi-herd first listed them).
  */
 function tree(agents: Row[]): { a: Row; guide: string }[] {
   const ids = new Set(agents.map((a) => a.id));
@@ -53,10 +55,7 @@ function tree(agents: Row[]): { a: Row; guide: string }[] {
   const seen = new Set<string>(); // guards against a parent loop
   const walk = (parent: string, indent: string) => {
     const level = (kids.get(parent) ?? []).filter((a) => !seen.has(a.id));
-    const sorted = [
-      ...level.filter((a) => a.state !== "stopped"),
-      ...level.filter((a) => a.state === "stopped"),
-    ];
+    const sorted = [...level.filter((a) => a.live), ...level.filter((a) => !a.live)];
     sorted.forEach((a, i) => {
       const last = i === sorted.length - 1;
       seen.add(a.id);
@@ -83,37 +82,35 @@ function cut(text: string, width: number): string {
 }
 const fit = (s: string, w: number) => pad(cut(s, w), w);
 
-/** The page's margin, the same on all four sides (a row is about two columns wide). */
-const MARGIN = { rows: 1, cols: 2 };
-
-// The page (cut, MARGIN, bodyWidth, bodyRows, page, FULL_SCREEN) is kept in sync with
-// pi-bash-bg/dashboard.ts: they are separate packages, so each has its copy.
+/** The page's margin: 2 rows on top, 1 below (the keys stay low), 4 columns on each side. */
+const MARGIN = { top: 2, bottom: 1, cols: 4 };
 
 /** Body columns of a page `width` wide (less the margins). */
 const bodyWidth = (width: number) => Math.max(10, width - 2 * MARGIN.cols);
-/** Body rows of a page `height` rows tall (less the margins, the title and the keys). */
-const bodyRows = (height: number) => Math.max(1, height - 2 * MARGIN.rows - 5);
+/** Body rows of a page `height` rows tall (less the margins, the header and the keys). */
+const bodyRows = (height: number) => Math.max(1, height - MARGIN.top - MARGIN.bottom - 6);
 
 /**
- * The page: an equal margin on all four sides, and inside it a title, a dim description, the
- * body, and the keys pinned to the bottom. Every row is padded to the full width (and the page to
+ * The page: a margin (MARGIN), and inside it a title, a dim description, a rule,
+ * the body, and the keys pinned to the bottom. Every row is padded to the full width (and the page to
  * the full height), so nothing of pi's screen shows around it.
  */
 function page(
   theme: Theme,
   width: number,
   height: number,
-  head: { title: string; description: string },
+  description: string,
   body: string[],
   keys: string,
-  counter = "",
+  counter: string,
 ): string[] {
   const dim = (s: string) => theme.fg("dim", s);
   const inner = bodyWidth(width);
   const rows = bodyRows(height);
   const lines = [
-    theme.bold(theme.fg("accent", head.title)),
-    dim(head.description),
+    theme.bold(theme.fg("accent", "agents")),
+    dim(description),
+    dim("─".repeat(inner)),
     "",
     ...body.slice(0, rows),
     ...Array(Math.max(0, rows - body.length)).fill(""),
@@ -121,7 +118,7 @@ function page(
     pad(keys, inner - visibleWidth(counter)) + counter,
   ];
   const left = " ".repeat(MARGIN.cols);
-  const out = [...Array(MARGIN.rows).fill(""), ...lines.map((l) => left + fit(l, inner))];
+  const out = [...Array(MARGIN.top).fill(""), ...lines.map((l) => left + fit(l, inner))];
   while (out.length < height) out.push("");
   return out.slice(0, height).map((l) => pad(l, width));
 }
@@ -132,21 +129,24 @@ export const FULL_SCREEN: { overlay: true; overlayOptions: OverlayOptions } = {
   overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%" },
 };
 
+/** An agent's row: its tree guide (`├ `), and whether it is in `other agents`. */
+type Line = { a: Row; guide: string; other?: boolean };
+
 export class AgentsDashboard {
   private selected = 0; // the row; it follows its agent (pickedId) as rows move
   private pickedId: string | undefined;
   private top = 0;
-  private showEnded = true;
+  private showEnded = false;
   private armed = false; // x pressed once
-  // An agent's row, or a line between them (the blank line and heading before other agents).
-  private rows: ({ a: Row; guide: string } | string)[] = [];
+  // An agent's row, or a line between them (a section's title, or the blank line before it).
+  private rows: (Line | string)[] = [];
   private page = 1;
   private timer: ReturnType<typeof setInterval>;
 
   constructor(
     private tui: TUI,
     private theme: Theme,
-    private data: () => { agents: Row[]; others: Row[] },
+    private data: () => { self: Row; agents: Row[]; others: Row[] },
     private act: { attach: (id: string) => void; stop: (id: string) => void },
     private done: () => void,
   ) {
@@ -165,26 +165,40 @@ export class AgentsDashboard {
     return typeof r === "string" ? undefined : r;
   }
 
-  /** Moves the selection by `d` rows, skipping the lines between agents. */
-  private move(d: number) {
-    const step = d < 0 ? -1 : 1;
-    let i = Math.max(0, Math.min(this.rows.length - 1, this.selected + d));
-    while (this.rows[i] !== undefined && !this.at(i)) i += step;
-    if (this.at(i)) this.selected = i;
+  /** Moves the selection by `d` rows onto the nearest agent (in that direction); ↑↓ wrap around. */
+  private move(d: number, wrap = false) {
+    const agents = this.agentRows(); // never empty: this agent's row is always there
+    const [first, last] = [agents[0]!, agents.at(-1)!];
+    const to = this.selected + d;
+    if (wrap && d < 0 && this.selected === first) this.selected = last;
+    else if (wrap && d > 0 && this.selected === last) this.selected = first;
+    else
+      this.selected =
+        d < 0 ? (agents.findLast((i) => i <= to) ?? first) : (agents.find((i) => i >= to) ?? last);
     this.pickedId = this.at(this.selected)?.a.id;
     this.armed = false;
+  }
+
+  /** The indexes of the rows that are agents (not a section's title or a blank line). */
+  private agentRows() {
+    return this.rows.flatMap((r, i) => (typeof r === "string" ? [] : [i]));
   }
 
   render(width: number): string[] {
     const t = this.theme;
     const dim = (s: string) => t.fg("dim", s);
-    const { agents, others } = this.data();
+    const { self, agents, others } = this.data();
     const ended = agents.filter((a) => !a.live).length;
     const shown = tree(this.showEnded ? agents : agents.filter((a) => a.live));
+    const section = (title: string, rows: Line[]) => (rows.length ? ["", title, ...rows] : []);
     this.rows = [
-      ...shown,
-      ...(others.length ? ["", "other agents · live, not started or watched by you"] : []),
-      ...others.map((a) => ({ a, guide: "" })),
+      "this agent",
+      { a: self, guide: "" },
+      ...section("your agents", shown),
+      ...section(
+        "other agents",
+        others.map((a) => ({ a, guide: "", other: true })),
+      ),
     ];
     // Rows move (an agent ends, one starts): keep the selection on its agent; x disarms if it's gone.
     const at = this.rows.findIndex((r) => typeof r !== "string" && r.a.id === this.pickedId);
@@ -195,15 +209,17 @@ export class AgentsDashboard {
     }
 
     // Columns padded to their widest cell (by display width, for the glyphs).
-    const marks = (r: { a: Row; guide: string }) =>
-      [!r.a.mine && !r.guide && ICON.other, r.a.watched && ICON.watching].filter(Boolean).join(" ");
-    const name = (r: { a: Row; guide: string }) => r.guide + cut(r.a.name, 28);
-    const named = (r: { a: Row; guide: string }) => [name(r), marks(r)].filter(Boolean).join(" ");
+    const marks = (r: Line) =>
+      // 󱖡 only on an agent you watch but didn't start (not on other agents, or ones under it).
+      [!r.a.mine && !r.a.self && !r.other && !r.guide && ICON.other, r.a.watched && ICON.watching]
+        .filter(Boolean)
+        .join(" ");
+    const name = (r: Line) => r.guide + cut(r.a.name, 28);
+    const named = (r: Line) => [name(r), marks(r)].filter(Boolean).join(" ");
     const when = (a: Row) =>
       a.since ? duration(Date.now() - a.since) + (a.live ? "" : " ago") : ""; // others: no time
     const all = this.rows.filter((r) => typeof r !== "string");
-    const widest = (f: (r: { a: Row; guide: string }) => string) =>
-      Math.max(0, ...all.map((r) => visibleWidth(f(r))));
+    const widest = (f: (r: Line) => string) => Math.max(0, ...all.map((r) => visibleWidth(f(r))));
     const [nameW, stateW, timeW] = [
       widest(named),
       widest((r) => r.a.state),
@@ -226,8 +242,8 @@ export class AgentsDashboard {
       s === "working" ? "accent" : s === "blocked" ? "warning" : ("dim" as const);
     const line = (i: number) => {
       const r = this.rows[i]!;
-      if (typeof r === "string") return dim(r && `  ${r}`);
-      const marker = i === this.selected ? t.fg("accent", "▸") : " ";
+      if (typeof r === "string") return t.fg("muted", r); // a section's title
+      const marker = i === this.selected ? t.fg("accent", "◆") : dim("◇"); // under the title's start
       const mark = marks(r);
       return (
         `${marker} ${dim(r.guide)}${t.fg("text", cut(r.a.name, 28))}${mark ? ` ${dim(mark)}` : ""}` +
@@ -239,21 +255,23 @@ export class AgentsDashboard {
 
     const height = this.tui.terminal.rows;
     this.page = bodyRows(height);
-    this.top = Math.max(0, Math.min(this.top, this.selected), this.selected - this.page + 1);
-    const live = agents.length - ended;
-    const describe = [
-      `${live} live`,
-      ended && `${ended} ended${this.showEnded ? "" : " (hidden)"}`,
-      others.length && `${others.length} other`,
-      "the agents you started or watched, and the agents they started",
-    ].filter(Boolean);
+    // Scrolling up keeps the selected agent's section title (and the blank line above it) in view.
+    let lead = 0;
+    while (lead < 2 && typeof this.rows[this.selected - lead - 1] === "string") lead++;
+    this.top = Math.max(0, Math.min(this.top, this.selected - lead), this.selected - this.page + 1);
+    // Every agent on the page by status (ended ones too, shown or not), in a fixed order.
+    const everyone = [self, ...agents, ...others];
+    const describe = ["working", "blocked", "idle", "done", "unknown", "stopped", "exited"]
+      .map((st) => [everyone.filter((a) => a.state === st).length, st] as const)
+      .filter(([n]) => n)
+      .map(([n, st]) => `${n} ${st}`);
     const picked = this.at(this.selected)?.a;
     const keys = this.armed
       ? t.fg("warning", `press x again to stop ${picked?.name}`)
       : dim(
           [
-            this.rows.length && "↑↓ select",
-            picked?.live && "enter view",
+            "↑↓ select",
+            picked?.live && !picked.self && "enter view",
             picked?.live && picked.mine && "x stop",
             ended && (this.showEnded ? "e hide ended" : `e show ended (${ended})`),
             "esc close",
@@ -261,23 +279,16 @@ export class AgentsDashboard {
             .filter(Boolean)
             .join(" · "),
         );
+    const agentRows = this.agentRows();
     const counter =
-      this.rows.length > this.page ? dim(`${this.selected + 1}/${this.rows.length}`) : "";
-    const list = this.rows.length
-      ? []
-      : [dim("No agents yet: the ones you start or watch show here.")];
+      this.rows.length > this.page
+        ? dim(`${agentRows.indexOf(this.selected) + 1}/${agentRows.length}`)
+        : "";
+    const list: string[] = [];
     for (let i = this.top; i < Math.min(this.rows.length, this.top + this.page); i++)
       list.push(line(i));
 
-    return page(
-      t,
-      width,
-      height,
-      { title: "agents", description: describe.join(" · ") },
-      list,
-      keys,
-      counter,
-    );
+    return page(t, width, height, describe.join(" · "), list, keys, counter);
   }
 
   handleInput(data: string) {
@@ -289,10 +300,11 @@ export class AgentsDashboard {
       this.armed = !this.armed;
       return this.tui.requestRender();
     }
-    if (matchesKey(data, Key.up)) this.move(-1);
-    else if (matchesKey(data, Key.down)) this.move(1);
+    if (matchesKey(data, Key.up)) this.move(-1, true);
+    else if (matchesKey(data, Key.down)) this.move(1, true);
     else if (matchesKey(data, Key.pageUp)) this.move(-this.page);
     else if (matchesKey(data, Key.pageDown)) this.move(this.page);
+    else if (matchesKey(data, Key.enter) && picked?.self) return this.done();
     else if (matchesKey(data, Key.enter) && picked?.live) this.act.attach(picked.id);
     else if (matchesKey(data, "e")) this.showEnded = !this.showEnded;
     this.armed = false;

@@ -54,35 +54,45 @@ A new agent gets your model and thinking level unless config or the call names o
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/agents`, `/agents list [children\|cwd\|all]` | Prints agents: the ones you started (default), in this folder, or all                                                                              |
 | `/agents stop <id\|name …\|all>`               | Stops agents you started (or that they started), like `agent_stop`                                                                                 |
-| `/agents dashboard`                            | Opens the agents dashboard (below)                                                                                                                 |
+| `/agents dashboard`                            | Opens the agent dashboard (below); ← on an empty prompt does the same                                                                              |
 | `/detach`                                      | In an agent shown in a popup: closes the popup, and the agent keeps running. `ctrl+shift+q` does the same. `ctrl+b q` inside the popup also works. |
 
-While a popup shows an agent, that agent shows `ctrl+b q or /detach to close` in yellow, right-aligned above its prompt.
+**The dashboard** opens with ← on an empty prompt (or `/agents dashboard`): a full-screen page with a margin all round, a title, a line of counts by status (`2 working · 1 idle · 1 stopped`, ended agents counted even while hidden), a rule, and three sections:
 
-**The dashboard** is a full-screen page with an equal margin all round: a title, a line of counts (`2 live · 3 ended · 3 other`), then a tree of the agents you started or watched, each with the agents it started under it (`├ └ │`), to any depth, ended ones included; then, after a blank line, the other live agents (ones you didn't start or watch, from any session). At every level stopped agents go last; otherwise rows stay in the order they were started. The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter views a live agent (attaches in a herdr popup, or focuses one in your herdr session), `x` twice stops one of yours, `e` hides or shows the ended ones, Esc or `q` closes. pi-footer's `d` opens it too.
+- **this agent**, on top and selected; Enter on it closes the dashboard.
+- **your agents**: the agents you started or watched, each with the agents it started under it (`├ └ │`), to any depth. Ended ones show once `e` shows them.
+- **other agents**: every other live agent, from any session.
+
+Rows stay in the order the agents came (started or watched; other agents by when they started), with ended ones last at every level of the tree: only an agent ending moves a row. pi-footer's agents tab orders by status instead: working first.
+
+The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent in a herdr popup, `x` twice stops one of yours, `e` shows or hides the ended ones, Esc or `q` closes.
 
 ```
     agents
-    2 live · 1 ended · 1 other · the agents you started or watched, and the agents they started
+    3 working · 1 idle · 1 stopped
+    ──────────────────────────────────────────────────────
 
-    ▸ reviewer 󰅐       working  2m       ~/code/app  󱉱 1 󱉰 0
-      ├ tests          working  40s      ~/code/app
-      └ docs           stopped  1m ago   ~/code/app  󱉱 1 󱉰 1
+    this agent
+    ◆ main             working          ~/code/app
 
-      other agents · live, not started or watched by you
-      frog-thunder 󱖡   idle     20m      ~/code/lib
+    your agents
+    ◇ reviewer 󰅐       working  2m      ~/code/app  󱉱 1 󱉰 0
+    ◇ └ tests          working  40s     ~/code/app
+
+    other agents
+    ◇ frog-thunder     idle             ~/code/lib
 
 
-    ↑↓ select · enter view · x stop · e hide ended · esc close
+    ↑↓ select · e show ended (1) · esc close
 ```
 
-Viewing an agent from one shown in a popup (Enter on an agent it started, say) switches that popup to it. The popup needs the repo's herdr plugin (below). Without it, viewing an agent prints the command to attach in a terminal.
+**Popups.** Every agent opens in the repo's herdr plugin popup (below), whichever herdr session it is in. Without the plugin, opening an agent prints the command to attach in a terminal. The popup shows a dim `opening <name>…` for a moment first: it sizes the agent's pane to the popup and lets pi redraw, so the attach shows a settled screen. In a popup, the agent shows `ctrl+b q or /detach to close` as its prompt's placeholder (with pi-footer; without it, in yellow above the prompt); ← does nothing special there and `/agents dashboard` is refused. Opening one of its agents from its footer replaces what the popup shows. The popup closes by itself when the agent ends.
 
 ## Works with
 
 Optional; install any of them for the extra:
 
-- [pi-footer](../pi-footer/README.md): `󰫣 3` in the footer line while this session watches agents, a `waiting  3 agents · 2 jobs` line in the dashboard's overview, and an agents tab (↓ opens it while watches run): the live agents you started and the ones you watched, listed like background jobs in the order they were started, with how many live agents run below each (`reviewer +2`), on the tab how many it waits on (`agents 2`), messages sent and received, `󱖡` on agents you didn't start and `󰅐` on the ones you wait on. Enter views an agent, `x` twice stops one of yours, `d` opens the dashboard.
+- [pi-footer](../pi-footer/README.md): `󰫣 3` in the footer line while this session watches agents, a `waiting  3 agents · 2 jobs` line in the dashboard's overview, an agents tab (↓ opens it while watches run): the live agents you started and the ones you watched (ended ones on `e`), working ones first, with how many live agents run below each (`reviewer +2`), on the tab how many it waits on (`agents 2`), messages sent and received, `󱖡` on agents you didn't start and `󰅐` on the ones you wait on. Enter opens an agent in a popup, `x` twice stops one of yours. And the session's name on the prompt box's border.
 - [pi-working](../pi-working/README.md): `Waiting on 3 agents and 2 background jobs (1m 12s)` in the prompt's border while the agent waits.
 - [pi-content-layout](../pi-content-layout/README.md): agent messages and watch endings in its dashed frames (`agent message`, `agent watcher`; click to expand, markdown highlighted), messages in open tool calls as highlighted markdown, and tool groups that read `Started 2 agents, talked to 3 agents, stopped 2 agents`.
 - [herdr/](../../herdr/README.md) in this repo:

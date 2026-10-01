@@ -480,12 +480,14 @@ The only link to other extensions is the event bus.
   ```ts
   { agents: { id, name, state, since, live, cwd, parent, mine, watched, sent, received }[],
     watching: number, // watches running
-    waiting: number } // watches running while this agent is idle, else 0
+    waiting: number, // watches running while this agent is idle, else 0
+    placeholder?: string } // while a popup shows this agent: "ctrl+b q or /detach to close"
   ```
 
   - `agents` are this session's children and the agents it has watched (with `agent_watch`, or a
-    message with `needsReply`), and below them the agents they started, to any depth; in the
-    order pi-herd first listed them. Messages alone don't list an agent, so a started agent
+    message with `needsReply`), and below them the agents they started, to any depth; grouped
+    (working, then any other live status, then ended; in each group, by when the agent entered it:
+    `byGroup`). Messages alone don't list an agent, so a started agent
     doesn't list its parent. `parent` makes the tree; `mine` says the agent is below this one in
     it (it can be stopped from here). `name` is always set (section 2); `sent` and `received`
     count messages with that agent, kept on `globalThis` (so across `/reload`, not a restart).
@@ -504,18 +506,30 @@ The only link to other extensions is the event bus.
 - **`/agents`** (`/agents list [children|cwd|all]`): prints the agents like `/background list`
   prints jobs: `appendEntry("pi-herd-list", …)` with a framed entry renderer (never sent to the
   model). `/agents stop <id|name …|all>` stops like `agent_stop`.
-- **`/agents dashboard`** (also `herd:dashboard`, from pi-footer's `d`): a full-screen page
-  (`dashboard.ts`), the same page as pi-bash-bg's dashboard and log viewer: an equal margin all
-  round (1 row, 2 columns: a row is about two columns wide), every row padded to the full width so nothing of pi's screen shows,
-  no border. Inside: the bold title `agents`, a dim line of counts (`2 live · 3 ended · 3 other ·
-…`), the list, and the keys pinned to the bottom.
-  - The list: `herd:update`'s agents as a tree (`├ └ │`, by `parent`), ended ones included; at
-    every level stopped ones go last, otherwise pi-herd's order. Then `other agents`: every other
-    live agent, its status read every 2 s while the page is open.
-  - Keys: ↑↓ and PgUp/PgDn select, Enter views a live agent (attach, section 11), `x` twice stops
-    a live agent below this one, `e` hides or shows the ended ones, Esc or `q` closes.
-  - Inside the popup, the attached agent shows how to close it and offers `/detach` (section 11).
-    Detaching closes the popup and leaves the agent running.
+- **The agent dashboard**: ← on an empty prompt, or `/agents dashboard`. A full-screen page
+  (`dashboard.ts`): a margin of 2 rows at the top, 1 at the bottom and 4 columns on each side, every row padded to the full width so nothing of pi's screen shows, no border. Inside:
+  the bold title `agents`, a dim line of counts by status over every agent on the page (`2
+working · 1 idle · 1 stopped`; only non-zero ones; ended agents counted even while hidden), a
+  rule, the list, and the keys pinned to the bottom. Section titles start at the left edge; each
+  agent's `◇` (`◆` when selected, in accent) sits in that column, before its name. ↑↓ wrap around.
+  - **← counts only** when the prompt has the keys (pi's focused component is the editor, not a
+    selector or dialog), its text is empty, no overlay is up, and no popup shows this agent.
+    Otherwise ← is the editor's. pi-herd gets pi's TUI from its widget's factory, and adds its
+    input listener after the other extensions' (pi-footer's tabs use ← while they have the keys).
+  - Three sections: `this agent` (on top and selected; Enter on it closes the page; its status is
+    `working` while a run goes, else `idle`), `your
+agents` (`herd:update`'s agents as a tree, `├ └ │` by `parent`; ended ones once `e` shows
+    them), and `other agents` (every other live agent, its status read every 2 s while the page is
+    open). `󱖡` marks only an agent this one watches but didn't start.
+  - **Order:** first-listed (the order pi-herd first listed them), ended ones last at every level
+    of the tree; other agents by when they started, oldest first. Only an agent ending moves a row
+    (to the end of its level). (`herd:update` sends the agents grouped instead, for pi-footer: working, then any
+    other live status, then ended; in each group, by when the agent entered it, so a newcomer goes
+    last. pi-herd keeps those times, `byGroup`.)
+  - Keys: ↑↓ and PgUp/PgDn select, Enter opens a live agent in a popup (section 11), `x` twice
+    stops a live agent below this one, `e` shows or hides the ended ones, Esc or `q` closes.
+  - In a popup, ← does nothing special and `/agents dashboard` is refused: "Close the popup first
+    (ctrl+b q or /detach)."
 - **In other extensions.** Both read `herd:update` next to pi-bash-bg's `bash-bg:update`.
   - **pi-working**: one label in the prompt box's border while the agent is idle and waiting:
     - `Waiting on 3 agents and 2 background jobs (1m 12s)`
@@ -526,30 +540,35 @@ job (2m)`
   - **pi-footer**, mirroring its jobs piece and `jobs` tab:
     - **Footer line:** `󰫣 3` (md-star_four_points_outline, the number of watches running) sits
       before the jobs count `󰦖 2`, so agents come first. Like the jobs count, it is never dropped on
-      narrow terminals. A click on it opens the dashboard at the `agents` tab, and so does ↓ while
-      watches run.
-    - **`agents` tab:** present while `herd:update` lists a live top-level agent (one not
-      under another listed agent), placed before the `jobs` tab. Its rows look like the jobs
-      tab's. Its label counts the agents this session waits on (`agents 2`; no count when none),
-      and the jobs tab's the running jobs (`jobs 1`).
-      - **A flat list** of the live top-level agents, in the order pi-herd first listed them (the
-        order they were started or watched). A status change never moves a row.
+      narrow terminals. A click on it opens the footer's dashboard at the `agents` tab, and so does
+      ↓ while watches run.
+    - **`agents` tab:** present once `herd:update` lists any agent, placed before the `jobs` tab.
+      Its rows look like the jobs tab's. Its label counts the agents this session waits on
+      (`agents 2`; no count when none), and the jobs tab's the running jobs (`jobs 1`).
+      - **A flat list** of the live top-level agents (not under another listed agent), then, while
+        `e` shows them, the ended top-level ones, in `herd:update`'s order: working first, then
+        other live ones, then ended; in each group, by when the agent entered it.
+      - Always 3 rows tall: with none running and ended ones hidden, the first row reads `no
+running agents`, and the hint line at the bottom `e show ended (2)`.
       - Each row, in aligned columns (padded by display width): the name with its markers, status,
         time, folder, and messages sent `󱉱` and received `󱉰` (blank when none):
         `▸ frog-thunder 󱖡 󰅐  working  40s  ~/code/lib  󱉱 1 󱉰 0`
       - Markers after the name, dim: `󱖡` (md-handshake-outline) on an agent this session didn't
         start, `󰅐` (md-clock-outline) while this session waits on the agent.
-      - Time: how long in this status.
+      - Time: how long in this status (`1m ago` for an ended one).
       - Colors: only `working` (accent) and `blocked` (warning) stand out. `idle` and
         `done` are dim, and the time is always dim.
       - 3 rows at a time; it scrolls with the selection (`3/12`).
-      - Keys, with the keys on the dashboard: ↑/↓ select, Enter views a live agent
-        (`herd:attach`), `x` twice stops a live agent this session started (`herd:stop`), `d`
-        opens `/agents dashboard` (`herd:dashboard`). A click selects a row, and a click on the selected row views it. The
-        hint reads `↑↓ select · enter view · x stop · d dashboard` (`x stop` only on its own).
+      - Keys, with the keys on the dashboard: ↑/↓ select, Enter opens a live agent in a popup
+        (`herd:attach`), `x` twice stops a live agent this session started (`herd:stop`), `e`
+        shows or hides ended ones. A click selects a row, and a click on the selected row opens
+        it. The hint reads `↑↓ select · enter view · x stop · e show ended (2)`, with only what
+        applies.
       - The selection follows its agent across updates while the tab is open.
     - A live agent with live agents below it shows their count, dim, after its name:
       `reviewer +2`.
+    - **Name:** a named session shows its name at the right end of the prompt box's top border
+      (pi-footer reads `pi.getSessionName()`, so it needs no pi-herd).
     - **Overview:** one `waiting` line for what the session still waits on, agents it watches
       and jobs it watches running (`waiting  3 agents · 2 jobs`); none when nothing is
       pending. It replaces pi-footer's own `jobs` line.
@@ -565,7 +584,7 @@ agents, checked agents, stopped 2 agents`. `agent_send` and `agent_watch` count 
 herdr opens a floating window (a popup) only from a plugin pane. The repo's shared herdr plugin
 (`herdr/plugin/`, id `pi-hkandala`) has an `attach` popup pane that runs whatever shell command the
 caller passes in `POPUP_COMMAND`. herdr's popup has no close button and ignores clicks outside it.
-How to close it is shown by the started agent inside, above its prompt (below), so the pane's border title
+How to close it is shown by the started agent inside, in or above its prompt (below), so the pane's border title
 only names what it shows: `pi agent` (herdr requires a non-blank title).
 
 - **Attach.** Viewing an agent (the dashboard's Enter, pi-footer's Enter) runs:
@@ -573,14 +592,23 @@ only names what it shows: `pi agent` (herdr requires a non-blank title).
   ```bash
   herdr plugin pane open --plugin pi-hkandala --entrypoint attach \
     --env POPUP_COMMAND='M=~/.pi/agent/pi-herd/attached/$$; trap "rm -f $M" EXIT
-      printf "%s\n" <agent id> <agent socket> <agent pane> > "$M"
-      while { read -r ID; read -r S; read -r P; } < "$M" && [ -n "$P" ]; do
+      printf "%s\n" <agent id> <agent socket> <agent pane> <agent name> > "$M"
+      while { read -r ID; read -r S; read -r P; read -r N; } < "$M" && [ -n "$P" ]; do
+        printf "\033[2J\033[H\n  \033[2mopening %s…\033[0m" "$N"; set -- $(stty size)
+        { sleep 0.2; echo "{\"type\":\"terminal.release\"}"; } | HERDR_SOCKET_PATH="$S" \
+          herdr terminal session control "$P" --takeover --rows "$1" --cols "$2" >/dev/null 2>&1
         HERDR_SOCKET_PATH="$S" herdr agent attach "$P" --takeover
         { read -r NEXT; } < "$M"; [ "$NEXT" != "$ID" ] || break
       done'
   ```
 
-  The marker, `attached/<shell pid>`, names the agent the popup shows (its id, socket and pane).
+  The marker, `attached/<shell pid>`, names the agent the popup shows (its id, socket, pane and
+  name).
+  - **No resize flicker:** attaching resizes the agent's pane to the popup, and pi redraws at the
+    new size on screen. So before each attach the shell sizes the pane itself with a short
+    `terminal session control` (herdr keeps a size after the controller releases, measured on
+    0.9.3), gives pi 200 ms to redraw behind the `opening <name>…` line, and then attaches at the
+    same size.
   - **Switching:** an agent shown in a popup that views another agent (its dashboard's or
     pi-footer's Enter, say on an agent it started) doesn't open a second popup: it writes that
     agent into the marker and ends the current attach (`pkill -TERM -P <shell pid>`). The loop sees
@@ -618,8 +646,9 @@ the command leaves a marker for the started agent, and removes it again:
    by a shell that was SIGKILLed fails that check and is deleted. The popup never waits for this;
    the hint may appear a moment after the agent's screen.
 3. **While in a popup**, the started agent shows and enables:
-   - a hint in yellow, right-aligned just above the prompt (a widget, so it needs no other
-     extension): `ctrl+b q or /detach to close`
+   - `ctrl+b q or /detach to close`: with pi-footer's prompt box (it emits `footer:box`), as the
+     prompt's dim placeholder (`herd:update`'s `placeholder`); otherwise in yellow, right-aligned
+     just above the prompt (a widget)
    - `/detach`, and a hotkey (config `detachKey`, default `ctrl+shift+q`). Both run
      `pkill -TERM -P <pid>`, which ends the attach client. The shell's trap removes the marker, the
      popup closes, and the agent keeps running (measured).
@@ -628,7 +657,7 @@ the command leaves a marker for the started agent, and removes it again:
    the caller's herdr socket.
 
 Only popups opened by pi-herd leave a marker. A manual `herdr agent attach` in a terminal gets no
-hint, and `tab` agents are focused, not attached, so they don't need one. To verify during the
+hint. To verify during the
 build: the hotkey reaches pi through the attach, as other `ctrl+shift` hotkeys do inside herdr.
 
 ## 12. The shared herdr patch
@@ -764,8 +793,8 @@ working and end with the agent's last text or transcript. That is what pi-herd a
 
 ## 16. Size and scope
 
-- About 2,250 lines as formatted, in six files: `index.ts` (registry, messages, watches, spawn,
-  tools, `/agents`, about 1,430), `dashboard.ts` (the agents dashboard), `store.ts` (the shared files and agent names), `herdr.ts` (the
+- About 2,370 lines as formatted, in six files: `index.ts` (registry, messages, watches, spawn,
+  tools, `/agents`, about 1,520), `dashboard.ts` (the agents dashboard), `store.ts` (the shared files and agent names), `herdr.ts` (the
   socket API and the hidden session), `transcript.ts` (transcripts and saved sessions) and
   `text.ts` (the brief, steer texts, and their renderer). The popup plugin and the herdr patch
   live in the repo's `herdr/` folder.

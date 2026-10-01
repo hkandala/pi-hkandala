@@ -18,7 +18,17 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Container, type KeyId, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  Container,
+  isKeyRelease,
+  Key,
+  type KeyId,
+  matchesKey,
+  Spacer,
+  Text,
+  type TUI,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import { AgentsDashboard, FULL_SCREEN, type Row } from "./dashboard.ts";
 import { execFile } from "node:child_process";
 import {
@@ -71,6 +81,7 @@ import { capture, findSession, KB, lastError, lastText, transcript } from "./tra
 const MESSAGE_MAX = 32 * KB;
 const SPAWN_WAIT = 30_000;
 const BATCH_MS = 250; // messages and watch endings this close together share one steer
+const CLOSE_HINT = "ctrl+b q or /detach to close"; // in a popup
 const NO_STALL = {
   EDITOR: "true",
   VISUAL: "true",
@@ -118,6 +129,7 @@ const g = ((globalThis as { __piHerd?: unknown }).__piHerd ??= {}) as {
   watched?: Set<string>;
   ended?: Map<string, { at: number; stopped: boolean }>;
   since?: Map<string, number>; // when each followed agent's status last changed (for the footer)
+  grouped?: Map<string, { group: number; at: number }>; // when each listed agent entered its group
   herdr?: boolean;
   toolsOff?: boolean; // this process removed the agent tools (a session where pi-herd is off)
 };
@@ -173,8 +185,11 @@ export default function (pi: ExtensionAPI) {
   let watchers: FSWatcher[] = [];
   let warned = false;
   let popupPid: number | undefined; // the popup shell showing this agent
+  let tui: TUI | undefined; // pi's TUI, from the widget (for ← on an empty prompt)
+  let boxed = false; // pi-footer's prompt box is up: it shows the popup's hint as its placeholder
+  let stopInput: (() => void) | undefined;
   let lastUpdate = "";
-  let rows: Row[] = []; // herd:update's agents, for /agents dashboard
+  let rows: Row[] = []; // the listed agents in first-listed order, for the dashboard
   let dashboard: (() => void) | undefined; // redraws the open dashboard
   const waiters = new Set<() => void>(); // agent_start waits for a registration
   /** herdr status of children and watched agents, from one event subscription each. */
@@ -182,6 +197,26 @@ export default function (pi: ExtensionAPI) {
     string,
     { agent: Agent; status: Status; since: number; stop: () => void }
   >();
+
+  /**
+   * herd:update's order (pi-footer's agents tab): working, then any other live status, then ended;
+   * in each group, by when the agent entered it (a newcomer goes last; g.grouped keeps the times).
+   */
+  const byGroup = (list: Row[]) => {
+    const entered = (g.grouped ??= new Map());
+    const group = (st: string) =>
+      st === "working" ? 0 : st === "stopped" || st === "exited" ? 2 : 1;
+    const now = Date.now();
+    for (const a of list)
+      // A new follow starts `unknown` (after /reload too): that isn't a move between groups.
+      if (
+        !(a.state === "unknown" && entered.has(a.id)) &&
+        entered.get(a.id)?.group !== group(a.state)
+      )
+        entered.set(a.id, { group: group(a.state), at: now });
+    const key = (a: Row) => entered.get(a.id)!;
+    return [...list].sort((x, y) => key(x).group - key(y).group || key(x).at - key(y).at);
+  };
 
   /** A new session's state (not on /reload, which keeps it). */
   const reset = () =>
@@ -193,6 +228,7 @@ export default function (pi: ExtensionAPI) {
       listed: new Map(),
       watched: new Set(),
       since: new Map(),
+      grouped: new Map(),
     });
   const watches = () => (g.watches ??= new Map());
   const counts = () => (g.counts ??= new Map());
@@ -261,32 +297,35 @@ export default function (pi: ExtensionAPI) {
       }
     for (const a of live.values()) if (!follows.has(a.id)) follow(a);
     const n = [...watches().values()].filter((w) => !w.ending).length;
+    // In first-listed order for the dashboard; herd:update sends them grouped (pi-footer's order).
+    rows = [...listed().values()].map((a) => {
+      const f = follows.get(a.id);
+      const e = ended().get(a.id);
+      return {
+        id: a.id,
+        name: label(a),
+        // herdr's status while it is live; once it ended, stopped or exited.
+        state: e ? (e.stopped ? "stopped" : "exited") : (f?.status ?? "unknown"),
+        since: e?.at ?? f?.since ?? a.startedAt,
+        live: !e,
+        cwd: a.cwd,
+        parent: a.parent,
+        mine: below(a, listed()), // started by this agent, at any depth
+        watched: watches().has(a.id),
+        sent: counts().get(a.id)?.sent ?? 0,
+        received: counts().get(a.id)?.received ?? 0,
+      };
+    });
     const update = {
-      agents: [...listed().values()].map((a) => {
-        const f = follows.get(a.id);
-        const e = ended().get(a.id);
-        return {
-          id: a.id,
-          name: label(a),
-          // herdr's status while it is live; once it ended, stopped or exited.
-          state: e ? (e.stopped ? "stopped" : "exited") : (f?.status ?? "unknown"),
-          since: e?.at ?? f?.since ?? a.startedAt,
-          live: !e,
-          cwd: a.cwd,
-          parent: a.parent,
-          mine: below(a, listed()), // started by this agent, at any depth
-          watched: watches().has(a.id),
-          sent: counts().get(a.id)?.sent ?? 0,
-          received: counts().get(a.id)?.received ?? 0,
-        };
-      }),
+      agents: byGroup(rows),
       watching: n,
       waiting: busy ? 0 : n,
+      // While a popup shows this agent: pi-footer's prompt box shows it as its placeholder.
+      placeholder: inPopup() ? CLOSE_HINT : undefined,
     };
     const json = JSON.stringify(update);
     if (json !== lastUpdate) pi.events.emit("herd:update", update);
     lastUpdate = json;
-    rows = update.agents;
     dashboard?.();
     // Working while watches run, also during the turn (herdr publishes idle when the turn settles,
     // before this could say otherwise) and while an ending waits for its steer (watches().size
@@ -596,19 +635,22 @@ export default function (pi: ExtensionAPI) {
       if (!alive(pid)) rm(join(ATTACHED, f));
       else if (markerAgent(join(ATTACHED, f)) === me.id) popupPid = pid;
     }
-    // Right-aligned above the prompt, in the margin pi-footer's box uses.
-    ctx.ui.setWidget(
-      "pi-herd",
-      popupPid
-        ? (_tui, theme) => ({
-            invalidate() {},
-            render: (width: number) => {
-              const hint = theme.fg("warning", "ctrl+b q or /detach to close");
-              return [" ".repeat(Math.max(0, width - visibleWidth(hint) - 3)) + hint];
-            },
-          })
-        : undefined,
-    );
+    refresh(); // the placeholder
+    tui?.requestRender();
+  };
+  /** A popup shows this agent (its shell is alive: a SIGKILLed one leaves its marker behind). */
+  const inPopup = () => !!popupPid && alive(popupPid);
+  /** ← on an empty prompt opens the dashboard: only when the prompt has the keys, outside a popup. */
+  const onKey = (data: string) => {
+    if (isKeyRelease(data) || !matchesKey(data, Key.left) || !tui || tui.hasOverlay()) return;
+    if (inPopup()) return;
+    // Not a selector or another dialog (getFocusedComponent: on pi's TUI, not in its type).
+    const focused = (
+      tui as { getFocusedComponent?: () => { getText?: () => string } | null }
+    ).getFocusedComponent?.();
+    if (typeof focused?.getText !== "function" || focused.getText() !== "") return;
+    void openDashboard();
+    return { consume: true };
   };
   /** A marker's first line: the agent the popup shows. */
   const markerAgent = (path: string) => {
@@ -619,8 +661,7 @@ export default function (pi: ExtensionAPI) {
     }
   };
   const detach = () => {
-    if (!popupPid || !alive(popupPid))
-      return ctx?.ui.notify("Not shown in a pi-herd popup.", "info");
+    if (!inPopup()) return ctx?.ui.notify("Not shown in a pi-herd popup.", "info");
     execFile("pkill", ["-TERM", "-P", String(popupPid)], () => {});
   };
 
@@ -712,16 +753,16 @@ export default function (pi: ExtensionAPI) {
 
   /**
    * Views an agent: in a popup showing this agent, that popup switches to it (the marker names it,
-   * and ending the current attach makes the popup's loop attach it); an agent in this herdr
-   * session is focused; any other opens a popup.
+   * and ending the current attach makes the popup's loop attach it); otherwise it opens a popup,
+   * whichever herdr session the agent is in.
    */
   const attach = async (a: Agent) => {
     if (!ctx || !me) return;
-    if (popupPid && alive(popupPid)) {
+    if (inPopup()) {
       try {
         writeFileSync(
           join(ATTACHED, String(popupPid)),
-          `${a.id}\n${a.herdr.socket}\n${a.herdr.pane}\n`,
+          `${a.id}\n${a.herdr.socket}\n${a.herdr.pane}\n${label(a)}\n`,
         );
       } catch {
         return ctx.ui.notify("Can't switch the popup to that agent.", "warning");
@@ -729,16 +770,18 @@ export default function (pi: ExtensionAPI) {
       execFile("pkill", ["-TERM", "-P", String(popupPid)], () => {});
       return;
     }
-    if (a.herdr.socket === me.herdr.socket)
-      return rpc(socket, "pane.focus", { pane_id: a.herdr.pane }).catch((err) =>
-        ctx?.ui.notify(`herdr: ${err.message}`, "error"),
-      );
     // The shell attaches to the agent its marker names, again after a switch (a new agent there);
-    // when an attach ends any other way (detach, the agent exits), the popup closes.
+    // when an attach ends any other way (detach, the agent exits), the popup closes. Before each
+    // attach it sizes the agent's pane to the popup (herdr keeps the size after a release) and
+    // gives pi 200 ms to redraw, behind an "opening …" line: the attach then shows a settled
+    // screen instead of a redraw at the new size.
     const command =
       `M=${q(ATTACHED)}/$$; trap 'rm -f "$M"' EXIT; ` +
-      `printf '%s\\n' ${q(a.id)} ${q(a.herdr.socket)} ${q(a.herdr.pane)} > "$M"; ` +
-      `while { read -r ID; read -r S; read -r P; } < "$M" && [ -n "$P" ]; do ` +
+      `printf '%s\\n' ${q(a.id)} ${q(a.herdr.socket)} ${q(a.herdr.pane)} ${q(label(a))} > "$M"; ` +
+      `while { read -r ID; read -r S; read -r P; read -r N; } < "$M" && [ -n "$P" ]; do ` +
+      `printf '\\033[2J\\033[H\\n  \\033[2mopening %s…\\033[0m' "$N"; set -- $(stty size); ` +
+      `{ sleep 0.2; echo '{"type":"terminal.release"}'; } | HERDR_SOCKET_PATH="$S" ` +
+      `herdr terminal session control "$P" --takeover --rows "$1" --cols "$2" >/dev/null 2>&1; ` +
       `HERDR_SOCKET_PATH="$S" herdr agent attach "$P" --takeover; ` +
       `{ read -r NEXT; } < "$M"; [ "$NEXT" != "$ID" ] || break; done`;
     try {
@@ -800,6 +843,8 @@ export default function (pi: ExtensionAPI) {
   /** The /agents dashboard, over the whole screen until esc. */
   const openDashboard = async () => {
     if (!ctx || ctx.mode !== "tui" || !me || dashboard) return;
+    if (inPopup()) return ctx.ui.notify(`Close the popup first: ${CLOSE_HINT}.`, "info");
+    dashboard = () => {}; // open: a second ← during the first read below does nothing
     // Other sessions' live agents aren't followed: their status is read every 2 s while open.
     const statuses = new Map<string, Status>();
     const others = () => liveAgents().filter((a) => a.id !== me?.id && !listed().has(a.id));
@@ -814,21 +859,37 @@ export default function (pi: ExtensionAPI) {
       dashboard?.();
     };
     const timer = setInterval(poll, 2000);
-    void poll();
     try {
+      // The first read before the page shows (at most 300 ms): otherwise it opens with them all
+      // `unknown`, and the counts and statuses change a moment later.
+      await Promise.race([poll(), new Promise((r) => setTimeout(r, 300))]);
       await ctx.ui.custom<void>((tui, theme, _kb, done) => {
         dashboard = () => tui.requestRender();
         return new AgentsDashboard(
           tui,
           theme,
           () => ({
+            self: {
+              id: me!.id,
+              name: label(me!),
+              state: busy ? "working" : "idle",
+              since: 0,
+              live: true,
+              cwd: me!.cwd,
+              mine: false,
+              watched: false,
+              self: true,
+              sent: 0,
+              received: 0,
+            },
             agents: rows,
-            others: others().map((a) => {
-              const s = statuses.get(a.id);
-              return {
+            // Oldest first, like the agents above (liveAgents() is newest first).
+            others: others()
+              .reverse()
+              .map((a) => ({
                 id: a.id,
                 name: label(a),
-                state: s ?? "unknown",
+                state: statuses.get(a.id) ?? "unknown",
                 since: 0, // not followed: no time in this status
                 live: true,
                 cwd: a.cwd,
@@ -836,8 +897,7 @@ export default function (pi: ExtensionAPI) {
                 watched: false,
                 sent: counts().get(a.id)?.sent ?? 0,
                 received: counts().get(a.id)?.received ?? 0,
-              };
-            }),
+              })),
           }),
           { attach: attachId, stop: stopId },
           done,
@@ -1309,8 +1369,8 @@ export default function (pi: ExtensionAPI) {
     handler: () => detach(),
   });
 
+  pi.events.on("footer:box", () => (boxed = true));
   // From pi-footer's agents tab.
-  pi.events.on("herd:dashboard", () => void openDashboard());
   pi.events.on("herd:attach", (data) => attachId((data as { id: string }).id));
   pi.events.on("herd:stop", (data) => stopId((data as { id: string }).id));
 
@@ -1363,6 +1423,24 @@ export default function (pi: ExtensionAPI) {
     watchDir(join(MESSAGES, id), () => scan(), BATCH_MS);
     watchDir(AGENTS, onAgents);
     watchDir(ATTACHED, onAttached);
+    // Right-aligned above the prompt while a popup shows this agent; it also hands over pi's TUI
+    // (taken once per session: after pi's TUI-mode switch in /settings, /reload brings ← back).
+    c.ui.setWidget("pi-herd", (t, theme) => {
+      tui = t;
+      return {
+        invalidate() {},
+        render: (width: number) => {
+          if (!inPopup() || boxed) return []; // pi-footer's box shows it as the placeholder
+          const hint = theme.fg("warning", CLOSE_HINT);
+          return [" ".repeat(Math.max(0, width - visibleWidth(hint) - 3)) + hint];
+        },
+      };
+    });
+    // After the other extensions' listeners (pi-footer's tabs use ← while they have the keys).
+    // That holds while they register synchronously in session_start, as pi-footer does.
+    setTimeout(() => {
+      if (me?.id === id) stopInput = c.ui.onTerminalInput(onKey);
+    });
     // A crashed parent leaves its record, and fs.watch can't see a process die.
     if (parentId) parentTimer = setInterval(() => parentAlive() || die(), 2000);
     scan();
@@ -1421,6 +1499,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", (event) => {
+    stopInput?.();
+    stopInput = undefined;
     for (const w of watchers) w.close();
     watchers = [];
     for (const f of follows.values()) f.stop();
