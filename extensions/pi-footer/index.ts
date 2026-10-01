@@ -731,7 +731,7 @@ function tabData(
     // Like the jobs tab: the status colored only while it needs a look, the time dim.
     const stateColor = (st: string): Color =>
       st === "working" ? "accent" : st === "blocked" ? "warning" : "dim";
-    const when = (a: Agent) => duration(Date.now() - a.since) + (a.live ? "" : " ago");
+    const when = (a: Agent) => duration(Date.now() - a.since); // plain, for every status
     // Markers after the name: another session's agent, and this session waits on it.
     const marks = (a: Agent) =>
       [!a.mine && ICON.other, a.watched && ICON.watching].filter(Boolean).join(" ");
