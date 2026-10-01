@@ -3,7 +3,8 @@
  * tab, clicks, and a steady height. What each tab shows comes from index.ts as `Tab`s.
  *
  * Keys, once focused: ←→ switch tabs, ↑↓ move in the tab's list, ↑ at its top (or on a tab
- * without one) and esc close; the list's own keys (enter, x) go to its `onKey`. Anything else
+ * without one) and esc close; the list's own keys (enter, x, e) go to its `onKey`, also while
+ * it is empty. Anything else
  * is typing: the keys go back to the prompt. Raw input includes key releases (kitty protocol):
  * they're skipped, or every press would count twice.
  */
@@ -39,6 +40,7 @@ export type Tab = {
     length: number;
     row: (i: number, marker: string) => string;
     keys: string; // hint while focused
+    empty?: string; // the row shown while the list is empty (its keys stay on the hint line)
     note?: string; // replaces the hint (e.g. "press x again to kill")
     onKey?: (data: string, i: number) => boolean; // the list's own keys; true = handled
     onPick?: (i: number) => void; // a click on the selected row
@@ -119,13 +121,17 @@ export class Tabs {
       const out = [...t.lines];
       const list = t.list;
       if (!list) return out;
+      const start = out.length;
       for (let i = list.sel.top; i < Math.min(list.length, list.sel.top + PAGE); i++) {
         const marker = this.focus && i === list.sel.selected ? paint("accent", "▸") : " ";
         if (t === active) this.clicks.push({ y: 2 + out.length, x0: 0, x1: width, row: i });
         out.push(cut(list.row(i, marker), width));
       }
+      if (!list.length && list.empty) out.push(cut(`   ${dim(list.empty)}`, width));
+      while (out.length < start + PAGE) out.push(""); // a steady height, even with no rows
       const counter = list.length > PAGE ? `${list.sel.selected + 1}/${list.length}` : "";
-      const hint = list.note ?? dim([this.focus && list.keys, counter].filter(Boolean).join(" · "));
+      const keys = (this.focus || !list.length) && list.keys; // empty: also unfocused (e.g. e)
+      const hint = list.note ?? dim([keys, counter].filter(Boolean).join(" · "));
       out.push("", hint && `   ${hint}`);
       return out;
     };
@@ -163,8 +169,8 @@ export class Tabs {
     }
     if (overlay) return false; // e.g. pi-bash-bg's log viewer gets its own keys
     const active = this.active(tabs);
+    if (active.list?.onKey?.(data, active.list.sel.selected)) return true; // e works when empty
     const list = active.list?.length ? active.list : undefined;
-    if (list?.onKey?.(data, list.sel.selected)) return true;
     if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
       const i = tabs.indexOf(active) + (matchesKey(data, Key.left) ? -1 : 1);
       this.tab = tabs[(i + tabs.length) % tabs.length]!.id;

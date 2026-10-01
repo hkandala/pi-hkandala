@@ -31,7 +31,13 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { CustomEditor, estimateTokens, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import { CURSOR_MARKER, Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  CURSOR_MARKER,
+  Key,
+  matchesKey,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -110,8 +116,18 @@ type Job = {
   endedAt?: number;
   state: string;
 };
-/** This session's running pi-bash-bg jobs, and the jobs tab's selection. */
-type Bg = Sel & { list: Job[]; running: number; armed: boolean /* x pressed once */ };
+/**
+ * This session's pi-bash-bg jobs, the jobs tab's rows (running ones, then finished ones while `e`
+ * shows them), and its selection.
+ */
+type Bg = Sel & {
+  live: Job[];
+  ended: Job[];
+  showEnded: boolean;
+  list: Job[];
+  running: number;
+  armed: boolean; // x pressed once
+};
 /**
  * An agent from pi-herd's herd:update event: this session's children and the agents it watched,
  * and below them the agents they started.
@@ -130,10 +146,15 @@ type Agent = {
   live: boolean; // false: it ended this session (state stopped or exited)
 };
 /**
- * pi-herd's live top-level agents (not under another listed agent), how many live agents each has
- * below it, and the agents tab's selection.
+ * pi-herd's top-level agents (not under another listed agent), the agents tab's rows (live ones,
+ * then ended ones while `e` shows them), how many live agents each has below it, and the
+ * selection.
  */
 type Herd = Sel & {
+  placeholder?: string;
+  live: Agent[];
+  ended: Agent[];
+  showEnded: boolean;
   list: Agent[];
   below: Map<string, number>;
   watching: number;
@@ -454,10 +475,24 @@ type Rendered = {
   tabs: Tab[];
 };
 
+type Ended<T> = Sel & { live: T[]; ended: T[]; showEnded: boolean; list: T[]; armed: boolean };
+/** A tab's rows: the running ones, then the ended ones while `e` shows them. */
+const rowsOf = <T>(b: Ended<T>) => (b.showEnded ? [...b.live, ...b.ended] : b.live);
+/** `e` on the agents or jobs tab: shows or hides the ended rows, keeping the selection in range. */
+const toggleEnded = <T>(b: Ended<T>) => {
+  b.showEnded = !b.showEnded;
+  b.list = rowsOf(b);
+  move(b, b.selected, b.list.length);
+  b.armed = false;
+};
+const endedHint = <T>(b: Ended<T>) =>
+  b.ended.length ? (b.showEnded ? "e hide ended" : `e show ended (${b.ended.length})`) : "";
+const hint = (parts: (string | false | undefined)[]) => parts.filter(Boolean).join(" · ");
+
 /**
  * The dashboard's tabs, as data (tabs.ts draws them): overview (a line per area), session, usage
- * (after the first prompt), git (in a repo), agents while pi-herd reports live ones, and jobs
- * while pi-bash-bg reports running ones. `d` in those two opens pi-herd's or pi-bash-bg's dashboard.
+ * (after the first prompt), git (in a repo), agents while pi-herd lists any, and jobs while
+ * pi-bash-bg reports any: their running ones, and ended ones while `e` shows them.
  */
 function tabData(
   pi: ExtensionAPI,
@@ -670,13 +705,13 @@ function tabData(
   ];
   if (s.userMessages) tabs.push({ id: "usage", label: "usage", lines: usage });
   if (branch) tabs.push({ id: "git", label: "git", lines: git });
-  if (herd?.list.length) {
+  if (herd && herd.live.length + herd.ended.length) {
     const list = herd.list;
     const picked = list[herd.selected];
     // Like the jobs tab: the status colored only while it needs a look, the time dim.
     const stateColor = (st: string): Color =>
       st === "working" ? "accent" : st === "blocked" ? "warning" : "dim";
-    const when = (a: Agent) => duration(Date.now() - a.since);
+    const when = (a: Agent) => duration(Date.now() - a.since) + (a.live ? "" : " ago");
     // Markers after the name: another session's agent, and this session waits on it.
     const marks = (a: Agent) =>
       [!a.mine && ICON.other, a.watched && ICON.watching].filter(Boolean).join(" ");
@@ -687,7 +722,7 @@ function tabData(
       a.sent + a.received ? `${ICON.sent} ${a.sent} ${ICON.received} ${a.received}` : "";
     // Columns padded to their widest cell (by display width, for the glyphs).
     const pad = (x: string, w: number) => x + " ".repeat(Math.max(0, w - visibleWidth(x)));
-    const widest = (f: (a: Agent) => string) => Math.max(...list.map((a) => visibleWidth(f(a))));
+    const widest = (f: (a: Agent) => string) => Math.max(0, ...list.map((a) => visibleWidth(f(a))));
     const [nameW, stateW, timeW, cwdW] = [
       widest(named),
       widest((a) => a.state),
@@ -716,15 +751,23 @@ function tabData(
             dim(counts(a))
           );
         },
-        keys: `↑↓ select · enter view${picked?.mine ? " · x stop" : ""} · d dashboard`,
+        keys: hint([
+          list.length > 0 && "↑↓ select",
+          picked?.live && "enter view",
+          picked?.live && picked.mine && "x stop",
+          endedHint(herd),
+        ]),
+        empty: "no running agents",
         note: herd.armed ? paint("warning", `press x again to stop ${picked?.name}`) : undefined,
-        // enter views it; x twice stops it (started by this session); d opens pi-herd's
-        // dashboard; any other key disarms x.
+        // enter opens it in a popup; x twice stops it (started by this session); e shows or
+        // hides ended ones; any other key disarms x.
         onKey: (data, i) => {
-          const a = list[i]!;
-          if (matchesKey(data, Key.enter)) pi.events.emit("herd:attach", { id: a.id });
-          else if (matchesKey(data, "d")) pi.events.emit("herd:dashboard", {});
-          else if (matchesKey(data, "x") && a.mine) {
+          const a = list[i];
+          if (matchesKey(data, "e") && (herd.ended.length || herd.showEnded)) toggleEnded(herd);
+          else if (!a) return false;
+          else if (matchesKey(data, Key.enter)) {
+            if (a.live) pi.events.emit("herd:attach", { id: a.id });
+          } else if (matchesKey(data, "x") && a.live && a.mine) {
             if (herd.armed) pi.events.emit("herd:stop", { id: a.id });
             herd.armed = !herd.armed;
             return true;
@@ -732,16 +775,16 @@ function tabData(
           herd.armed = false;
           return true;
         },
-        onPick: (i) => pi.events.emit("herd:attach", { id: list[i]!.id }),
+        onPick: (i) => list[i]?.live && pi.events.emit("herd:attach", { id: list[i]!.id }),
       },
     });
   }
-  if (!bg?.list.length) return tabs;
+  if (!bg || !(bg.live.length + bg.ended.length)) return tabs;
   const cmdWidth = Math.max(10, Math.min(40, width - 42));
   const selected = bg.list[bg.selected];
   tabs.push({
     id: "jobs",
-    label: `jobs ${bg.list.length}`,
+    label: bg.running ? `jobs ${bg.running}` : "jobs",
     lines: [],
     list: {
       sel: bg,
@@ -762,15 +805,22 @@ function tabData(
           `${val(cut(j.command.split("\n")[0]!.padEnd(cmdWidth), cmdWidth))}  ${dim(tilde(j.cwd))}`
         );
       },
-      keys: "↑↓ select · enter logs · x kill · d dashboard",
+      keys: hint([
+        bg.list.length > 0 && "↑↓ select",
+        bg.list.length > 0 && "enter logs",
+        selected?.state === "running" && "x kill",
+        endedHint(bg),
+      ]),
+      empty: "no running jobs",
       note: bg.armed ? paint("warning", `press x again to kill ${selected?.pid}`) : undefined,
-      // enter opens the log; x twice kills; d opens pi-bash-bg's dashboard; any other key
-      // disarms x.
+      // enter opens the log; x twice kills a running one; e shows or hides finished ones; any
+      // other key disarms x.
       onKey: (data, i) => {
-        const j = bg.list[i]!;
-        if (matchesKey(data, Key.enter)) pi.events.emit("bash-bg:logs", { pid: j.pid });
-        else if (matchesKey(data, "d")) pi.events.emit("bash-bg:dashboard", {});
-        else if (matchesKey(data, "x")) {
+        const j = bg.list[i];
+        if (matchesKey(data, "e") && (bg.ended.length || bg.showEnded)) toggleEnded(bg);
+        else if (!j) return false;
+        else if (matchesKey(data, Key.enter)) pi.events.emit("bash-bg:logs", { pid: j.pid });
+        else if (matchesKey(data, "x") && j.state === "running") {
           if (bg.armed) pi.events.emit("bash-bg:kill", { pid: j.pid });
           bg.armed = !bg.armed;
           return true;
@@ -792,6 +842,8 @@ type BoxHooks = {
   clickFooter: (x: number) => void;
   clickInput: () => void;
   footerFocused: () => boolean;
+  name: () => string | undefined; // the session's, at the top border's right end
+  placeholder: () => string | undefined; // styled, in the empty prompt (pi-herd's popup hint)
 };
 
 /**
@@ -828,8 +880,26 @@ class BoxEditor extends CustomEditor {
     const rows = !this.hooks.footerFocused()
       ? text
       : text.map((l) => l.replace(CURSOR_MARKER, "").replace(inverse, "$1"));
+    // The placeholder after the cursor, in place of the empty row's trailing spaces.
+    const placeholder = this.hooks.placeholder();
+    if (placeholder && this.getText() === "" && rows[0] !== undefined) {
+      const row = rows[0].replace(/ +$/, "");
+      const free = inner - visibleWidth(row) - 1;
+      const withHint = `${row} ${cut(placeholder, free)}`;
+      if (free > 0) rows[0] = withHint + " ".repeat(Math.max(0, inner - visibleWidth(withHint)));
+    }
+    // The session name at the right end of the top border, if pi's label (on the left) leaves room.
+    let top = lines[0]!;
+    const name = this.hooks.name();
+    if (name) {
+      const label = ` ${cut(name, 32)} `;
+      // oxlint-disable-next-line no-control-regex
+      const used = visibleWidth(top.replace(/\x1b\[[0-9;]*m/g, "").replace(/─+$/, ""));
+      if (used + visibleWidth(label) + 2 <= inner)
+        top = truncateToWidth(top, inner - visibleWidth(label), "") + label;
+    }
     return [
-      b(" ╭─") + lines[0] + b("─╮ "),
+      b(" ╭─") + top + b("─╮ "),
       ...rows.map(side),
       side(" ".repeat(inner)),
       side(footer + " ".repeat(Math.max(0, inner - visibleWidth(footer)))),
@@ -991,33 +1061,53 @@ export default function (pi: ExtensionAPI) {
     requestRender();
   };
 
-  // pi-herd lists agents in the order it first saw them. The tab shows the live top-level ones
+  // pi-herd sends the agents grouped (working, other live, ended). The tab shows the top-level ones
   // (not under another listed agent), each with how many live agents are below it.
   pi.events.on("herd:update", (data) => {
-    const u = data as { agents: Agent[]; watching: number };
+    const u = data as { agents: Agent[]; watching: number; placeholder?: string };
+    // Top level: not under another listed agent. Live ones first, then ended (while e shows them).
+    const ids = new Set(u.agents.map((a) => a.id));
+    const top = u.agents.filter((a) => !(a.parent && ids.has(a.parent)));
     const live = u.agents.filter((a) => a.live);
     const byId = new Map(live.map((a) => [a.id, a]));
-    const list = live.filter((a) => !(a.parent && byId.has(a.parent)));
     const below = new Map<string, number>();
     for (const a of live)
       for (let p = a.parent, n = 0; p && byId.has(p) && n < 100; p = byId.get(p)!.parent, n++)
         below.set(p, (below.get(p) ?? 0) + 1);
     const next: Herd = {
-      list,
+      // A live agent whose listed parent ended is top-level too, until it ends with it.
+      live: live.filter((a) => !(a.parent && byId.has(a.parent))),
+      ended: top.filter((a) => !a.live),
+      showEnded: herd?.showEnded ?? false,
+      list: [],
       below,
       watching: u.watching,
+      placeholder: u.placeholder,
       selected: 0,
       top: 0,
       armed: false,
     };
+    next.list = rowsOf(next);
     reselect(herd, next, "agents", (a) => a.id);
     herd = next;
   });
 
   pi.events.on("bash-bg:update", (data) => {
     const u = data as { jobs: Job[]; running: number };
-    const list = u.jobs.filter((j) => j.state === "running"); // finished: /background dashboard
-    const next: Bg = { list, running: u.running, selected: 0, top: 0, armed: false };
+    const next: Bg = {
+      // Each group in the order its jobs entered it: started, then ended.
+      live: u.jobs.filter((j) => j.state === "running").sort((a, b) => a.startedAt - b.startedAt),
+      ended: u.jobs
+        .filter((j) => j.state !== "running")
+        .sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0)),
+      showEnded: bg?.showEnded ?? false,
+      list: [],
+      running: u.running,
+      selected: 0,
+      top: 0,
+      armed: false,
+    };
+    next.list = rowsOf(next);
     reselect(bg, next, "jobs", (j) => j.pid);
     bg = next;
   });
@@ -1103,8 +1193,11 @@ export default function (pi: ExtensionAPI) {
               requestRender();
             },
             footerFocused: () => tabs.focus,
+            name: () => pi.getSessionName(),
+            placeholder: () => herd?.placeholder && ctx.ui.theme.fg("dim", herd.placeholder),
           }),
       );
+    if (box) pi.events.emit("footer:box", {}); // pi-herd: its popup hint goes in the placeholder
     // The dashboard's keys (see tabs.ts): ↓ at the end of the prompt opens it.
     stopInput = ctx.ui.onTerminalInput((data) => {
       if (!shown.length || !tabs.input(data, shown, promptEnd, tuiHasOverlay())) {

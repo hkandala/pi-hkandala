@@ -10,7 +10,7 @@ A minimal one-line footer for pi, inside a rounded prompt box, that expands into
  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
-The box is pi's own editor (same keys, spinner, and autocomplete) drawn with rounded borders and the footer as its last row, set a column in on each side so your text lines up with the transcript's (as in [pi-content-layout](../pi-content-layout/README.md)). Set `"promptEditor": "default"` to keep pi's editor and show the footer below it. The box replaces pi's editor, so it doesn't combine with other extensions that replace the editor (e.g. vim mode).
+The box is pi's own editor (same keys, spinner, and autocomplete) drawn with rounded borders and the footer as its last row, set a column in on each side so your text lines up with the transcript's (as in [pi-content-layout](../pi-content-layout/README.md)). A named session (`/name`) shows its name at the right end of the box's top border, when pi's label on the left leaves room. With pi-herd, an agent shown in a herdr popup gets `ctrl+b q or /detach to close` as the empty prompt's dim placeholder. Set `"promptEditor": "default"` to keep pi's editor and show the footer below it. The box replaces pi's editor, so it doesn't combine with other extensions that replace the editor (e.g. vim mode).
 
 | Piece             | Shows                                                                                                                                                            |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -52,10 +52,10 @@ It has tabs, like Claude Code's dialogs: ←/→ or a click switches them, and t
 | `session`  | model, messages, times, and speed (`n/a` before the first reply)                                                                                                                                            |
 | `usage`    | after the first prompt: context, tokens, cost (total, this or last turn, and split into input, output and cache), and cache (with the next message's cost)                                                  |
 | `git`      | only in a git repo: the repo URL with the folder (`https://github.com/you/repo (~/code/repo)`), worktrees, branch and sync, last commit, and changes: `7 files · 2 created, 4 modified, 1 deleted · +42 -7` |
-| `agents`   | with [pi-herd](../pi-herd/README.md), while agents this session started or watched are live (below)                                                                                                         |
-| `jobs`     | with [pi-bash-bg](../pi-bash-bg/README.md), while jobs in this session run (below)                                                                                                                          |
+| `agents`   | with [pi-herd](../pi-herd/README.md), once this session has started or watched agents (below)                                                                                                               |
+| `jobs`     | with [pi-bash-bg](../pi-bash-bg/README.md), once this session has background jobs (below)                                                                                                                   |
 
-**Agents** (with pi-herd): the footer line shows `󰫣 3` before the jobs count while this session watches agents; it never drops on narrow terminals, and a click on it opens the agents tab. The tab (labeled with how many agents this session waits on, `agents 2`) lists the live agents this session started and the ones it has watched, in the order they were first listed, so a status change never moves a row. Each row shows, in aligned columns, the name with how many live agents run below it (dim, `reviewer +2`) and its dim markers (`󱖡` an agent this session didn't start, `󰅐` while this session waits on it), status, time, folder, and messages sent `󱉱` and received `󱉰`. Only `working` and `blocked` are colored. 3 rows at a time: ↑/↓ select, Enter views the agent (a herdr popup, or focus for an agent in this herdr session), `x` twice stops an agent this session started, and `d` opens pi-herd's `/agents dashboard` (the whole tree, ended agents too). A click selects an agent, and a click on the selected agent views it.
+**Agents** (with pi-herd): the footer line shows `󰫣 3` before the jobs count while this session watches agents; it never drops on narrow terminals, and a click on it opens the agents tab. The tab (labeled with how many agents this session waits on, `agents 2`) lists the live agents this session started and the ones it has watched (`e` shows or hides the ones that ended): working ones first, then other live ones, then ended ones, each group in the order its agents entered it (a newcomer goes last). Each row shows, in aligned columns, the name with how many live agents run below it (dim, `reviewer +2`) and its dim markers (`󱖡` an agent this session didn't start, `󰅐` while this session waits on it), status, time, folder, and messages sent `󱉱` and received `󱉰`. Only `working` and `blocked` are colored. 3 rows at a time, always 3 rows tall (when none run: `no running agents`, with `e show ended (2)` on the hint line at the bottom): ↑/↓ select, Enter opens the agent in a herdr popup (inside a popup: replaces what it shows), `x` twice stops an agent this session started, `e` shows or hides ended ones. A click selects an agent, and a click on the selected agent opens it. pi-herd's full dashboard opens with ← on an empty prompt.
 
 ```
    overview  session  usage  git  agents 2   ←→ switch · ↑ close
@@ -64,17 +64,17 @@ It has tabs, like Claude Code's dialogs: ←/→ or a click switches them, and t
      frog-thunder 󱖡 󰅐  working  3m  ~/code/lib  󱉱 1 󱉰 0
      docs              idle     1m  ~/code/app  󱉱 1 󱉰 1
 
-   ↑↓ select · enter view · x stop · d dashboard
+   ↑↓ select · enter view · x stop
 ```
 
-**Jobs** (with pi-bash-bg): the footer line shows `󰦖 2` on its right, before the context, while this session has background jobs running; it never drops on narrow terminals, and a click on it opens the jobs tab. The tab (`jobs 1`: the running count) shows the running jobs, 3 at a time: ↑/↓ select, Enter opens the job's log viewer, `x` twice kills it, and `d` opens pi-bash-bg's `/background dashboard` (finished jobs too). A click selects a job, and a click on the selected job opens its log.
+**Jobs** (with pi-bash-bg): the footer line shows `󰦖 2` on its right, before the context, while this session has background jobs running; it never drops on narrow terminals, and a click on it opens the jobs tab. The tab (`jobs 1`: the running count) shows the running jobs (`e` shows or hides finished ones), 3 at a time and always 3 rows tall (when none run: `no running jobs`, with `e show ended (2)` on the hint line at the bottom), running ones by start time, then finished ones by end time: ↑/↓ select, Enter opens the job's log viewer, `x` twice kills a running one. A click selects a job, and a click on the selected job opens its log.
 
 ```
    overview  session  usage  git  jobs 1   ←→ switch · ↑ close
 
    ▸ 48213  running  4m      npm run dev                               ~/proj
 
-   ↑↓ select · enter logs · x kill · d dashboard
+   ↑↓ select · enter logs · x kill · e show ended (2)
 ```
 
 Speed counts from each response's first token (skipping streams under a second: output arrives in bursts, so a short reply can land in one chunk), and `ttft` is the time from sending the request to that first token; both cover only responses streamed since pi started (first-token times aren't saved in the session).
