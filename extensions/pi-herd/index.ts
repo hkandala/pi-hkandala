@@ -191,6 +191,7 @@ export default function (pi: ExtensionAPI) {
   let lastUpdate = "";
   let rows: Row[] = []; // the listed agents in first-listed order, for the dashboard
   let dashboard: (() => void) | undefined; // redraws the open dashboard
+  let closeDashboard: (() => void) | undefined; // closes it (on shutdown: its timers stop)
   const waiters = new Set<() => void>(); // agent_start waits for a registration
   /** herdr status of children and watched agents, from one event subscription each. */
   const follows = new Map<
@@ -847,12 +848,13 @@ export default function (pi: ExtensionAPI) {
     dashboard = () => {}; // open: a second ← during the first read below does nothing
     // Other sessions' live agents aren't followed: their status is read every 2 s while open.
     const statuses = new Map<string, Status>();
-    const others = () => liveAgents().filter((a) => a.id !== me?.id && !listed().has(a.id));
+    // Read with the statuses, not per frame (it reads every agent's file).
+    let others: ReturnType<typeof liveAgents> = [];
     let polling = false;
     const poll = async () => {
       if (polling) return; // a slow herdr: skip, don't pile up
       polling = true;
-      const list = others();
+      const list = (others = liveAgents().filter((a) => a.id !== me?.id && !listed().has(a.id)));
       const read = await Promise.all(list.map(status));
       list.forEach((a, i) => statuses.set(a.id, read[i]!));
       polling = false;
@@ -865,6 +867,7 @@ export default function (pi: ExtensionAPI) {
       await Promise.race([poll(), new Promise((r) => setTimeout(r, 300))]);
       await ctx.ui.custom<void>((tui, theme, _kb, done) => {
         dashboard = () => tui.requestRender();
+        closeDashboard = done;
         return new AgentsDashboard(
           tui,
           theme,
@@ -884,7 +887,8 @@ export default function (pi: ExtensionAPI) {
             },
             agents: rows,
             // Oldest first, like the agents above (liveAgents() is newest first).
-            others: others()
+            others: others
+              .filter((a) => !listed().has(a.id)) // listed since the last read
               .reverse()
               .map((a) => ({
                 id: a.id,
@@ -905,7 +909,7 @@ export default function (pi: ExtensionAPI) {
       }, FULL_SCREEN);
     } finally {
       clearInterval(timer);
-      dashboard = undefined;
+      dashboard = closeDashboard = undefined;
     }
   };
 
@@ -1499,6 +1503,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", (event) => {
+    closeDashboard?.();
     stopInput?.();
     stopInput = undefined;
     for (const w of watchers) w.close();
