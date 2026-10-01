@@ -1,0 +1,31 @@
+{
+  "name": "@hkandala/pi-herd",
+  "version": "0.1.0",
+  "description": "pi agents in herdr: list, message and watch other pi sessions, start agents in herdr panes",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "files": [
+    "*.ts",
+    "README.md",
+    "docs"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "friendly-words": "1.2.1"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

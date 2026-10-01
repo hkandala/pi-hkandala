@@ -1,9 +1,9 @@
-# pi-herd spec (proposal)
+# pi-herd spec
 
 Every pi session running inside herdr registers itself as an **agent** in a shared folder. Any agent
 can list the others, check their status, message them, and watch them until they stop working. A
-message lands in the receiving session as a steer that wakes the agent if it is idle. A subagent is
-an agent that another agent started in a herdr pane and then messaged.
+message lands in the receiving session as a steer that wakes the agent if it is idle. An agent can
+start other agents in herdr panes and message them.
 
 The design in brief:
 
@@ -18,7 +18,7 @@ The design in brief:
 - **No broker, no locks, no polling.** Files are written atomically and watched with `fs.watch`,
   herdr events report status changes, and state survives `/reload` on `globalThis`.
 
-Tools: `agent_spawn`, `agent_message`, `agent_watch`, `agent_list`, `agent_status`, `agent_kill`.
+Tools: `agent_start`, `agent_send`, `agent_watch`, `agent_list`, `agent_read`, `agent_stop`.
 v1 supports pi only.
 
 **herdr only.** pi-herd does nothing unless pi runs inside a herdr pane:
@@ -67,7 +67,7 @@ watched.
 | field     | meaning                                                                                                                                                            |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `name`    | pi's session name, from `--name` or `/name`. Optional. Updated on `session_info_changed`.                                                                          |
-| `parent`  | set when `agent_spawn` started this agent (from `PI_HERD_PARENT`)                                                                                                  |
+| `parent`  | set when `agent_start` started this agent (from `PI_HERD_PARENT`)                                                                                                  |
 | `herdr`   | from the agent's own `HERDR_SOCKET_PATH` and `HERDR_PANE_ID`. Every herdr command aimed at this agent goes to that socket: status, events, capture, attach, close. |
 | `session` | the pi session file (`ctx.sessionManager.getSessionFile()`). Absent with `--no-session`. Other agents read it for transcripts (section 8).                         |
 
@@ -85,11 +85,17 @@ watched.
 ## 2. Identity
 
 - **The id is the identity.**
-- **The name is optional.** A spawned agent gets its name from `agent_spawn` (passed to pi as
-  `--name`). A root session has one only if the user named it.
+- **The name is optional in the record.** A created agent gets its name from `agent_start`
+  (passed to pi as `--name`). A root session has one only if the user named it.
+- **Every agent still shows a name.** Without one, it is two words derived from the session id:
+  two nouns from [friendly-words](https://github.com/glitchdotcom/friendly-words) (1.2.1, pinned:
+  later versions pull in a web server), picked by the first 8 bytes of the id's SHA-256, joined with
+  a hyphen (`frog-thunder`). It is the same every time for that session, so it is never stored;
+  it is worked out wherever a name shows (lists, the footer tab, messages, tab labels) and tools
+  accept it as an address. A later `--name` or `/name` wins.
 - **Names as addresses.** Tools also accept a name. If more than one live agent matches, the call
   fails and lists them with their ids.
-- **Spawn names must be unique** among live agents. Otherwise `agent_spawn` fails, so the caller
+- **Created names must be unique** among live agents' names. Otherwise `agent_start` fails, so the caller
   picks another name.
 - **Session switches.** `/new`, `/resume` and `/fork` end one agent and start another: the old
   record is deleted and the new id registers. `PI_HERD_PARENT` stays in the env, so a spawned agent
@@ -100,12 +106,12 @@ watched.
 An agent's status is herdr's status for its pane, read on the agent's socket (`herdr agent get`,
 and `pane.agent_status_changed` events). pi-herd adds no status logic.
 
-| herdr status                           | meaning for pi-herd                                                                                                                                       |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `working`                              | a turn is running, **or**, with the shared patch (section 12), pending work that will wake the agent: running background jobs, or watches on other agents |
-| `idle` / `done`                        | nothing is running and nothing pending (`done` is idle that the user hasn't looked at)                                                                    |
-| `blocked`                              | reported by an extension through `herdr:blocked`                                                                                                          |
-| no pi in the pane, or the pane is gone | the agent has exited                                                                                                                                      |
+| herdr status                         | meaning for pi-herd                                                                                                                                       |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `working`                            | a turn is running, **or**, with the shared patch (section 12), pending work that will wake the agent: running background jobs, or watches on other agents |
+| `idle` / `done`                      | nothing is running and nothing pending (`done` is idle that the user hasn't looked at)                                                                    |
+| `blocked`                            | reported by an extension through `herdr:blocked`                                                                                                          |
+| the pane is gone, or the agent's pid | the agent has exited                                                                                                                                      |
 
 - **Without the patch**, `working` covers only a running turn, so a watch ends as soon as the
   recipient's turn settles, even when it still waits on its jobs. Everything else works the same.
@@ -118,24 +124,35 @@ and `pane.agent_status_changed` events). pi-herd adds no status logic.
 
 ```json
 { "id": "1790…-a1b2", "from": { "id": "…", "name": "main" }, "text": "…",
-  "replyTo": null, "sentAt": 1790… }
+  "replyTo": null, "needsReply": true, "delivery": "steer", "sentAt": 1790… }
 ```
 
-- **No reply is required.** A message can be fire-and-forget: a status update or an FYI.
+- **The `message` param** of `agent_send` and `agent_start` is an object:
+  `{ text, needsReply?, delivery? }`.
+- **`needsReply`** says the sender wants an answer. It defaults to `false` for `agent_send` and
+  `true` for `agent_start` (a new task almost always wants one).
+  - `true`: the sender watches the recipient (section 6), and the recipient's copy says a reply is
+    expected and how to send it.
+  - `false`: no watch, and the copy says "No reply expected." The brief tells agents to reply only
+    when a reply is expected, so FYIs and status updates don't start a conversation.
+- **`delivery`** says when the message reaches the model:
+  - `steer` (default): at its next tool call, or at once if it is idle.
+  - `followUp`: after its current turn ends (pi's `deliverAs: "followUp"`).
+  - `immediate`: the recipient aborts its current turn (`ctx.abort()`), and the message is
+    delivered once pi has settled. For stopping an agent that is doing something wrong.
 - **Replying.** A reply is a new message whose `replyTo` holds the id of the message it answers.
   The original of a reply to you is at `messages/<replier's id>/<replyTo>.json`, and delivery prints
   that path. An agent juggling many conversations can always read back what a reply refers to.
-- **Size.** `text` is capped at 32 KB. Anything larger is refused with "write it to a file and send
+- **Size.** A message is capped at 32 KB. Anything larger is refused with "write it to a file and send
   the path".
 
-**Sending** (`agent_message({ to, text, replyTo?, watch? })`):
+**Sending** (`agent_send({ to, message, replyTo? })`):
 
 1. Resolve each `to`, which is one id or name, or a list of them. Every target must be a live agent
    other than yourself. If any target fails, nothing is sent, and the error lists the live agents.
 2. Write one message file per recipient.
-3. Start a watch on each recipient if `watch` is on (section 6). It defaults to **on for your own
-   children** and off for everyone else, and off for replies.
-4. Return the message ids. There are no read receipts.
+3. With `needsReply`, start a watch on each recipient (section 6).
+4. Return the message ids.
 
 **Receiving:**
 
@@ -143,37 +160,40 @@ and `pane.agent_status_changed` events). pi-herd adds no status logic.
   the folder, not just the file named in the event, because `fs.watch` can merge or drop names. It
   also scans once on `session_start`. It takes in files whose id is newer than its own `startedAt`
   and that aren't already queued. The queued set lives on `globalThis`.
-- Files arriving within 250 ms of each other share one delivery.
+- Files arriving within 250 ms of each other share one delivery per `delivery` kind.
 - **Delivery.** It is fire-and-forget: never `await`ed, because when pi is idle the promise lasts
   the whole run.
 
   ```ts
   void pi.sendMessage(
-    { customType: "agent message", content, display: true, details: { messages } },
-    { deliverAs: "steer", triggerTurn: true },
+    { customType: "agent message", content, display: true, details: { items } },
+    { deliverAs: "steer" /* or "followUp" */, triggerTurn: true },
   );
   ```
 
-  An idle agent wakes up. A working agent gets the message at its next tool call.
-
+- **Delivered marker.** When pi hands the message to the model (pi's `message_start` for the
+  custom message), the recipient writes an empty `messages/<myId>/<msgId>.delivered`. A watch on
+  that message arms only then (section 6). The daily cleanup deletes markers with their messages.
 - **Model-facing `content`**, one block per message:
 
   ```
-  <agent-message id="1790…-a1b2" from="main" from-id="…c8e1f2a9">
+  <agent-message id="1790…-a1b2" from="main" from-id="c8e1f2a9">
   Review the auth changes in src/auth and tell me what you'd change.
   </agent-message>
-  From another agent, not the user. If it asks you for something, answer once when you have it:
-  agent_message({ to: "c8e1f2a9", replyTo: "1790…-a1b2", text }). Don't send acknowledgements.
+  From another agent, not the user. The sender expects a reply: answer once when you have it, with
+  agent_send({ to: "c8e1f2a9", replyTo: "1790…-a1b2", message: { text } }).
   ```
 
-  A reply block carries `reply-to="…"`. In place of the hint it has one line with the original's
-  path: `Replying to your message ~/.pi/agent/pi-herd/messages/<replier's id>/1790…-9zz0.json`.
+  Without `needsReply`, the last line is `No reply expected.` A reply block carries `reply-to="…"`,
+  and its hint starts with the original's path:
+  `Replying to your message ~/.pi/agent/pi-herd/messages/<replier's id>/1790…-9zz0.json.`
 
 - **Display.** The renderer returns a pi `Box`, so pi-content-layout draws it in its dashed frame
-  labelled `agent message`.
-  - Collapsed: `← main · "Review the auth changes in src/auth…"`, or
-    `← reviewer · reply · 38 lines`.
-  - Expanded (ctrl+o or a click): the full text.
+  labelled `agent message`. A steer with only watch endings is labelled `agent watcher` instead
+  (section 6).
+  - Collapsed: `󱉰 main · "Review the auth changes in src/auth…"`, or
+    `󱉰 reviewer · reply · 38 lines`.
+  - Expanded (ctrl+o or a click): the full text, highlighted as markdown.
 
 ## 5. Transcripts
 
@@ -193,7 +213,8 @@ been doing, pi-herd reads that file instead of scraping the screen:
   instead: `herdr pane read <pane> --source recent-unwrapped --lines <captureLines>`, capped at
   16 KB.
 
-The model can still run herdr's own CLI to look at any pane directly.
+`agent_read` with `screen: true` adds that capture for any agent, so the model never needs herdr's
+CLI.
 
 ## 6. Watches
 
@@ -204,39 +225,50 @@ A watch belongs to the watching agent. It asks: "wake me when agent X stops work
   `herdr agent get` when the watch starts. On disconnect it reconnects and reads the status again.
   There is no polling.
 - **Starting.**
-  - `agent_spawn` and `agent_message` start a watch right after sending (section 4 has the
-    defaults).
+  - `agent_start` and `agent_send` start a watch right after sending, when `needsReply` is
+    set (section 4).
   - `agent_watch({ to })` starts one on its own. If X isn't `working` at that moment, it starts no
     watch and returns X's status and last text.
-  - There is **one watch per target**. A second call keeps it and restarts its deadline.
+  - There is **one watch per target**. A second call keeps it and restarts its deadline; a new
+    message makes it wait for that message's delivery again.
 - **Ending.** A watch ends with the first of these. The ending is delivered as a steer with
   `triggerTurn`, and endings within 250 ms of each other share one steer.
 
-  | event     | when                                                                                                                                           | carries                                                     |
-  | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-  | `message` | any message from X arrives, reply or not                                                                                                       | the message itself, in the same steer                       |
-  | `idle`    | X leaves `working` for `idle` or `done`                                                                                                        | X's last text and how long it worked                        |
-  | `blocked` | X leaves `working` for `blocked`                                                                                                               | X's status                                                  |
-  | `exited`  | X's pane closes, or no pi runs in it anymore. The inbox is scanned once first, so a final message still in flight ends the watch as `message`. | —                                                           |
-  | `timeout` | the deadline passes first                                                                                                                      | X's status and its transcript (section 5). X keeps running. |
+  | event     | when                                                                                                                                           | carries                                                                                                                         |
+  | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+  | `message` | any message from X arrives, reply or not                                                                                                       | the message itself, in the same steer                                                                                           |
+  | `idle`    | X leaves `working` for `idle` or `done`, after the watch is armed                                                                              | X's last text (4 KB) and how long it worked; the error if its last turn failed; its last 5 transcript entries if it has no text |
+  | `blocked` | X is `blocked`                                                                                                                                 | what X's pane shows (the dialog)                                                                                                |
+  | `exited`  | X's pane closes, or no pi runs in it anymore. The inbox is scanned once first, so a final message still in flight ends the watch as `message`. | X's last text                                                                                                                   |
+  | `timeout` | the deadline passes first                                                                                                                      | X's status and its transcript (section 5). X keeps running.                                                                     |
 
-- **Waiting for X to start.** Right after a message is sent, X may still be idle for a moment before
-  it takes the message in. So when X isn't `working` at the start of a message watch, the watch
-  first waits for X to become `working`, then ends on the next change away from it. An X that is
-  `blocked` at the start ends the watch at once with `blocked`.
+- **Arming: waiting for delivery.** A watch on a message must not end on the turn X was already
+  in: with `followUp`, X finishes that turn first; with `immediate`, the abort makes X idle for a
+  moment. So a message watch arms only once X's delivered marker for that message exists (section
+  4), and then ends on the next change away from `working`.
+  - If X's turn is already over when the marker is seen (a quick answer), herdr says idle; pi-herd
+    checks again a second later, and if X is still idle the watch ends `idle`.
+  - A plain `agent_watch` is armed from the start (X is working).
+  - An X that is `blocked` ends the watch at once with `blocked`.
 - **Timeout.**
-  - `agent_watch` takes `timeout` in minutes. `agent_spawn` and `agent_message` use config
+  - `agent_watch` takes `timeout` in minutes. `agent_start` and `agent_send` use config
     `watchTimeoutMinutes` (default 30). `0` means no timeout.
   - The deadline is absolute and lives on `globalThis`, so a `/reload` doesn't restart it.
   - A laptop sleep can make several deadlines pass at once on wake. They end together, in one steer.
-- **The watcher counts as `working`.** While the watcher is idle with watches running, pi-herd
-  emits `herdr:working { source: "pi-herd", active: true }`. With the shared patch, herdr keeps the
-  watcher at `working` and doesn't play "done". Whoever watches the watcher waits too.
-  - When a watch ending wakes an idle watcher, `active` stays `true` until the woken run's
-    `agent_start` (or 2 s), so herdr never sees a false idle.
+- **The watcher counts as `working`.** While the watcher has watches, pi-herd emits
+  `herdr:working { source: "pi-herd", active: true }`, also during its own turn. With the shared
+  patch, herdr keeps the watcher at `working` and doesn't play "done". Whoever watches the watcher
+  waits too: an agent that starts its own agent and waits on it stays `working` for its parent.
+  - During the turn too, because herdr's integration publishes idle when the turn settles, before
+    pi-herd's `agent_settled` handler runs.
+  - A watch whose ending is queued still counts until its steer is sent (endings are batched for
+    250 ms), and after that `active` stays `true` until the woken run's `agent_start` (or 2 s). So
+    herdr never sees a false idle that would end the parent's watch.
+  - An ending still being gathered (its last text, say) when `agent_stop` drops the watch isn't
+    sent.
 - **Cycles.** Two agents watching each other would both stay `working` until their timeouts. The
-  defaults avoid it: a message watches only your own children, subagents can't spawn, and replies
-  never watch. An explicit `watch: true` in both directions still waits for the timeout.
+  defaults avoid it: only `needsReply` watches, it defaults to false for `agent_send`, and replies
+  use false. `needsReply: true` in both directions still waits for the timeout.
 - **Lifetime.** Watches live on `globalThis`, so they survive `/reload`. They are dropped on any
   other `session_shutdown`, because a new session has no context for them.
 - **Model-facing endings:**
@@ -248,20 +280,33 @@ A watch belongs to the watching agent. It asks: "wake me when agent X stops work
   ```
 
   - A `message` ending is the `<agent-message>` block followed by `<agent-watch … event="message"/>`.
-  - A `timeout` ending is `<agent-watch … event="timeout" after="30m">` with the status and the
-    transcript inside.
+  - Inside an ending, as it carries them: `status:`, `<error>`, `<last-text>`, `<screen>`,
+    `<transcript>`.
 
-- **Display** is in the same `agent message` box:
-  - `✓ reviewer finished · 3m12s` (expanding shows the last text)
-  - `↩ reviewer replied · 38 lines`
-  - `⚠ reviewer is blocked`
-  - `⏱ reviewer still working after 30m` (expanding shows the transcript)
-  - `✗ reviewer exited`
+- **Display.** Endings without a message go in an `agent watcher` box (a message ending stays in
+  the `agent message` box with its message), with circle glyphs for endings and
+  md-inbox-arrow-down (`󱉰`) for anything received. Expanding shows what the ending carries, or a
+  message's full text (the line then drops its quoted first line, so the text shows once):
+  - `󰗡 reviewer finished · 3m12s` (red, `· with an error`, when its last turn failed)
+  - `󱉰 reviewer replied · 38 lines`
+  - `󰗖 reviewer is blocked`
+  - `󰗎 reviewer still working after 30m`
+  - `󰅚 reviewer exited`
 
-## 7. Spawning a subagent
+## 7. Creating or resuming an agent it started
 
-`agent_spawn({ name, task, model?, thinking?, cwd?, placement? })` is registered with sequential execution, so
-parallel calls in one message don't race on the server, the workspace, or the name check.
+`agent_start({ name?, session?, message?, model?, thinking?, cwd?, placement? })` is registered with
+sequential execution, so parallel calls in one message don't race on the server, the workspace, or
+the name check.
+
+- **New:** `name` and `message` are both required.
+- **Resume:** `session` is a saved session id (or its last characters), such as the one `agent_stop`
+  prints. `name` and `message` are optional. pi-herd finds the file in pi's sessions folder, fails
+  if that session is live, and starts `pi --session <file>` in the session's saved cwd (unless
+  `cwd` is passed). The session keeps its own name, model and thinking level unless the call names
+  them. With a `message`, it is the resumed agent's next message; with none, the agent just
+  starts, and nothing is sent or watched. It
+  becomes a child of the caller.
 
 1. **Pane.** `placement` picks where the agent runs. It defaults to config `placement`:
    - `hidden` (default): the dedicated herdr session `pi-herd`.
@@ -273,7 +318,7 @@ parallel calls in one message don't race on the server, the workspace, or the na
      - If the session's server isn't running, pi-herd starts it itself
        (`herdr --session pi-herd server`, detached), then waits up to 5 s for its socket to answer.
        The server's env is cut to `HOME USER PATH SHELL TERM LANG TMPDIR`, so nothing from the
-       parent pi (such as `PI_SESSION_FILE`) leaks into subagents. Each pane's login shell rebuilds
+       parent pi (such as `PI_SESSION_FILE`) leaks into started agents. Each pane's login shell rebuilds
        the user's normal environment.
      - The server otherwise inherits whatever the parent pi process runs under. pi-herd adds no
        platform- or launcher-specific handling. Any extra flags a launcher needs go in config
@@ -289,6 +334,7 @@ parallel calls in one message don't race on the server, the workspace, or the na
 
    The agent gets these env vars:
    - `PI_HERD_PARENT=<my id>`
+   - `PI_HERD_NAME=<its name>`, so it can tell its own name
    - `EDITOR=true VISUAL=true GIT_EDITOR=true PAGER=cat GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 CI=1`
      (the no-stall set, from orchestratr)
 
@@ -296,6 +342,8 @@ parallel calls in one message don't race on the server, the workspace, or the na
    they go on the command line instead (step 2).
 
 2. **Start.**
+   - pi-herd talks to herdr's socket API directly (`pane.send_input` with the text and `enter`,
+     which is what `herdr pane run` does), not through the CLI.
    - In a pane pi-herd created:
      `herdr pane run <pane> "exec pi --name <name> [--approve] [--model m] [--thinking t]"`.
      `exec` makes pi the pane's process, so the pane closes when pi exits. No shell is left behind,
@@ -304,16 +352,15 @@ parallel calls in one message don't race on the server, the workspace, or the na
 --name <name> …"`, without `exec`. The env applies only to pi, and the shell is still there
      when pi exits. `cd` is added only when `cwd` is passed.
    - herdr's `agent start` isn't used, because it waits on herdr's screen-based readiness.
-   - **`--approve`** only when `cwd` is inside the caller's cwd, a project the user is already
-     running pi in. Otherwise pi's own trust rules apply, and a trust dialog makes the spawn fail at
-     step 3, with the screen capture. **Verify** whether pi exposes the caller's trust decision; if
-     it does, use that instead.
+   - **`--approve`** only when `cwd` is inside the caller's cwd **and** the caller's project is
+     trusted (`ctx.isProjectTrusted()`). Otherwise pi's own trust rules apply, and a trust dialog
+     makes the spawn fail at step 3, with the screen capture.
 3. **Wait for registration.** Wait for a live record with `herdr.pane == <pane>` on that socket, for
    at most 30 s (`fs.watch` on `agents/`). That is real readiness: pi has started and every
    extension has loaded.
-4. **Task.** Send the task as a message and start a watch. The message goes through a file, so
-   nothing is typed into the terminal.
-5. **Result.** Returns `{ id, name }` and "you'll be woken when it replies or stops working; don't
+4. **Message.** Send `message` (section 4; `needsReply` defaults to `true` here), which starts a
+   watch. The message goes through a file, so nothing is typed into the terminal.
+5. **Result.** Its name and id, and "you'll be woken when it replies or stops working; don't
    poll".
 6. **Failure.** If the agent doesn't register in time, or herdr fails, the error carries the screen
    capture. A pane pi-herd created is closed. In a given pane, pi-herd stops the pi it started and
@@ -324,63 +371,74 @@ parallel calls in one message don't race on the server, the workspace, or the na
 - **Model and thinking.** Use the config defaults. When unset, inherit the caller's current model
   and thinking level. The tool description names the effective defaults, and the guidelines say to
   pass them only when the user names one.
-- **The task is the caller's own words.** pi-herd adds no report contract and no paths. If the
-  caller wants a file, it says so in the task. The last text covers the rest.
-- **Nesting.** Agents with `PI_HERD_PARENT` set don't get `agent_spawn` in v1, so there are no spawn
-  trees. They can message and watch anyone.
+- **The message is the caller's own words.** pi-herd adds no report contract and no paths.
+  If the caller wants a file, it says so in the message. The last text covers the rest.
+- **Nesting.** Every agent gets every tool, with the same rules: an agent started with
+  `agent_start` can start agents of its own, to any depth. The records' `parent` links make the
+  tree. Stopping cascades: an agent stops when the agent that
+  started it ends, so a whole subtree goes with its root.
 
 ## 8. Tools
 
-| Tool            | Params                                                 | Does                                                                                                                                                                                                                                                                                                                                                                             |
-| --------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent_spawn`   | `name, task, model?, thinking?, cwd?, placement?`      | Section 7. `placement` is `hidden`, `tab`, or a herdr pane id.                                                                                                                                                                                                                                                                                                                   |
-| `agent_message` | `to` (id or name, or a list), `text, replyTo?, watch?` | Section 4. Returns message ids.                                                                                                                                                                                                                                                                                                                                                  |
-| `agent_watch`   | `to` (id or name, or a list), `timeout?`               | Section 6. Returns at once.                                                                                                                                                                                                                                                                                                                                                      |
-| `agent_list`    | `scope?`: `children` (default), `cwd`, or `all`        | Live agents, newest first. `children` are the agents this session spawned. `cwd` is agents whose cwd is this cwd or below it. `all` is every live agent. The first line is always this agent. With no children, it adds "no children; use scope cwd or all". Each line: `4f2a91c0  reviewer  working 2m  /repo  child  watched`.                                                 |
-| `agent_status`  | `ids` (ids or names), `transcript?` (default `false`)  | Each agent's herdr status, last text (up to 1 KB), parent, cwd and pane. With `transcript: true`, it adds the agent's transcript (section 5).                                                                                                                                                                                                                                    |
-| `agent_kill`    | `ids` or `"all"`                                       | Stops agents **this session spawned**: `SIGTERM` to the agent's pid, so pi shuts down cleanly. A pane pi-herd created then closes with it (`exec`); a given pane goes back to its shell. If pi is still alive after 5 s, pi-herd closes the pane it created, or sends `SIGKILL` in a given pane. `"all"` means all of them. Other agents can't be stopped; message them instead. |
+| Tool          | Params                                                                            | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent_start` | `name?, session?, message?, model?, thinking?, cwd?, placement?`                  | Section 7. `message` is `{ text, needsReply?, delivery? }` (section 4). `placement` is `hidden`, `tab`, or a herdr pane id.                                                                                                                                                                                                                                                                                                                                                                             |
+| `agent_send`  | `to` (id or name, or a list), `message, replyTo?`                                 | Section 4. Returns message ids.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `agent_watch` | `to` (id or name, or a list), `timeout?`                                          | Section 6. Returns at once.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `agent_list`  | `scope?`: `children` (default), `cwd`, or `all`                                   | Live agents, newest first. `children` are the agents this session created, almost always what's wanted. `cwd` is agents whose cwd is this cwd or below it. `all` is every live agent, also other sessions' (rarely needed; the description says so). The first line is always this agent. With no children, it adds "no children; use scope cwd or all". Each line: `4f2a91c0  reviewer  working 2m  /repo  child  watched`.                                                                            |
+| `agent_read`  | `ids` (ids or names), `transcript?` (default `true`), `screen?` (default `false`) | Reads what each agent has been doing: its status, parent, cwd and pane, then its transcript (section 5); with `transcript: false`, only its last text (up to 1 KB). `screen: true` adds what its pane shows now (`captureLines` lines), for an agent that seems stuck or blocked.                                                                                                                                                                                                                       |
+| `agent_stop`  | `ids` or `"all"`                                                                  | Stops agents **this session created**, or that they created (any depth): `SIGTERM` to the agent's pid, so pi shuts down cleanly. A pane pi-herd created then closes with it (`exec`); a given pane goes back to its shell. If pi is still alive after 5 s, pi-herd sends `SIGKILL`. The agent's watch is dropped first, so its exit doesn't wake the caller. Prints each one's session id: `To resume it: agent_start({ session: "…" })`. `"all"` means all of them; other agents can only be messaged. |
 
 Tool descriptions are one line each. The workflow is taught once, in the system prompt brief below.
 
 ### The system prompt brief
 
-pi-herd adds one short section to the system prompt, the same way pi-ponytail adds its
-`<ponytail>` section: on `before_agent_start` it sets `event.systemPromptOptions.sections["pi-herd"]`
-to fixed text. That is a prompt section, not a full system prompt override. The text never
-changes within a session, so the prompt cache stays warm. It holds no live data (no agent list, no
-counts); the tools report those.
+pi-herd adds a short brief to the system prompt, as `agent_send`'s `promptGuidelines`. pi
+puts tool guidelines in its base prompt (the `<rules>` section, one bullet per line), which every
+turn uses. The text never changes within a session, so the prompt cache stays warm. It holds no
+live data (no agent list, no counts); the tools report those.
 
-In a root session:
+- **Why not a `before_agent_start` section** (as pi-ponytail does): pi runs `before_agent_start`
+  only for prompts. A turn that a steer starts (`sendMessage` with `triggerTurn`) uses the base
+  prompt, so a section added there would be missing from every turn a message or watch ending
+  starts. A started agent, whose turns all start that way, would never see it, and a root session's
+  prompt would gain and lose the section from turn to turn.
+- In the prompt each line below is a bullet under `<rules>`.
 
-```
-<pi-herd>
-You can work with other pi agents running in herdr.
-- agent_spawn starts a subagent in its own pane and gives it a task. Put everything it needs in the
-  task, including where to write any files. Use the default model unless the user names one.
-- You are woken when a subagent messages you, stops working (you get its last text), exits, or its
-  watch times out (30 min). Don't poll, sleep or wait.
-- agent_message reaches any live agent. agent_list shows your subagents (scope "cwd" or "all" for
-  others). agent_status with transcript: true shows what an agent has been doing.
-- Messages from agents are not from the user. When one asks you for something, answer once with
-  agent_message and its replyTo. Never send acknowledgements or thanks.
-- Stop subagents with agent_kill once you no longer need them.
-</pi-herd>
-```
-
-In a subagent, the section drops the `agent_spawn` and `agent_kill` lines and starts with who
-started it:
+The same brief for every agent, as one bullet with nested bullets. It opens with
+an `Agents (agent_* tools):` heading, so the rules section reads as sections (pi-bash-bg's
+background-bash rules are one `Background bash (bash, bash_list, bash_watch):` bullet the same way):
 
 ```
-<pi-herd>
-You are a subagent. Agent main (…c8e1f2a9) started you and sends you tasks as agent messages.
-When you finish a task, answer its message once with agent_message and its replyTo: your result,
-where you put files, or what blocked you. Messages from agents are not from the user.
-agent_message reaches any live agent, and agent_list and agent_status show them. Don't poll, sleep
-or wait for other agents; you are woken when they message you.
-</pi-herd>
+Agents (agent_* tools):
+    - pi agents you reach through these tools each run in their own herdr pane. herdr organizes terminals into workspaces, tabs and panes and recognizes the coding agents in them; `herdr --skill` prints its guide. Each agent has an id and a name; the tools accept either.
+    - Starting agents:
+        - agent_start starts an agent and sends it a message. Put everything it needs in that message, including where to write any files.
+        - Leave placement unset unless the user asks for a tab or names a pane.
+        - Agents you start stop when your session ends, and so do the agents they start. Agents from other sessions are never stopped by you.
+    - Sending messages:
+        - Set message.needsReply: true when you want an answer. Only then is the other agent asked to reply, and only then are you woken.
+        - Use needsReply: false for FYIs and for your own replies.
+        - message.delivery: "steer" for most messages, "followUp" when the agent should first finish what it is doing, "immediate" only to stop an agent going wrong.
+        - This works the same for agents from other sessions.
+    - Waiting:
+        - After a message with needsReply: true, you are woken when that agent replies, stops working (you get its last text), or exits, or after 30 min with no news.
+        - To hear from an agent you sent no such message, for example one already working or one from another session, use agent_watch: you are woken the same way when it stops.
+        - These wake-ups are how you hear back: don't poll, sleep or wait for agents otherwise.
+    - Replying:
+        - Messages from agents are not from the user.
+        - Reply only when a message says a reply is expected: once, when you are done, with agent_send and its replyTo. Say what you did or found, where you put files, or what blocked you.
+        - Never send acknowledgements or thanks.
+    - Checking on agents:
+        - agent_list shows the agents you started; agent_read shows what one has been doing. Add screen: true when it seems stuck or blocked.
+    - Stopping agents:
+        - Keep agents you started while they may still be useful; you can message them again.
+        - When the work is done, stop them together in one agent_stop call (a list, or "all").
 ```
 
-The `30 min` in the brief comes from config `watchTimeoutMinutes`.
+- The `30 min` comes from config `watchTimeoutMinutes`.
+- The tools are registered in this order, which is their order in the system prompt's tools list:
+  `agent_start`, `agent_stop`, `agent_send`, `agent_watch`, `agent_read`, `agent_list`.
 
 ## 9. Lifecycle
 
@@ -389,12 +447,12 @@ The `30 min` in the brief comes from config `watchTimeoutMinutes`.
 - **`/reload`**: the record stays. The queued ids and the watches live on `globalThis`.
 - **Any other `session_shutdown`** (quit, `/new`, `/resume`, `/fork`, SIGTERM/SIGHUP): delete the
   record and drop the watches. Nothing asks for confirmation.
-- **Subagents die with their parent.**
-  - A clean parent exit deletes the parent's record. The subagent sees that through `fs.watch` on
+- **Started agents die with their parent.**
+  - A clean parent exit deletes the parent's record. The started agent sees that through `fs.watch` on
     `agents/`.
   - A crashed or SIGKILLed parent leaves its record behind, and `fs.watch` can't see a process die.
     So a spawned agent also checks `kill(parent pid, 0)` every 2 s. This is pi-herd's only timer.
-  - Either way, the subagent sends itself `SIGTERM`, so pi shuts down cleanly. In a pane pi-herd
+  - Either way, the started agent sends itself `SIGTERM`, so pi shuts down cleanly. In a pane pi-herd
     created, the pane closes with it (`exec`), and herdr removes the tab and, if it was the last
     one, the workspace. A given pane goes back to its shell. The parent closes nothing itself.
 - **Daily cleanup.** At most once a day, the first pi-herd session to start after the last run
@@ -405,7 +463,7 @@ The `30 min` in the brief comes from config `watchTimeoutMinutes`.
   2. closes orphaned panes in the dedicated `pi-herd` session (`herdr --session pi-herd pane list`,
      if its server is running). A pane is an orphan when no live agent is registered for it (a pi
      that hung before it registered, or a leftover shell), or when its agent's parent isn't live (the
-     parent check failed, for example because the subagent hung).
+     parent check failed, for example because the started agent hung).
   - **Nothing still starting is closed.** A pane counts as an orphan only if it is one on two checks
     a minute apart, so an agent that is just registering survives.
   - **Idle children of a live parent are never closed,** because the parent may message them again.
@@ -419,20 +477,31 @@ The only link to other extensions is the event bus.
 - **`herd:update`** is emitted on every change:
 
   ```ts
-  { agents: { id, name, state, since, cwd, child, watched }[], // this session's children and watched agents
+  { agents: { id, name, state, since, live, cwd, mine, watched, sent, received }[],
     watching: number, // watches running
     waiting: number } // watches running while this agent is idle, else 0
   ```
 
-  `state` is herdr's status for the agent. pi-herd already follows its children's and watched
-  agents' status through herdr events (section 6), so it has it at no extra cost.
+  - `agents` are this session's children and the agents it has watched (with `agent_watch`, or a
+    message with `needsReply`), in the order pi-herd first listed them. Messages alone don't list
+    an agent, so a started agent doesn't list its parent. Agents its children started aren't
+    listed. `mine` says this session started it (it can be stopped from here). `name` is always
+    set (section 2); `sent` and `received` count messages with that agent, kept on `globalThis`
+    (so across `/reload`, not a restart).
+  - `state` is herdr's status for the agent, except that herdr's `done` (idle, not yet looked at)
+    is reported as `idle`. pi-herd follows each listed agent's status through herdr events
+    (section 6).
+  - **Agents that ended stay listed** for the rest of the session, like finished jobs, with
+    `live: false` and `state` `stopped` (this session stopped it with `agent_stop`) or `done` (it
+    ended any other way); `since` is when it ended. An agent resumed with `agent_start` is live
+    again.
 
 - **pi-herd listens for** `herd:attach { id }` (opens the attach popup, section 11) and
-  `herd:kill { id }` (the same as `agent_kill`, children only).
+  `herd:stop { id }` (the same as `agent_stop`; pi-footer sends it for this session's children).
 - **`/agents`**: lists the agents. Choosing one attaches to it in the repo's popup (section 11).
-  Inside the popup, the subagent shows how to close it and offers `/detach` (section 11).
+  Inside the popup, the started agent shows how to close it and offers `/detach` (section 11).
   Detaching closes the popup and leaves the agent running.
-- **Phase 2, in other extensions.** Both read `herd:update` next to pi-bash-bg's `bash-bg:update`.
+- **In other extensions.** Both read `herd:update` next to pi-bash-bg's `bash-bg:update`.
   - **pi-working**: one label in the prompt box's border while the agent is idle and waiting:
     - `Waiting on 3 agents and 2 background jobs (1m 12s)`
     - only the non-zero parts are shown: `Waiting on 3 agents (40s)`, `Waiting on 1 background
@@ -444,24 +513,42 @@ job (2m)`
       before the jobs count `󰦖 2`, so agents come first. Like the jobs count, it is never dropped on
       narrow terminals. A click on it opens the dashboard at the `agents` tab, and so does ↓ while
       watches run.
-    - **`agents` tab:** present while this session has children or watches, placed before the
-      `jobs` tab, with an `agents` line in the overview.
-      - It lists watched agents first, then the other children, then the rest. Within each group,
-        `working` comes before `blocked`, then `idle`.
-      - Each row reads `󰫣 reviewer · working 2m · ~/code/app · watched`.
-      - It shows 3 rows at a time and scrolls with the selection (`3/12` when there are more), like
-        the jobs tab.
-      - Keys, with the keys on the dashboard: ↑/↓ select, Enter attaches (`herd:attach`), and `x`
-        twice kills (`herd:kill`, children only). A click selects a row, and a click on the selected
-        row attaches.
+    - **`agents` tab:** present while `herd:update` lists any agent, placed before the `jobs`
+      tab. Its rows look like the jobs tab's. Tab labels carry no counts.
+      - **A flat list** of `herd:update`'s agents, ended ones included.
+      - **Order:** stopped agents last; otherwise the order pi-herd first listed them (the order
+        they were started or watched). A status change never moves a row, so the list holds still.
+      - Each row, in aligned columns (padded by display width): the name with its markers, status,
+        time, folder, and messages sent `󱉱` and received `󱉰` (blank when none):
+        `▸ frog-thunder 󱖡 󰅐  working  40s     ~/code/lib  󱉱 1 󱉰 0`
+      - Markers after the name, dim: `󱖡` (md-handshake-outline) on an agent this session didn't
+        start, `󰅐` (md-clock-outline) while this session waits on the agent.
+      - Time: how long in this status; for an ended agent, how long ago it ended (`1m ago`).
+      - Colors: only `working` (accent) and `blocked` (warning) stand out. `idle`, `stopped` and
+        `done` are dim, and the time is always dim.
+      - 3 rows at a time; it scrolls with the selection (`3/12`).
+      - Keys, with the keys on the dashboard: ↑/↓ select, Enter views a live agent
+        (`herd:attach`), `x` twice stops a live agent this session started (`herd:stop`). A click
+        selects a row, and a click on the selected row views it. The hint reads
+        `↑↓ select · enter view · x stop`, less what doesn't apply.
       - The selection follows its agent across updates while the tab is open.
+    - **Overview:** one `waiting` line for what the session still waits on, agents it watches
+      and jobs it watches running (`waiting  3 agents · 2 jobs`); none when nothing is
+      pending. It replaces pi-footer's own `jobs` line.
+  - **pi-content-layout** shows an open `agent_start` or `agent_send` call's message text as
+    highlighted markdown, and a closed one's `message` param by its flags only
+    (`message · followUp · needsReply true`). It words tool groups by agents, not calls: `Started 2 agents, talked to 3
+agents, checked agents, stopped 2 agents`. `agent_send` and `agent_watch` count as "talked
+    to", `agent_read` and `agent_list` as "checked agents" (uncounted); counts come from `to` or
+    `ids`, and for `agent_stop("all")` from its result's `details.stopped`.
 
 ## 11. Attach: the repo's popup plugin
 
 herdr opens a floating window (a popup) only from a plugin pane. The repo's shared herdr plugin
 (`herdr/plugin/`, id `pi-hkandala`) has an `attach` popup pane that runs whatever shell command the
-caller passes in `POPUP_COMMAND`. herdr's popup has no close button and ignores clicks outside it, so
-the pane's border title says how to close it: `ctrl+b q to close`.
+caller passes in `POPUP_COMMAND`. herdr's popup has no close button and ignores clicks outside it.
+How to close it is shown by the started agent inside, above its prompt (below), so the pane's border title
+only names what it shows: `pi agent` (herdr requires a non-blank title).
 
 - **Attach.** `/agents` runs:
 
@@ -487,21 +574,22 @@ the pane's border title says how to close it: `ctrl+b q to close`.
   session, closed when its command exited and on `popup.close`, and a second open returned `ui_busy`.
   Inside the popup, `ctrl+b q` detaches: the popup closes and the agent keeps running.
 
-### In a popup: the subagent knows it's being viewed
+### In a popup: the started agent knows it's being viewed
 
 herdr doesn't say which clients are attached to a pane. But pi-herd writes the popup's command, so
-the command leaves a marker for the subagent, and removes it again:
+the command leaves a marker for the started agent, and removes it again:
 
 1. **Marker.** The popup's shell writes its own pid to `attached/<agent id>`, then runs
    `herdr agent attach` as its child. Its `trap … EXIT` deletes the file when the attach ends, however
    it ends. The write is a shell builtin: about 1 ms, inside a shell that starts anyway (~17 ms). There
    is no visible delay.
-2. **Detection.** The subagent's pi-herd sees the file appear and disappear through `fs.watch` on
+2. **Detection.** The started agent's pi-herd sees the file appear and disappear through `fs.watch` on
    `attached/`. It is **in a popup** while its file exists and `kill(pid, 0)` succeeds. A file left
    by a shell that was SIGKILLed fails that check and is deleted. The popup never waits for this;
    the hint may appear a moment after the agent's screen.
-3. **While in a popup**, the subagent shows and enables:
-   - a status line, `in popup · ctrl+b q or /detach to close` (pi-footer shows extension statuses)
+3. **While in a popup**, the started agent shows and enables:
+   - a hint in yellow, right-aligned just above the prompt (a widget, so it needs no other
+     extension): `ctrl+b q or /detach to close`
    - `/detach`, and a hotkey (config `detachKey`, default `ctrl+shift+q`). Both run
      `pkill -TERM -P <pid>`, which ends the attach client. The shell's trap removes the marker, the
      popup closes, and the agent keeps running (measured).
@@ -519,10 +607,10 @@ herdr's pi integration (`~/.pi/agent/extensions/herdr-agent-state.ts`) is where 
 comes from (section 3). The repo keeps one patch for every extension, in `herdr/patch/<herdr
 version>/` at the repo root, with its test in `herdr/patch/test.mts`.
 
-| patch change                                                                     | why                                                                                                                                                                                                                                                   | state              |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| Count `herdr:working { source, active }` from any source as `working`            | pending work keeps the pane at `working`: background jobs (pi-bash-bg) **and** watches on other agents (pi-herd). herdr doesn't play "done" too early, and a watch doesn't end while its target still waits.                                          | in place           |
-| On `session_compact` and `session_compact_failed`, publish again when `isIdle()` | herdr skips an `agent_settled` that arrives while compaction still runs, and then stays `working` until the next run. A subagent that finishes a long task often compacts right then, and without this change its watcher would wait for the timeout. | added with pi-herd |
+| patch change                                                                     | why                                                                                                                                                                                                                                                        | state    |
+| -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| Count `herdr:working { source, active }` from any source as `working`            | pending work keeps the pane at `working`: background jobs (pi-bash-bg) **and** watches on other agents (pi-herd). herdr doesn't play "done" too early, and a watch doesn't end while its target still waits.                                               | in place |
+| On `session_compact` and `session_compact_failed`, publish again when `isIdle()` | herdr skips an `agent_settled` that arrives while compaction still runs, and then stays `working` until the next run. A started agent that finishes a long task often compacts right then, and without this change its watcher would wait for the timeout. | in place |
 
 Notes:
 
@@ -552,13 +640,13 @@ The file is optional, and every key has a default.
 
 | key                   | default          | meaning                                                                                      |
 | --------------------- | ---------------- | -------------------------------------------------------------------------------------------- |
-| `placement`           | `"hidden"`       | the default for `agent_spawn`'s `placement`: `hidden` (the dedicated herdr session) or `tab` |
+| `placement`           | `"hidden"`       | the default for `agent_start`'s `placement`: `hidden` (the dedicated herdr session) or `tab` |
 | `model`, `thinking`   | `null`           | defaults for spawned agents. `null` means inherit from the caller.                           |
 | `args`                | `[]`             | extra pi flags for spawned agents, appended last (for example, flags a launcher needs)       |
 | `watchTimeoutMinutes` | `30`             | the default watch timeout. `0` means none.                                                   |
-| `transcriptMessages`  | `20`             | entries in a transcript (`agent_status` with `transcript`, and timeout endings)              |
+| `transcriptMessages`  | `20`             | entries in a transcript (`agent_read` with `transcript`, and timeout endings)                |
 | `captureLines`        | `100`            | lines in the screen-capture fallback, used when an agent has no session file                 |
-| `detachKey`           | `"ctrl+shift+q"` | in a subagent shown in a popup: closes the popup, like `/detach` (section 11)                |
+| `detachKey`           | `"ctrl+shift+q"` | in an agent it started shown in a popup: closes the popup, like `/detach` (section 11)       |
 
 These are constants: the session name `pi-herd`, the 16 KB transcript and capture caps, the 1 KB
 cap per transcript entry, the 4 KB last-text cap, the 32 KB message cap, and the 30 s spawn wait.
@@ -572,49 +660,65 @@ cap per transcript entry, the 4 KB last-text cap, the 32 KB message cap, and the
 | 3   | A name matches several live agents                                                                 | Error that lists them with their ids.                                                                                                                                                                                                                                                                                  |
 | 4   | Agents spawned together share an id prefix                                                         | Ids are shown and matched by their last 8 characters (the random part).                                                                                                                                                                                                                                                |
 | 5   | The recipient is working                                                                           | Steer, delivered at its next tool call. The watch ends when it stops working.                                                                                                                                                                                                                                          |
-| 6   | The recipient is idle when the message is sent                                                     | The watch first waits for it to start working, then for it to stop.                                                                                                                                                                                                                                                    |
-| 7   | The recipient is working, and its turn ends in the few milliseconds before it takes the message in | The watch ends `idle` early. The recipient then works on the message, and anything it sends back arrives as a normal message. Rare, and accepted.                                                                                                                                                                      |
-| 8   | Esc aborts the recipient's run while the steer is queued                                           | The recipient stops working, so the watch ends `idle`. The message runs with its next turn.                                                                                                                                                                                                                            |
-| 9   | The recipient waits on its own background jobs                                                     | `working` (with the patch), so the watch keeps going until those finish and the woken turn ends.                                                                                                                                                                                                                       |
-| 10  | The recipient waits on agents it watches                                                           | `working` (with the patch), so the watch keeps going until those end too.                                                                                                                                                                                                                                              |
-| 11  | A and B watch each other                                                                           | Both stay `working` until their timeouts. The defaults prevent it: messages watch only your children, and replies never watch.                                                                                                                                                                                         |
-| 12  | The recipient is blocked                                                                           | The watch ends `blocked`. If it was blocked before the message, it ends at once.                                                                                                                                                                                                                                       |
-| 13  | The recipient reloads                                                                              | Messages wait in its folder, and the new runtime takes in anything not yet queued.                                                                                                                                                                                                                                     |
-| 14  | Several messages or endings arrive at once                                                         | Batched into one steer.                                                                                                                                                                                                                                                                                                |
-| 15  | The recipient sends a progress message, then keeps working                                         | The watch ends on the message. The watcher can `agent_watch` again to wait for the end.                                                                                                                                                                                                                                |
-| 16  | The recipient never sends anything                                                                 | The `idle` ending carries its last text.                                                                                                                                                                                                                                                                               |
-| 17  | The recipient never finishes (a loop, an unseen dialog, a hung tool)                               | The watch ends with `timeout` after 30 min by default, with the status and transcript. The recipient keeps running until someone kills it.                                                                                                                                                                             |
-| 18  | The recipient replies and exits at once                                                            | The inbox is scanned before `exited`, so the reply still ends the watch as `message`.                                                                                                                                                                                                                                  |
-| 19  | The recipient crashes or is killed                                                                 | herdr reports the pane closed or the agent gone, and the watch ends `exited`.                                                                                                                                                                                                                                          |
-| 20  | The parent dies (exit, crash, SIGKILL)                                                             | Its spawned agents stop themselves: at once after a clean exit, within about 2 s after a crash. Panes pi-herd created close with them; given panes go back to their shell.                                                                                                                                             |
-| 21  | The watcher does `/new`                                                                            | Its watches are dropped. The new session is a new agent.                                                                                                                                                                                                                                                               |
-| 22  | A crash leaves a record, and the pid is reused                                                     | A false positive: it looks live. It needs both a crash, since every clean exit deletes the record, and a reused pid. Messages to it are never taken in, and a watch on it ends only by timeout. **Accepted for v1.** The upgrade, if it ever bites, is to compare the stored start time with `ps -o lstart= -p <pid>`. |
-| 23  | Two processes open one session                                                                     | The second doesn't register (fails closed).                                                                                                                                                                                                                                                                            |
-| 24  | A `/new` inside a subagent pane                                                                    | New id, same parent. The old id is gone, so the watcher gets `exited`.                                                                                                                                                                                                                                                 |
-| 25  | The spawned pi never registers (a trust dialog, or pi-herd not loaded)                             | `agent_spawn` fails after 30 s with the screen capture. A pane pi-herd created is closed; in a given pane, the pi is stopped and the pane kept.                                                                                                                                                                        |
-| 26  | Parallel `agent_spawn` calls                                                                       | They run one at a time (sequential execution).                                                                                                                                                                                                                                                                         |
-| 27  | Two parents spawn into the same cwd at once                                                        | They may create two workspaces for that cwd. Harmless; each disappears with its last tab.                                                                                                                                                                                                                              |
-| 28  | `placement` is a pane that is busy (an agent, or a command running)                                | `agent_spawn` fails before typing anything.                                                                                                                                                                                                                                                                            |
-| 29  | `placement` is a pane in another herdr session, or unknown                                         | `agent_spawn` fails: a given pane must be in the caller's herdr session.                                                                                                                                                                                                                                               |
-| 30  | A subagent in a given pane exits, or is stopped                                                    | The pane goes back to its shell and stays open.                                                                                                                                                                                                                                                                        |
-| 31  | `agent_kill` on an agent that doesn't exit on `SIGTERM`                                            | After 5 s, pi-herd closes the pane it created, or sends `SIGKILL` in a given pane.                                                                                                                                                                                                                                     |
-| 32  | The daily cleanup runs while an agent is still starting                                            | The agent isn't closed: a pane must be an orphan on two checks a minute apart.                                                                                                                                                                                                                                         |
-| 33  | Several pi sessions start at once after a day                                                      | The stamp file is written before the cleanup runs, so usually one runs it. If two do, closing a pane twice is harmless.                                                                                                                                                                                                |
-| 34  | A turn settles during compaction                                                                   | herdr stays `working` until the patch's compaction change is applied. Without it, the watch ends by timeout.                                                                                                                                                                                                           |
-| 35  | The shared herdr patch isn't applied                                                               | pi-herd works, with coarser status (section 3).                                                                                                                                                                                                                                                                        |
-| 36  | The agent has no session file (`--no-session`)                                                     | Transcripts fall back to herdr's screen capture.                                                                                                                                                                                                                                                                       |
-| 37  | Text over 32 KB                                                                                    | Refused: write a file and send the path.                                                                                                                                                                                                                                                                               |
-| 38  | pi runs outside herdr, or in a non-TUI mode                                                        | pi-herd is inert: no tools, no record. Such sessions can't be messaged or watched.                                                                                                                                                                                                                                     |
-| 39  | Trust                                                                                              | Only pi-herd writes `messages/`, and the folder is the user's own. "Not from the user" is a label for the model, not a security boundary.                                                                                                                                                                              |
-| 40  | The popup plugin isn't installed                                                                   | `/agents` shows the install command and the plain attach command. Spawning, messages and watches don't need the plugin.                                                                                                                                                                                                |
-| 41  | A popup is already open, or herdr is in a modal                                                    | `/agents` reports `ui_busy`, and nothing opens.                                                                                                                                                                                                                                                                        |
-| 42  | `fs.watch` fails (for example, the folder is on a network drive)                                   | pi-herd shows one warning. Messages to that agent wait until its next `session_start` scan.                                                                                                                                                                                                                            |
+| 6   | The recipient is idle when the message is sent                                                     | The message wakes it; the watch arms when the message is delivered, then ends when it stops working.                                                                                                                                                                                                                   |
+| 7   | The recipient is working, and its turn ends in the few milliseconds before it takes the message in | The watch isn't armed yet (no delivered marker), so that turn's end doesn't count; it ends after the turn that takes the message in.                                                                                                                                                                                   |
+| 8   | A `followUp` message to a working agent                                                            | Delivered after its current turn. The watch arms only then, so the current turn's end doesn't end it.                                                                                                                                                                                                                  |
+| 9   | An `immediate` message to a working agent                                                          | Its turn is aborted, and the message is delivered once pi settles. The idle moment from the abort doesn't end the watch (not armed yet).                                                                                                                                                                               |
+| 10  | An `immediate` message to an idle agent                                                            | Delivered like a steer: it wakes the agent.                                                                                                                                                                                                                                                                            |
+| 11  | A message without `needsReply`                                                                     | No watch, and the recipient is told no reply is expected. If it replies anyway, the reply arrives as a normal message.                                                                                                                                                                                                 |
+| 12  | The recipient's turn ends before the watcher sees the delivered marker                             | herdr already says idle; pi-herd checks again a second later and ends the watch `idle`.                                                                                                                                                                                                                                |
+| 13  | Esc aborts the recipient's run while the steer is queued                                           | The recipient stops working, so the watch ends `idle`. The message runs with its next turn.                                                                                                                                                                                                                            |
+| 14  | The recipient waits on its own background jobs                                                     | `working` (with the patch), so the watch keeps going until those finish and the woken turn ends.                                                                                                                                                                                                                       |
+| 15  | The recipient waits on agents it watches                                                           | `working` (with the patch), so the watch keeps going until those end too.                                                                                                                                                                                                                                              |
+| 16  | A and B watch each other                                                                           | Both stay `working` until their timeouts. The defaults prevent it: messages watch only your children, and replies never watch.                                                                                                                                                                                         |
+| 17  | The recipient is blocked                                                                           | The watch ends `blocked`. If it was blocked before the message, it ends at once.                                                                                                                                                                                                                                       |
+| 18  | The recipient reloads                                                                              | Messages wait in its folder, and the new runtime takes in anything not yet queued.                                                                                                                                                                                                                                     |
+| 19  | Several messages or endings arrive at once                                                         | Batched into one steer.                                                                                                                                                                                                                                                                                                |
+| 20  | The recipient sends a progress message, then keeps working                                         | The watch ends on the message. The watcher can `agent_watch` again to wait for the end.                                                                                                                                                                                                                                |
+| 21  | The recipient never sends anything                                                                 | The `idle` ending carries its last text.                                                                                                                                                                                                                                                                               |
+| 22  | The recipient never finishes (a loop, an unseen dialog, a hung tool)                               | The watch ends with `timeout` after 30 min by default, with the status and transcript. The recipient keeps running until someone kills it.                                                                                                                                                                             |
+| 23  | The recipient replies and exits at once                                                            | The inbox is scanned before `exited`, so the reply still ends the watch as `message`.                                                                                                                                                                                                                                  |
+| 24  | The recipient crashes or is killed                                                                 | herdr reports the pane closed or the agent gone, and the watch ends `exited`.                                                                                                                                                                                                                                          |
+| 25  | The parent dies (exit, crash, SIGKILL)                                                             | Its spawned agents stop themselves: at once after a clean exit, within about 2 s after a crash. Panes pi-herd created close with them; given panes go back to their shell.                                                                                                                                             |
+| 26  | The watcher does `/new`                                                                            | Its watches are dropped. The new session is a new agent.                                                                                                                                                                                                                                                               |
+| 27  | A crash leaves a record, and the pid is reused                                                     | A false positive: it looks live. It needs both a crash, since every clean exit deletes the record, and a reused pid. Messages to it are never taken in, and a watch on it ends only by timeout. **Accepted for v1.** The upgrade, if it ever bites, is to compare the stored start time with `ps -o lstart= -p <pid>`. |
+| 28  | Two processes open one session                                                                     | The second doesn't register (fails closed).                                                                                                                                                                                                                                                                            |
+| 29  | A `/new` inside an agent it started pane                                                           | New id, same parent. The old id is gone, so the watcher gets `exited`.                                                                                                                                                                                                                                                 |
+| 30  | The created pi never registers (a trust dialog, or pi-herd not loaded)                             | `agent_start` fails after 30 s with the screen capture. A pane pi-herd created is closed; in a given pane, the pi is stopped and the pane kept.                                                                                                                                                                        |
+| 31  | Parallel `agent_start` calls                                                                       | They run one at a time (sequential execution).                                                                                                                                                                                                                                                                         |
+| 32  | Two parents spawn into the same cwd at once                                                        | They may create two workspaces for that cwd. Harmless; each disappears with its last tab.                                                                                                                                                                                                                              |
+| 33  | `placement` is a pane that is busy (an agent, or a command running)                                | `agent_start` fails before typing anything.                                                                                                                                                                                                                                                                            |
+| 34  | `placement` is a pane in another herdr session, or unknown                                         | `agent_start` fails: a given pane must be in the caller's herdr session.                                                                                                                                                                                                                                               |
+| 35  | A started agent in a given pane exits, or is stopped                                               | The pane goes back to its shell and stays open.                                                                                                                                                                                                                                                                        |
+| 36  | `agent_stop` on an agent that doesn't exit on `SIGTERM`                                            | After 5 s, pi-herd sends `SIGKILL`; a pane it created closes with pi.                                                                                                                                                                                                                                                  |
+| 37  | The daily cleanup runs while an agent is still starting                                            | The agent isn't closed: a pane must be an orphan on two checks a minute apart.                                                                                                                                                                                                                                         |
+| 38  | Several pi sessions start at once after a day                                                      | The stamp file is written before the cleanup runs, so usually one runs it. If two do, closing a pane twice is harmless.                                                                                                                                                                                                |
+| 39  | `agent_start({ session })` for a session that is live                                              | Fails: `Session … is already live.`                                                                                                                                                                                                                                                                                    |
+| 40  | `agent_start({ session })` for an unknown id, or a suffix matching several sessions                | Fails, naming the problem; the full id always works.                                                                                                                                                                                                                                                                   |
+| 41  | `agent_start` without `session` and without `name` or `message`                                    | Fails: both are required unless you resume a session.                                                                                                                                                                                                                                                                  |
+| 42  | `agent_stop` on an agent stopped before its first turn                                             | pi hasn't written its session file yet, so there is nothing to resume; the result says so.                                                                                                                                                                                                                             |
+| 43  | Two unnamed agents derive the same two words (about 1 in 9 million)                                | Their names match, so addressing by name fails and lists both ids.                                                                                                                                                                                                                                                     |
+| 44  | A turn settles during compaction                                                                   | herdr stays `working` until the patch's compaction change is applied. Without it, the watch ends by timeout.                                                                                                                                                                                                           |
+| 45  | The shared herdr patch isn't applied                                                               | pi-herd works, with coarser status (section 3).                                                                                                                                                                                                                                                                        |
+| 46  | The agent has no session file (`--no-session`)                                                     | Transcripts fall back to herdr's screen capture.                                                                                                                                                                                                                                                                       |
+| 47  | Text over 32 KB                                                                                    | Refused: write a file and send the path.                                                                                                                                                                                                                                                                               |
+| 48  | pi runs outside herdr, or in a non-TUI mode                                                        | pi-herd is inert: no tools, no record. Such sessions can't be messaged or watched.                                                                                                                                                                                                                                     |
+| 49  | Trust                                                                                              | Only pi-herd writes `messages/`, and the folder is the user's own. "Not from the user" is a label for the model, not a security boundary.                                                                                                                                                                              |
+| 50  | The popup plugin isn't installed                                                                   | `/agents` shows the install command and the plain attach command. Spawning, messages and watches don't need the plugin.                                                                                                                                                                                                |
+| 51  | A popup is already open, or herdr is in a modal                                                    | `/agents` reports `ui_busy`, and nothing opens.                                                                                                                                                                                                                                                                        |
+| 52  | `fs.watch` fails (for example, the folder is on a network drive)                                   | pi-herd shows one warning. Messages to that agent wait until its next `session_start` scan.                                                                                                                                                                                                                            |
 
-**To verify during the build:**
+**Checked during the build:**
 
-- whether pi exposes the caller's trust decision (section 7).
-- whether `herdr agent attach` accepts a pane id.
-- the hotkey reaches pi through the attach (section 11).
+- pi exposes the caller's trust decision: `ctx.isProjectTrusted()` (section 7).
+- `herdr agent attach` accepts a pane id, also on another session's socket.
+- Not checked: whether the detach hotkey reaches pi through a real popup client (section 11).
+  `/detach` works.
+- herdr 0.9.3 names its events inconsistently: `pane.agent_status_changed`, but `pane_exited` and
+  `pane_closed`. pi-herd accepts both spellings.
+- An agent that registered may not show `agent: "pi"` in herdr yet (its integration reports at the
+  same `session_start`). So "exited" means the pane is gone or the pid is dead, never just "no
+  agent in the pane".
 
 ## 15. Prior art
 
@@ -630,9 +734,13 @@ working and end with the agent's last text or transcript. That is what pi-herd a
 
 ## 16. Size and scope
 
-- About 600–800 lines in `index.ts`: registry, messages, watches, transcripts, spawn, tools,
-  renderer, `/agents`. The popup plugin and the herdr patch live in the repo's `herdr/` folder.
-- No dependencies. It requires herdr 0.9 or newer and runs only inside a herdr pane.
+- About 1,750 lines as formatted, in five files: `index.ts` (registry, messages, watches, spawn,
+  tools, `/agents`, about 1,250), `store.ts` (the shared files and agent names), `herdr.ts` (the
+  socket API and the hidden session), `transcript.ts` (transcripts and saved sessions) and
+  `text.ts` (the brief, steer texts, and their renderer). The popup plugin and the herdr patch
+  live in the repo's `herdr/` folder.
+- One dependency, `friendly-words` (pinned to 1.2.1; later versions pull in a web server), for
+  derived names. It requires herdr 0.9 or newer and runs only inside a herdr pane.
 
 Out of scope for v1:
 
@@ -641,6 +749,4 @@ Out of scope for v1:
 - attachments (send paths instead)
 - blocking waits
 - cancel and supersede
-- nested spawning
 - read receipts
-- pi-footer and pi-working integration (phase 2)
