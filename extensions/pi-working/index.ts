@@ -5,8 +5,8 @@
  *   ╭── ⠋ Working (12s) ─────────────────────╮   while running; the time turns yellow when the
  *                                                model has been silent for 30s
  *   ╭── ✓ Worked for 4m 12s · 3m ago ────────╮   after the run; ■ interrupted, ✗ failed
- *   ╭── Waiting on 2 background jobs (1m 12s) ───╮   after the run, while pi-bash-bg jobs it
- *                                                    watches run (their end wakes the agent)
+ *   ╭── Waiting on 3 agents and 2 background jobs (1m 12s) ──╮   after the run, while pi-herd
+ *        watches or pi-bash-bg jobs it watches run (their end wakes the agent)
  *
  * A run spans the first agent_start to agent_settled, so retries, compaction and follow-ups count.
  * Config (optional): ~/.pi/agent/extensions/pi-working.json
@@ -85,7 +85,10 @@ export default function (pi: ExtensionAPI) {
   // The finished run, shown until the next run or esc.
   let done: { verb: string; ms: number; endedAt: number; outcome?: string } | undefined;
   let shown = ""; // done label as last rendered
-  // pi-bash-bg's watched jobs still running after the run (from its bash-bg:update event).
+  // What still wakes the agent after the run: pi-herd's watches (herd:update) and pi-bash-bg's
+  // watched jobs (bash-bg:update). Their sum is the waiting count.
+  let agents = 0;
+  let jobs = 0;
   let waiting = 0;
   let waitingSince = 0;
 
@@ -101,9 +104,10 @@ export default function (pi: ExtensionAPI) {
     if (!ctx) return "";
     const t = ctx.ui.theme;
     if (waiting) {
-      const jobs = `${waiting} background job${waiting === 1 ? "" : "s"}`;
+      const plural = (n: number, w: string) => n && `${n} ${w}${n === 1 ? "" : "s"}`;
+      const what = [plural(agents, "agent"), plural(jobs, "background job")].filter(Boolean);
       const time = t.fg("dim", `(${duration(Date.now() - waitingSince, true)})`);
-      return `${t.fg("muted", `Waiting on ${jobs}`)} ${time}`;
+      return `${t.fg("muted", `Waiting on ${what.join(" and ")}`)} ${time}`;
     }
     if (!done) return "";
     const ago = Date.now() - done.endedAt;
@@ -174,11 +178,18 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("session_shutdown", stop);
 
-  pi.events.on("bash-bg:update", (data) => {
-    const n = (data as { waiting?: number }).waiting ?? 0;
-    if (n && !waiting) waitingSince = Date.now();
-    waiting = n;
+  const setWaiting = () => {
+    if (agents + jobs && !waiting) waitingSince = Date.now();
+    waiting = agents + jobs;
     tick();
+  };
+  pi.events.on("herd:update", (data) => {
+    agents = (data as { waiting?: number }).waiting ?? 0;
+    setWaiting();
+  });
+  pi.events.on("bash-bg:update", (data) => {
+    jobs = (data as { waiting?: number }).waiting ?? 0;
+    setWaiting();
   });
 
   pi.on("agent_start", () => {
