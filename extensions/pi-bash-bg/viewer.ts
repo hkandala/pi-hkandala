@@ -41,7 +41,9 @@ export function cut(text: string, width: number): string {
 }
 
 export class LogViewer {
-  private lines: string[] = [];
+  private lines: string[] = []; // raw: only the ones shown get cleaned
+  private now!: ViewerInfo; // the job, read by the timer (not per frame: it can read files)
+  private command!: string[]; // highlighted once
   private size = -1;
   private top: number | undefined; // first line shown; undefined follows new output
   private armed = false; // x pressed once
@@ -63,9 +65,14 @@ export class LogViewer {
     done: () => void,
   ) {
     Object.assign(this, { tui, theme, log, info, kill, done });
+    this.now = info();
+    this.command = highlightCode(this.now.command.trim(), "bash");
     this.load();
+    let ticks = 0;
     this.timer = setInterval(() => {
-      if (this.load() || info().running) tui.requestRender();
+      this.now = info();
+      // As the log grows; the running time once a second.
+      if (this.load() || (this.now.running && ++ticks % 4 === 0)) tui.requestRender();
     }, 250);
   }
 
@@ -86,7 +93,7 @@ export class LogViewer {
     } catch {}
     let text = buf.toString("utf8");
     if (start > 0) text = text.slice(text.indexOf("\n") + 1); // drop the cut first line
-    this.lines = text.replace(/\n$/, "").split("\n").map(clean);
+    this.lines = text.replace(/\n$/, "").split("\n");
     if (this.lines.length === 1 && !this.lines[0]) this.lines = [];
     return true;
   }
@@ -94,7 +101,7 @@ export class LogViewer {
   render(width: number): string[] {
     const t = this.theme;
     const inner = Math.max(1, width - 4);
-    const { pid, command, detail, running } = this.info();
+    const { pid, detail, running } = this.now;
     const bar = (label: string) => {
       const text = cut(label, width - 5);
       return `${text} ${t.fg("border", "─".repeat(Math.max(0, width - 5 - visibleWidth(text))))}`;
@@ -107,14 +114,14 @@ export class LogViewer {
         );
     // The command and its details, a blank line, then the log indented under them.
     const head = [
-      ...highlightCode(command.trim(), "bash").flatMap((l) => wrapTextWithAnsi(l, inner)),
+      ...this.command.flatMap((l) => wrapTextWithAnsi(l, inner)),
       t.fg("dim", detail),
       "",
     ];
     // 70% of the terminal: two borders, the head, the log, and a blank line under it.
     this.rows = Math.max(3, Math.floor(this.tui.terminal.rows * 0.7) - 3 - head.length);
     const start = this.top ?? Math.max(0, this.lines.length - this.rows);
-    const log = this.lines.slice(start, start + this.rows).map((l) => `  ${l}`);
+    const log = this.lines.slice(start, start + this.rows).map((l) => `  ${clean(l)}`);
     if (!this.lines.length) log.push(t.fg("dim", "  (no output yet)"));
     while (log.length < this.rows) log.push("");
     const side = t.fg("border", "│");

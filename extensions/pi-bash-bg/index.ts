@@ -636,10 +636,13 @@ export default function (pi: ExtensionAPI) {
       return box;
     }
     // Like pi-content-layout's open bash row: a command on more than one line continues under
-    // a │ and gets a │ line before its output, which hangs off a └.
+    // a │ and gets a │ line before its output, which hangs off a └. Kept per width: pi renders
+    // the whole chat on every frame in full screen, and the output can run to a thousand lines.
+    let last: { width: number; lines: string[] } | undefined;
     box.addChild({
-      invalidate() {},
+      invalidate: () => (last = undefined),
       render: (width: number) => {
+        if (last?.width === width) return last.lines;
         const fit = Math.max(1, width - 2);
         const lines: string[] = [];
         for (const { icon, command, meta, j } of rows) {
@@ -655,6 +658,7 @@ export default function (pi: ExtensionAPI) {
           lines.push(...outLines.map((l, i) => `${i ? " " : dim("└")} ${l}`), "");
         }
         lines.pop();
+        last = { width, lines };
         return lines;
       },
     });
@@ -862,7 +866,8 @@ export default function (pi: ExtensionAPI) {
       clearTimeout(pokeTimer);
       pokeTimer = setTimeout(check, 250); // jobs ending together share a message
     };
-    tick = setInterval(check, 1000);
+    // Only while a watched job runs: otherwise nothing can change.
+    tick = setInterval(() => seen().size && check(), 1000);
     g.herdr = undefined; // refresh() below emits the current value
     check();
     if (!g.cleaned) {

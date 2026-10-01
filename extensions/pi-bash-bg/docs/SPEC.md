@@ -122,7 +122,7 @@ pi.sendMessage(
 
 and drops the job from the list.
 
-- **Detection:** a 1 s tick checks every job on the list. The spawning process also gets the child's `exit` event and checks 250 ms later, so jobs that end together share one message.
+- **Detection:** a 1 s tick checks every job on the list, while one of them runs (otherwise nothing can change). The spawning process also gets the child's `exit` event and checks 250 ms later, so jobs that end together share one message.
 - **`/reload`:** the list and the check hook are kept on `globalThis`. A child that exits during or after a reload calls the live runtime's hook, and a job that ended during the reload still gets its message.
 - **Startup, `/resume`, `/new`, `/fork`:** the list starts from the jobs running at that moment, so a job that ended while its session was closed sends nothing. The agent sees it in `bash_list`. Nothing is written back to the markers.
 
@@ -178,7 +178,7 @@ Command exited with code 1
 **Log viewer** (`viewer.ts`): `ctx.ui.custom(…, { overlay: true, overlayOptions: { anchor: "center", width: "90%", maxHeight: "70%" } })`.
 
 - The title shows only `pid 12345`. Inside: the command, colored as bash and wrapped, a dim `running · 27s · ~/proj` line, a blank line, then the log indented two columns. The log area is what's left of 70% of the terminal's rows.
-- It shows the last 1 MB of the log, re-read every 250 ms when it grows. It follows new output until you scroll up; then the view stays put (it keeps an absolute top line) until you scroll back to the bottom or press End.
+- It shows the last 1 MB of the log, re-read every 250 ms when it grows (only the lines shown are cleaned of control codes); a running job's time updates once a second. It follows new output until you scroll up; then the view stays put (it keeps an absolute top line) until you scroll back to the bottom or press End.
 - Only color escapes are kept: after the last `\r` in a line (progress bars), with tabs expanded.
 - ↑/↓, PgUp/PgDn and the mouse wheel scroll, Home jumps to the top, End follows, `x` twice kills (running jobs only), Esc or `q` closes.
 
