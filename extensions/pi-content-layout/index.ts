@@ -407,7 +407,7 @@ const outputOf = cached((r) =>
     .trimEnd(),
 );
 const output = (t: Tool) => (t.result ? outputOf(t.result) : "");
-const linesOf = cached((r) => untab(outputOf(r)).split("\n"));
+const linesOf = cached((r) => (outputOf(r) ? untab(outputOf(r)).split("\n") : []));
 
 function shortPath(path: string, cwd: string) {
   if (path.startsWith(`${cwd}/`)) return path.slice(cwd.length + 1);
@@ -521,8 +521,11 @@ const isOpen = (t: Tool & Proto, config: Config): boolean =>
 /** Lines shown under an open row: the diff, written content, or output (red for failures). */
 function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
   const open = isOpen(t, config);
-  return memo(t, "clBody", [open, t.result, t.args?.content, t.args?.message, theme], () =>
-    bodyLines(t, open, theme),
+  return memo(
+    t,
+    "clBody",
+    [open, t.result, t.isPartial, t.args?.content, t.args?.message, theme],
+    () => bodyLines(t, open, theme),
   );
 }
 function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
@@ -537,7 +540,8 @@ function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
       ...(out.length ? ["", ...out] : []),
     ];
   }
-  if (!open || !t.result) return [];
+  if (!open) return [];
+  if (!t.result) return [theme.fg("dim", "(no output yet)")];
   if (t.toolName === "edit" && t.result.details?.diff)
     return diffOf(t.result.details.diff, lang, theme);
   if (t.toolName === "read" && !t.result.isError) {
@@ -550,7 +554,10 @@ function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
     return [...numbered(code, first, theme), ...lines.slice(note).map((l) => theme.fg("muted", l))];
   }
   const color = t.result.isError ? "error" : "text";
-  return linesOf(t.result).map((l) => theme.fg(color, l)); // live output while running
+  const lines = linesOf(t.result).map((l) => theme.fg(color, l)); // live output while running
+  if (lines.length) return lines;
+  // None yet while it runs; none (or only whitespace) once done.
+  return [theme.fg("dim", t.isPartial ? "(no output yet)" : "(no output)")];
 }
 
 /**
