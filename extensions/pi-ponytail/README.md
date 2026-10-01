@@ -2,9 +2,9 @@
 
 Makes the agent a lazy senior developer: the simplest solution that works, the standard library before custom code, deletion before addition. The ruleset and skills come from [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail). This is a smaller pi port of its extension.
 
-- **Always on.** While the mode is not `off`, the rules from [`skills/ponytail/SKILL.md`](skills/ponytail/SKILL.md) go into the system prompt as a `<ponytail>` section (about 1,300 tokens). Only the current mode's intensity row and example are kept.
+- **Always on, and short.** While the mode is not `off`, a `<ponytail>` section of about 250 tokens goes into the system prompt: the mode and its intensity row, the gist of the rules, and the paths of the skill files, with the instruction to read [`skills/ponytail/SKILL.md`](skills/ponytail/SKILL.md) before writing, changing or reviewing code. The full rules load only when there is code work.
 - **Cache-friendly.** It is a prompt section, not a full system prompt replacement. A mode change is sent as a section update, so the cached prefix stays valid.
-- **Skills without the clutter.** `ponytail`, `review`, `audit`, `debt`, and `gain` are not registered as pi skills, so they add no `/skill:` commands and no skill-list entries. `/ponytail run` sends one, and the `<ponytail>` section lists their file paths, so asking to "use ponytail" or for "a ponytail review" mid-session works too.
+- **Skills without the clutter.** `ponytail`, `review`, `audit`, `debt`, and `gain` are not registered as pi skills, so they add no `/skill:` commands and no skill-list entries. `/ponytail run` sends one (`ponytail` with only the current mode's intensity row and example), and the `<ponytail>` section lists their file paths, so asking to "use ponytail" or for "a ponytail review" mid-session works too.
 - **No state.** Every session starts at the default mode. No status bar item, no startup message.
 
 ## Commands

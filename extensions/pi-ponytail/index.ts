@@ -1,5 +1,6 @@
 /**
- * pi-ponytail: the ponytail "lazy senior dev" ruleset as a <ponytail> system prompt section.
+ * pi-ponytail: the ponytail "lazy senior dev" ruleset, as a short <ponytail> system prompt section
+ * (its gist, the mode, and the skill files the model must read before touching code).
  * Port of https://github.com/DietrichGebert/ponytail (skills/ copied as-is, not registered as pi
  * skills: /ponytail run sends them, and the section points the model at their files).
  *
@@ -48,12 +49,21 @@ export function instructions(skill: string, mode: string): string {
   return `PONYTAIL MODE ACTIVE — level: ${mode}\n\n${body}`;
 }
 
-// Where the full skill files live, so "use ponytail" or "ponytail review" in a prompt can be
-// followed without the skills being registered.
-const pointer = () =>
-  "Ponytail skill files (read the matching one when the user asks to use ponytail or for a " +
-  "ponytail review, audit, debt ledger, or gain):\n" +
-  SKILLS.map((s) => `- ${s}: ${skillPath(s)}`).join("\n");
+/**
+ * The system prompt section: the gist, the mode's intensity row, and where the full rules are.
+ * The model reads the ponytail skill file before code work, so the prompt stays short.
+ */
+export function gist(skill: string, mode: string): string {
+  const row = skill.match(new RegExp(`^\\| \\*\\*${mode}\\*\\* \\| (.+?) \\|$`, "m"))?.[1];
+  return [
+    `PONYTAIL MODE ACTIVE — level: ${mode}${row ? `. ${row}` : ""}`,
+    "",
+    "You are a lazy senior developer: the simplest solution that works. Before writing code, ask in order: does it need to exist, is it already in this codebase, does the stdlib, the platform or an installed dependency cover it, can it be one line; only then write the minimum. Fix root causes, not symptoms. No unrequested abstractions; deletion over addition; the shortest correct diff, but only after reading the code it touches.",
+    "",
+    "You must read the ponytail skill file before writing, changing or reviewing code: it has the full rules and the output style. Read the others when the user asks for a ponytail review, audit, debt ledger, or gain.",
+    ...SKILLS.map((s) => `- ${s}: ${skillPath(s)}`),
+  ].join("\n");
+}
 
 export default function (pi: ExtensionAPI) {
   const skill = readFileSync(skillPath("ponytail"), "utf8");
@@ -67,8 +77,7 @@ export default function (pi: ExtensionAPI) {
   // section delta and the cached prefix survives.
   pi.on("before_agent_start", (event) => {
     if (mode === "off") delete event.systemPromptOptions.sections.ponytail;
-    else
-      event.systemPromptOptions.sections.ponytail = `${instructions(skill, mode)}\n\n${pointer()}`;
+    else event.systemPromptOptions.sections.ponytail = gist(skill, mode);
   });
 
   pi.registerCommand("ponytail", {
