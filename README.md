@@ -12,6 +12,7 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 | [pi-continue](extensions/pi-continue/README.md)                 | ctrl+shift+enter nudges the agent to continue without a user message (queued as a follow-up while it is working)                     |
 | [pi-footer](extensions/pi-footer/README.md)                     | Minimal one-line footer in a rounded prompt box that expands into a dashboard                                                        |
 | [pi-header](extensions/pi-header/README.md)                     | Minimal startup header with the official pi logo                                                                                     |
+| [pi-herd](extensions/pi-herd/README.md)                         | pi agents in herdr: message and watch other pi sessions, start agents in herdr panes, woken when they reply or finish                |
 | [pi-ponytail](extensions/pi-ponytail/README.md)                 | Lazy-senior-dev ruleset from ponytail as a cache-friendly system prompt section, with `/ponytail` to run its skills                  |
 | [pi-prompt-clipboard](extensions/pi-prompt-clipboard/README.md) | ctrl+shift+s copies the prompt to the clipboard and clears it; paste long text twice to expand it for editing                        |
 | [pi-retry](extensions/pi-retry/README.md)                       | Makes pi's auto-retry cover every model error (unknown errors, 400s, ...), except auth errors                                        |
