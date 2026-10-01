@@ -305,7 +305,7 @@ export default function (pi: ExtensionAPI) {
     ...running(jobs(ids(".json").filter((id) => !watched.includes(id)))),
   ];
 
-  // herdr (optional patch, see herdr/README.md at the repo root): working while watched jobs run after the turn.
+  // herdr (optional patch, see herdr/README.md at the repo root): working while watched jobs run.
   // It plays "done" on every working → idle change, so it must never see a gap.
   const emitHerdr = (active: boolean) => {
     g.herdr = active;
@@ -335,7 +335,9 @@ export default function (pi: ExtensionAPI) {
     const json = JSON.stringify(update);
     if (json !== lastUpdate) pi.events.emit("bash-bg:update", update);
     lastUpdate = json;
-    const active = waiting > 0 || !!waking;
+    // Also during the turn: herdr publishes idle when the turn settles, before this could say
+    // otherwise, and an agent watching this one would take that as finished.
+    const active = count > 0 || !!waking;
     if (active !== g.herdr) emitHerdr(active);
   };
 
@@ -498,16 +500,20 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     ...base,
     description: `${base.description} Set background: true to run it in the background: it returns right away with the pid and log path, and you are notified when it exits.`,
+    // One grouped rule, so the system prompt's rules read as sections (pi-herd's "Agents" too).
     promptGuidelines: [
       ...(base.promptGuidelines ?? []),
-      "Run servers, watchers, long builds, or anything that takes a while with bash `background: true`. Never use `&`.",
-      ...(config.autoBackgroundSeconds > 0
-        ? [
-            `Bash calls still running after ${config.autoBackgroundSeconds}s move to the background automatically.`,
-          ]
-        : []),
-      "You are notified when a background job exits: don't sleep, poll or wait on it.",
-      "Stop a background job with `kill <pid>`; bash_list lists them.",
+      [
+        "Background bash (bash, bash_list, bash_watch):",
+        "    - Run servers, watchers, long builds, or anything that takes a while with bash `background: true`. Never use `&`.",
+        ...(config.autoBackgroundSeconds > 0
+          ? [
+              `    - Bash calls still running after ${config.autoBackgroundSeconds}s move to the background automatically.`,
+            ]
+          : []),
+        "    - You are notified when a background job exits: don't sleep, poll or wait on it.",
+        "    - Stop a background job with `kill <pid>`; bash_list lists them.",
+      ].join("\n"),
     ],
     parameters: Type.Object({
       ...base.parameters.properties,
