@@ -15,17 +15,34 @@
        return { state: "working" as const, message: undefined };
      }
      return { state: "idle" as const, message: undefined };
-@@ -224,6 +225,13 @@
-     blockedCount += 1;
-     blockedMessage = data.label;
+@@ -226,6 +227,13 @@
      publishState();
-+  });
-+
+   });
+ 
 +  // patch: stay working while background work (e.g. pi-bash-bg jobs) will wake the agent.
 +  pi.events.on("herdr:working", (data) => {
 +    if (data?.active) backgroundWork.add(data.source);
 +    else backgroundWork.delete(data?.source);
 +    if (rootSession) publishState();
-   });
- 
++  });
++
    pi.on("session_start", async (event, ctx) => {
+     // TUI only: RPC/JSON/print modes are headless (no PTY herdr can display),
+     // and RPC still reports hasUI=true, so mode is the reliable gate.
+@@ -258,4 +266,16 @@
+     agentActive = false;
+     publishState();
+   });
++
++  // patch: an agent_settled that arrives while compaction still runs is skipped above; publish
++  // again once compaction has ended (pi clears its compacting flag right after these events).
++  const afterCompact = (_event, ctx) => {
++    setTimeout(() => {
++      if (!rootSession || ctx?.isIdle?.() !== true) return;
++      agentActive = false;
++      publishState();
++    }, 0);
++  };
++  pi.on("session_compact", afterCompact);
++  pi.on("session_compact_failed", afterCompact);
+ }

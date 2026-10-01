@@ -155,5 +155,19 @@ await scenario(
   },
   ["idle", "working", "idle"],
 );
+await scenario(
+  "turn settles during compaction -> idle once compaction ends",
+  async () => {
+    const s = await load();
+    await s.fire("session_start", { reason: "startup" });
+    s.setIdle(false);
+    await s.fire("agent_start");
+    await s.fire("agent_settled"); // still compacting: isIdle() is false, so it's skipped
+    const compacted = s.fire("session_compact");
+    s.setIdle(true); // pi clears its compacting flag right after the event
+    await compacted;
+  },
+  ["idle", "working", "idle"],
+);
 server.close();
 process.exit(failed ? 1 : 0);
