@@ -42,7 +42,7 @@ async function countLines(path: string): Promise<number> {
     const buf = await readFile(path);
     if (buf.length > MAX_UNTRACKED_BYTES || buf.includes(0)) return 0;
     let n = 0;
-    for (const byte of buf) if (byte === 10) n++;
+    for (let i = buf.indexOf(10); i >= 0; i = buf.indexOf(10, i + 1)) n++;
     return buf.length && buf[buf.length - 1] !== 10 ? n + 1 : n;
   } catch {
     return 0;

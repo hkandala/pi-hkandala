@@ -192,7 +192,21 @@ function readConfig(): Config {
   }
 }
 
-function sessionStats(ctx: ExtensionContext) {
+/**
+ * Keeps `fn`'s result until a new entry lands (the leaf moves), the session or the model changes:
+ * the footer draws on every frame (every wheel tick in full screen), and these walk the session.
+ */
+function perLeaf<T>(fn: (ctx: ExtensionContext) => T) {
+  let last: { key: string; value: T } | undefined;
+  return (ctx: ExtensionContext) => {
+    const m = ctx.model;
+    const key = `${ctx.sessionManager.getSessionFile()}|${ctx.sessionManager.getLeafId()}|${m?.provider}/${m?.id}`;
+    if (last?.key !== key) last = { key, value: fn(ctx) };
+    return last.value;
+  };
+}
+
+const sessionStats = perLeaf((ctx) => {
   const s = {
     input: 0,
     output: 0,
@@ -284,14 +298,15 @@ function sessionStats(ctx: ExtensionContext) {
     s.workingMs += s.lastTurnMs;
   }
   return s;
-}
+});
 
 // After a compaction pi reports no context tokens until the next response (e.g. a session resumed
 // right after an auto-compaction). Estimate them the way pi does (chars / 4, the system message
 // including its tools), once per leaf entry.
 let estimate: { leaf: string | null; tokens: number } | undefined;
+const getContextUsage = perLeaf((ctx) => ctx.getContextUsage());
 function contextUsage(ctx: ExtensionContext) {
-  const usage = ctx.getContextUsage();
+  const usage = getContextUsage(ctx);
   if (usage?.tokens !== null) return usage && { ...usage, estimated: false };
   const leaf = ctx.sessionManager.getLeafId();
   if (estimate?.leaf !== leaf) {
@@ -339,6 +354,7 @@ function render(
   g: Git,
   statuses: ReadonlyMap<string, string>,
   width: number,
+  withTabs = true, // the prompt box takes just the first line
 ): Rendered {
   const white = config.style === "white";
   const paint = (color: Color, s: string) => theme.fg(white ? "text" : color, s);
@@ -461,7 +477,7 @@ function render(
     lines,
     spans,
     paint,
-    tabs: tabData(pi, ctx, paint, bg, herd, branch, g, s, width - MARGIN),
+    tabs: withTabs ? tabData(pi, ctx, paint, bg, herd, branch, g, s, width - MARGIN) : [],
   };
 }
 
@@ -1152,7 +1168,7 @@ export default function (pi: ExtensionAPI) {
               );
             };
           }
-          const draw = (w: number) =>
+          const draw = (w: number, withTabs?: boolean) =>
             render(
               pi,
               ctx,
@@ -1164,8 +1180,9 @@ export default function (pi: ExtensionAPI) {
               g,
               footerData.getExtensionStatuses(),
               w,
+              withTabs,
             );
-          footerLine = (w) => draw(w).lines[0]!;
+          footerLine = (w) => draw(w, false).lines[0]!;
           const drawn = draw(width);
           spans = drawn.spans;
           shown = drawn.tabs;
