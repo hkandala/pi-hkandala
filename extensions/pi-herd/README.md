@@ -23,11 +23,11 @@ pi-herd does nothing outside herdr, and nothing in print, JSON or RPC mode.
 | Tool          | Does                                                                                                                                                                    |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent_start` | Starts a pi agent (`name`, `message`) and sends it that message, asking for a reply; or resumes a stopped one (`session`, `message` optional)                           |
+| `agent_stop`  | Stops agents you started, or that they started (`ids`, or `"all"`: the ones you started) and prints each one's session id, to resume it with `agent_start({ session })` |
 | `agent_send`  | Sends a `message` (`to`, `replyTo`) to one or more live agents                                                                                                          |
 | `agent_watch` | Watches agents that are working (`to`, `timeout` in minutes)                                                                                                            |
-| `agent_list`  | Lists live agents: the ones you started (default), agents in this folder (`cwd`), or `all` (also other sessions'; rarely needed)                                        |
 | `agent_read`  | What an agent has been doing: its transcript (default), or its last text (`transcript: false`); `screen: true` adds what its pane shows now                             |
-| `agent_stop`  | Stops agents you started, or that they started (`ids`, or `"all"`: the ones you started) and prints each one's session id, to resume it with `agent_start({ session })` |
+| `agent_list`  | Lists live agents: the ones you started (default), agents in this folder (`cwd`), or `all` (also other sessions'; rarely needed)                                        |
 
 `message` is `{ text, needsReply?, delivery? }`:
 
@@ -63,7 +63,7 @@ The popup needs the repo's herdr plugin (below). Without it, `/agents` prints th
 
 Optional; install any of them for the extra:
 
-- [pi-footer](../pi-footer/README.md): `󰫣 3` in the footer line while this session watches agents, a `waiting  3 agents · 2 jobs` line in the dashboard's overview, and an agents tab (↓ opens it while watches run): the agents you started and the ones you watched, listed like background jobs in the order they were started (stopped ones last), with messages sent and received, `󱖡` on agents you didn't start and `󰅐` on the ones you wait on. Enter views an agent, `x` twice stops one of yours.
+- [pi-footer](../pi-footer/README.md): `󰫣 3` in the footer line while this session watches agents, a `waiting  3 agents · 2 jobs` line in the dashboard's overview, and an agents tab (↓ opens it while watches run): the live agents you started and the ones you watched, listed like background jobs in the order they were started, with messages sent and received, `󱖡` on agents you didn't start and `󰅐` on the ones you wait on. Enter views an agent, `x` twice stops one of yours. Its full view (`o`) shows them as a tree with the agents they started, and the ended ones on `e`.
 - [pi-working](../pi-working/README.md): `Waiting on 3 agents and 2 background jobs (1m 12s)` in the prompt's border while the agent waits.
 - [pi-content-layout](../pi-content-layout/README.md): agent messages and watch endings in its dashed frames (`agent message`, `agent watcher`; click to expand, markdown highlighted), messages in open tool calls as highlighted markdown, and tool groups that read `Started 2 agents, talked to 3 agents, stopped 2 agents`.
 - [herdr/](../../herdr/README.md) in this repo:
@@ -79,7 +79,7 @@ herdr plugin install hkandala/pi-hkandala/herdr/plugin   # for /agents popups
 
 Or from a checkout of [pi-hkandala](../../README.md): `pi install <checkout>/extensions/pi-herd`, and `herdr plugin link <checkout>/herdr/plugin`.
 
-Requires herdr 0.9 or newer. pi-herd starts `pi` from your `PATH`; flags your launcher adds go in `args`. From a checkout, run `npm install` in `extensions/pi-herd` once, for its one dependency ([friendly-words](https://github.com/glitchdotcom/friendly-words), pinned to 1.2.1: later versions pull in a web server).
+Requires herdr 0.9 or newer. pi-herd starts `pi` from your `PATH`; flags your launcher adds go in `args`. From a checkout, run `npm install --omit=peer` in `extensions/pi-herd` once (without `--omit=peer`, npm also installs pi itself), for its one dependency ([friendly-words](https://github.com/glitchdotcom/friendly-words), pinned to 1.2.1: later versions pull in a web server).
 
 ## Configuration
 
@@ -110,6 +110,6 @@ Optional: `~/.pi/agent/extensions/pi-herd.json`. Every key has a default.
 
 ## Files
 
-Everything lives in `~/.pi/agent/pi-herd/`: `agents/<id>.json` (one per live agent), `messages/<to>/<id>.json` (one per message), and `attached/<id>` (while a popup shows that agent). Once a day, the first session to start deletes records of dead agents, messages older than 7 days, and stale popup markers, and closes orphaned panes in the `pi-herd` herdr session.
+Everything lives in `~/.pi/agent/pi-herd/`: `agents/<id>.json` (one per live agent), `messages/<to>/<id>.json` (one per message, and a `.delivered` marker once it reaches the model), `attached/<id>` (while a popup shows that agent), and `stopped/<id>` (it was stopped, or ended with the agent that started it). Once a day, the first session to start deletes records of dead agents, messages older than 7 days, stale popup markers, and stop markers of dead agents older than 7 days, and closes orphaned panes in the `pi-herd` herdr session.
 
 See [docs/SPEC.md](docs/SPEC.md) for the design.

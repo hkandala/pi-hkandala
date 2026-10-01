@@ -1,6 +1,7 @@
 /**
  * The files every agent shares in ~/.pi/agent/pi-herd/: agents/<id>.json (who is live),
- * messages/<toId>/<msgId>.json (one file per message), attached/<id> (a popup shows this agent).
+ * messages/<toId>/<msgId>.json (one file per message), attached/<id> (a popup shows this agent),
+ * stopped/<id> (it was stopped, or ended with the agent that started it: shown as stopped).
  */
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -21,6 +22,7 @@ export const DIR = join(getAgentDir(), "pi-herd");
 export const AGENTS = join(DIR, "agents");
 export const MESSAGES = join(DIR, "messages");
 export const ATTACHED = join(DIR, "attached");
+export const STOPPED = join(DIR, "stopped");
 export const STAMP = join(DIR, ".cleanup");
 export const DAY = 86_400_000;
 
@@ -95,7 +97,10 @@ export const liveAgents = () =>
     .filter((a): a is Agent => !!a?.id && alive(a.pid))
     .sort((a, b) => b.startedAt - a.startedAt);
 
-/** Daily: deletes dead records, old messages and stale popup markers; closes orphaned panes. */
+/**
+ * Daily: deletes dead records, old messages, stale popup markers, and stop markers of dead agents
+ * older than 7 days; closes orphaned panes.
+ */
 export async function cleanup() {
   for (const f of list(AGENTS)) {
     const a = readJson<Agent>(join(AGENTS, f));
@@ -111,6 +116,9 @@ export async function cleanup() {
     } catch {}
   }
   for (const f of list(ATTACHED)) if (!alive(readPid(join(ATTACHED, f)))) rm(join(ATTACHED, f));
+  for (const id of list(STOPPED))
+    if (!live.some((a) => a.id === id) && Date.now() - readPid(join(STOPPED, id)) > 7 * DAY)
+      rm(join(STOPPED, id));
   // A pane in the dedicated session is an orphan when no live agent is registered for it, or its
   // agent's parent isn't live. Only what is an orphan on two checks a minute apart is closed.
   const orphans = async () => {

@@ -47,6 +47,7 @@ watched.
 | `agents/<id>.json`             | the agent, on `session_start` (atomic write: temp file + rename), again only if its name changes. Deleted when the session ends. | the agent record                                                          |
 | `messages/<toId>/<msgId>.json` | the sender, once. The temp file is `.<msgId>.tmp`, then renamed.                                                                 | one message. It is never moved or changed, so it can always be read back. |
 | `attached/<id>`                | the attach popup's shell, removed by the same shell when the popup closes (section 11)                                           | the popup shell's pid, while the agent is shown in a popup                |
+| `stopped/<id>`                 | whoever stops the agent (`agent_stop`), or the agent itself when it ends with the agent that started it; removed when it resumes | the time; lists show the ended agent as `stopped`, not `done`             |
 
 **Ids.** `<id>` is the pi session id.
 
@@ -477,27 +478,28 @@ The only link to other extensions is the event bus.
 - **`herd:update`** is emitted on every change:
 
   ```ts
-  { agents: { id, name, state, since, live, cwd, mine, watched, sent, received }[],
+  { agents: { id, name, state, since, live, cwd, parent, mine, watched, sent, received }[],
     watching: number, // watches running
     waiting: number } // watches running while this agent is idle, else 0
   ```
 
   - `agents` are this session's children and the agents it has watched (with `agent_watch`, or a
-    message with `needsReply`), in the order pi-herd first listed them. Messages alone don't list
-    an agent, so a started agent doesn't list its parent. Agents its children started aren't
-    listed. `mine` says this session started it (it can be stopped from here). `name` is always
-    set (section 2); `sent` and `received` count messages with that agent, kept on `globalThis`
-    (so across `/reload`, not a restart).
+    message with `needsReply`), and below them the agents they started, to any depth; in the
+    order pi-herd first listed them. Messages alone don't list an agent, so a started agent
+    doesn't list its parent. `parent` makes the tree; `mine` says the agent is below this one in
+    it (it can be stopped from here). `name` is always set (section 2); `sent` and `received`
+    count messages with that agent, kept on `globalThis` (so across `/reload`, not a restart).
   - `state` is herdr's status for the agent, except that herdr's `done` (idle, not yet looked at)
     is reported as `idle`. pi-herd follows each listed agent's status through herdr events
     (section 6).
   - **Agents that ended stay listed** for the rest of the session, like finished jobs, with
-    `live: false` and `state` `stopped` (this session stopped it with `agent_stop`) or `done` (it
-    ended any other way); `since` is when it ended. An agent resumed with `agent_start` is live
+    `live: false` and `state` `stopped` (it has a `stopped/<id>` marker: someone stopped it, or it
+    ended with the agent that started it) or `done` (it ended any other way); `since` is when it
+    ended. The marker makes an agent several levels down read `stopped` for everyone above it. An agent resumed with `agent_start` is live
     again.
 
 - **pi-herd listens for** `herd:attach { id }` (opens the attach popup, section 11) and
-  `herd:stop { id }` (the same as `agent_stop`; pi-footer sends it for this session's children).
+  `herd:stop { id }` (the same as `agent_stop`: any live agent below this one).
 - **`/agents`**: lists the agents. Choosing one attaches to it in the repo's popup (section 11).
   Inside the popup, the started agent shows how to close it and offers `/detach` (section 11).
   Detaching closes the popup and leaves the agent running.
@@ -513,14 +515,14 @@ job (2m)`
       before the jobs count `󰦖 2`, so agents come first. Like the jobs count, it is never dropped on
       narrow terminals. A click on it opens the dashboard at the `agents` tab, and so does ↓ while
       watches run.
-    - **`agents` tab:** present while `herd:update` lists any agent, placed before the `jobs`
-      tab. Its rows look like the jobs tab's. Tab labels carry no counts.
-      - **A flat list** of `herd:update`'s agents, ended ones included.
-      - **Order:** stopped agents last; otherwise the order pi-herd first listed them (the order
-        they were started or watched). A status change never moves a row, so the list holds still.
+    - **`agents` tab:** present while `herd:update` lists a live top-level agent (one not
+      under another listed agent), placed before the `jobs` tab. Its rows look like the jobs
+      tab's. Tab labels carry no counts.
+      - **A flat list** of the live top-level agents, in the order pi-herd first listed them (the
+        order they were started or watched). A status change never moves a row.
       - Each row, in aligned columns (padded by display width): the name with its markers, status,
         time, folder, and messages sent `󱉱` and received `󱉰` (blank when none):
-        `▸ frog-thunder 󱖡 󰅐  working  40s     ~/code/lib  󱉱 1 󱉰 0`
+        `▸ frog-thunder 󱖡 󰅐  working  40s  ~/code/lib  󱉱 1 󱉰 0`
       - Markers after the name, dim: `󱖡` (md-handshake-outline) on an agent this session didn't
         start, `󰅐` (md-clock-outline) while this session waits on the agent.
       - Time: how long in this status; for an ended agent, how long ago it ended (`1m ago`).
@@ -528,10 +530,15 @@ job (2m)`
         `done` are dim, and the time is always dim.
       - 3 rows at a time; it scrolls with the selection (`3/12`).
       - Keys, with the keys on the dashboard: ↑/↓ select, Enter views a live agent
-        (`herd:attach`), `x` twice stops a live agent this session started (`herd:stop`). A click
-        selects a row, and a click on the selected row views it. The hint reads
-        `↑↓ select · enter view · x stop`, less what doesn't apply.
+        (`herd:attach`), `x` twice stops a live agent this session started (`herd:stop`), `o`
+        opens the full view. A click selects a row, and a click on the selected row views it. The
+        hint reads `↑↓ select · enter view · x stop`, less what doesn't apply.
       - The selection follows its agent across updates while the tab is open.
+    - **Full view** (`o`, `/footer full`): the dashboard over the whole screen, no border, with
+      info, agents and jobs tabs. Its agents tab shows every listed agent as a tree (`├ └ │`,
+      by `parent`); at every level stopped ones go last, otherwise pi-herd's order. Ended
+      agents are hidden until `e` (`e show ended (3)` / `e hide ended`; the jobs tab has its
+      own). With none live it reads `no live agents`. `x` stops any live agent below this one.
     - **Overview:** one `waiting` line for what the session still waits on, agents it watches
       and jobs it watches running (`waiting  3 agents · 2 jobs`); none when nothing is
       pending. It replaces pi-footer's own `jobs` line.

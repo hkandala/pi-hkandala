@@ -21,7 +21,7 @@ goes idle/done only when the turn has ended and nothing is pending.
 ### What it changes
 
 herdr installs its pi integration at `~/.pi/agent/extensions/herdr-agent-state.ts`. The patch
-changes about 20 lines there:
+changes about 30 lines there:
 
 - It listens for a `herdr:working` event on `pi.events`, shaped
   `{ source: string, active: boolean }`, and keeps a set of the sources that are active.

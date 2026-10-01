@@ -40,6 +40,7 @@ import {
   rm,
   short,
   STAMP,
+  STOPPED,
   writeAtomic,
   type Agent,
 } from "./store.ts";
@@ -101,11 +102,11 @@ const g = ((globalThis as { __piHerd?: unknown }).__piHerd ??= {}) as {
   watches?: Map<string, Watch>;
   counts?: Map<string, { sent: number; received: number }>; // messages with each agent
   // The footer's agents, in the order they were first listed: this session's children and the
-  // agents it has watched. Ended ones stay: when they ended, and whether this session stopped them.
+  // agents it has watched, and below them the agents they started. Ended ones stay: when they
+  // ended, and whether they were stopped (a stopped/<id> marker).
   listed?: Map<string, Agent>;
   watched?: Set<string>;
   ended?: Map<string, { at: number; stopped: boolean }>;
-  stopped?: Set<string>; // agents this session stopped (they may still be shutting down)
   since?: Map<string, number>; // when each followed agent's status last changed (for the footer)
   herdr?: boolean;
 };
@@ -174,7 +175,6 @@ export default function (pi: ExtensionAPI) {
   const ended = () => (g.ended ??= new Map());
   const listed = () => (g.listed ??= new Map());
   const watched = () => (g.watched ??= new Set());
-  const stopped = () => (g.stopped ??= new Set());
   const count = (id: string, key: "sent" | "received") => {
     const c = counts().get(id) ?? { sent: 0, received: 0 };
     c[key]++;
@@ -182,15 +182,15 @@ export default function (pi: ExtensionAPI) {
   };
   const queued = () => (g.queued ??= new Set());
   const children = (agents = liveAgents()) => agents.filter((a) => me && a.parent === me.id);
-  /** The agents below this one in the tree of agents started with agent_start, at any depth. */
+  /** Whether `a` is below this agent in the tree of agents started with agent_start (byId: the tree). */
+  const below = (a: Agent, byId: Map<string, Agent>) => {
+    for (let p = a.parent, n = 0; p && n < 100; p = byId.get(p)?.parent, n++)
+      if (p === me?.id) return true;
+    return false;
+  };
   const descendants = (agents = liveAgents()) => {
     const byId = new Map(agents.map((x) => [x.id, x]));
-    const below = (a: Agent) => {
-      for (let p = a.parent, n = 0; p && n < 100; p = byId.get(p)?.parent, n++)
-        if (p === me?.id) return true;
-      return false;
-    };
-    return agents.filter(below);
+    return agents.filter((a) => below(a, byId));
   };
 
   // herdr (optional patch, see herdr/README.md): working while watches run. herdr plays "done" on
@@ -204,20 +204,28 @@ export default function (pi: ExtensionAPI) {
   /** Tells herdr, pi-footer and pi-working; starts and stops follows. */
   const refresh = () => {
     if (!me) return;
-    // The agents this one started and the ones it has watched; listed ones that are gone stay
-    // listed, as stopped or done (like finished jobs).
+    // The agents this one started and the ones it has watched, and below them the agents they
+    // started (any depth). Listed ones that are gone stay listed, as stopped or done (like
+    // finished jobs).
+    const agents = liveAgents();
     const live = new Map(
-      liveAgents()
-        .filter((a) => a.parent === me!.id || watched().has(a.id))
-        .map((a) => [a.id, a]),
+      agents.filter((a) => a.parent === me!.id || watched().has(a.id)).map((a) => [a.id, a]),
     );
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const a of agents)
+        if (!live.has(a.id) && a.parent && live.has(a.parent)) {
+          live.set(a.id, a);
+          grew = true;
+        }
+    }
     for (const a of live.values()) {
       listed().set(a.id, a);
-      if (ended().delete(a.id)) stopped().delete(a.id); // resumed
+      ended().delete(a.id); // resumed
     }
     for (const id of listed().keys())
       if (!live.has(id) && !ended().has(id))
-        ended().set(id, { at: Date.now(), stopped: stopped().has(id) });
+        ended().set(id, { at: Date.now(), stopped: existsSync(join(STOPPED, id)) });
     for (const [id, f] of follows)
       if (!live.has(id)) {
         f.stop();
@@ -243,7 +251,8 @@ export default function (pi: ExtensionAPI) {
           since: e?.at ?? f?.since ?? a.startedAt,
           live: !e,
           cwd: a.cwd,
-          mine: a.parent === me!.id,
+          parent: a.parent,
+          mine: below(a, listed()), // started by this agent, at any depth
           watched: watches().has(a.id),
           sent: counts().get(a.id)?.sent ?? 0,
           received: counts().get(a.id)?.received ?? 0,
@@ -529,11 +538,18 @@ export default function (pi: ExtensionAPI) {
     refresh();
   };
   const parentAlive = () => !parentId || alive(readAgent(parentId)?.pid ?? 0);
+  /** A stopped/<id> marker: lists show the agent as stopped once it ends. Never blocks a stop. */
+  const markStopped = (id: string) => {
+    try {
+      writeFileSync(join(STOPPED, id), String(Date.now()));
+    } catch {}
+  };
   /** Agents die with the agent that started them: SIGTERM ourselves so pi shuts down cleanly. */
   let dying = false;
   const die = () => {
     if (dying) return;
     dying = true;
+    if (me) markStopped(me.id); // ends as stopped
     process.kill(process.pid, "SIGTERM");
   };
 
@@ -633,7 +649,7 @@ export default function (pi: ExtensionAPI) {
    * is dropped first: an `exited` ending would only wake us for what we just did.
    */
   const stop = (a: Agent) => {
-    stopped().add(a.id);
+    markStopped(a.id); // so every list shows it as stopped
     watches().delete(a.id);
     armDeadline();
     refresh();
@@ -1129,7 +1145,6 @@ export default function (pi: ExtensionAPI) {
       g.watches = new Map();
       g.counts = new Map();
       g.ended = new Map();
-      g.stopped = new Set();
       g.listed = new Map();
       g.watched = new Set();
       g.since = new Map();
@@ -1138,6 +1153,8 @@ export default function (pi: ExtensionAPI) {
     for (const w of watches().values()) w.ending = false;
     g.me = id;
     mkdirSync(AGENTS, { recursive: true });
+    mkdirSync(STOPPED, { recursive: true });
+    rm(join(STOPPED, id)); // live again (resumed)
     me = {
       id,
       name: pi.getSessionName(),
@@ -1234,7 +1251,6 @@ export default function (pi: ExtensionAPI) {
       g.queued = new Set();
       g.counts = new Map();
       g.ended = new Map();
-      g.stopped = new Set();
       g.listed = new Map();
       g.watched = new Set();
       g.since = new Map();
