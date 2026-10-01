@@ -243,6 +243,7 @@ const UNITS: [string, number][] = [
  * "12m ago", or the shortest clear clock time: "14:02:31" today, "Sep 24 14:02", "Sep 24 2025"
  * ("2:02:31 pm", "Sep 24 2:02 pm" in 12-hour format).
  */
+const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
 function clock(ms: number | undefined): string {
   if (!ms || stamps === "off") return "";
   const now = new Date();
@@ -257,7 +258,7 @@ function clock(ms: number | undefined): string {
   const time = `${twelveHour ? h % 12 || 12 : two(h)}:${two(d.getMinutes())}`;
   const ampm = twelveHour ? (h < 12 ? " am" : " pm") : "";
   if (d.toDateString() === now.toDateString()) return `${time}:${two(d.getSeconds())}${ampm}`;
-  const day = `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
+  const day = `${MONTHS[d.getMonth()]} ${d.getDate()}`; // toLocaleString costs ~30µs per call
   if (d.getFullYear() === now.getFullYear()) return `${day} ${time}${ampm}`;
   return `${day} ${d.getFullYear()}`;
 }
@@ -804,10 +805,16 @@ function groupLines(
   if (list[node.clIndex] !== node) node.clIndex = list.indexOf(node);
   if (node.clIndex < 0) [list, node.clIndex] = [[node], 0]; // outside the chat: on its own
   const i: number = node.clIndex;
-  const first = neighbor(list, i, -1) !== "item";
+  let prev = i - 1; // the member before it, if any
+  while (prev >= 0 && kindOf(list[prev]) === "skip") prev--;
+  const first = kindOf(list[prev]) !== "item";
   const last = kindOf(node) === "closes" || !["item", "closes"].includes(neighbor(list, i, 1));
   const alone = first && last && solo;
-  const collapsed = !alone && ((first ? node : groupStart(list, i)).clCollapsed ?? collapseGroups);
+  // The group's first member, from the one before (it rendered just before, in the same frame).
+  const lead: Proto = (node.clLead = first
+    ? node
+    : ((list[prev] as Proto).clLead ?? groupStart(list, i)));
+  const collapsed = !alone && (lead.clCollapsed ?? collapseGroups);
   let head: string | undefined; // the summary line, when the member opens the group
   const started = first ? clock(startOf(node)) : "";
   if (first && !alone) {
@@ -919,54 +926,67 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
   // Closed, a long target gives way to the result and ends in … (pi's truncation resets colors
   // before it, so it gets its own). Open, it wraps in full under its start (a bash command with its
   // own line breaks), the result after it, or on a line of its own when it doesn't fit.
-  let lines: string[];
-  let toggle: string | undefined; // the input's toggle, under the result
-  if (open) {
-    const full = t.toolName === "bash" ? untab(str(t.args?.command).trim()) : target;
-    // A copy: the highlighted command is memoized, and the options get appended to it.
-    const colored = [
-      ...(t.toolName === "bash" && state !== "error"
-        ? memo(t, "clCommand", [full, theme], () => highlighted(full, "bash", theme))
-        : full.split("\n").map((l) => theme.fg(color, l))),
-    ];
-    // The options follow the input, dim, their own line breaks kept.
-    const opts = options(t, true);
-    if (opts) {
-      const [first, ...rest] = opts.split("\n").map((l) => theme.fg("dim", l));
-      colored[colored.length - 1] += (full ? theme.fg("dim", " · ") : "") + first;
-      colored.push(...rest);
+  const buildRow = () => {
+    let lines: string[];
+    let toggle: string | undefined; // the input's toggle, under the result
+    if (open) {
+      const full = t.toolName === "bash" ? untab(str(t.args?.command).trim()) : target;
+      // A copy: the highlighted command is memoized, and the options get appended to it.
+      const colored = [
+        ...(t.toolName === "bash" && state !== "error"
+          ? memo(t, "clCommand", [full, theme], () => highlighted(full, "bash", theme))
+          : full.split("\n").map((l) => theme.fg(color, l))),
+      ];
+      // The options follow the input, dim, their own line breaks kept.
+      const opts = options(t, true);
+      if (opts) {
+        const [first, ...rest] = opts.split("\n").map((l) => theme.fg("dim", l));
+        colored[colored.length - 1] += (full ? theme.fg("dim", " · ") : "") + first;
+        colored.push(...rest);
+      }
+      [lines, toggle] = capped(
+        memo(t, "clWrapped", [colored, room], () =>
+          colored.flatMap((l) => wrapTextWithAnsi(l, room)),
+        ),
+        theme,
+        t.clFullRow,
+      );
+      if (tail && visibleWidth(lines.at(-1)! + tail) > room) lines.push("");
+    } else {
+      // The options follow the target, dim, and give way first.
+      const fit = Math.max(1, room - visibleWidth(tail));
+      const opts = options(t, false);
+      const dimmed = (x: string) => (pulsing ? paint(x) : theme.fg("dim", x));
+      // Only `fit` columns show: measuring a whole heredoc every frame is what makes scrolling slow.
+      const short = (s: string) => (s.length > 2 * fit ? s.slice(0, 2 * fit) : s);
+      const text = paint(short(target)) + (opts ? dimmed(short((target ? " · " : "") + opts)) : "");
+      lines = [cut(text, fit)];
     }
-    [lines, toggle] = capped(
-      colored.flatMap((l) => wrapTextWithAnsi(l, room)),
-      theme,
-      t.clFullRow,
-    );
-    if (tail && visibleWidth(lines.at(-1)! + tail) > room) lines.push("");
-  } else {
-    // The options follow the target, dim, and give way first.
-    const fit = Math.max(1, room - visibleWidth(tail));
-    const opts = options(t, false);
-    const dimmed = (x: string) => (pulsing ? paint(x) : theme.fg("dim", x));
-    const text = paint(target) + (opts ? dimmed((target ? " · " : "") + opts) : "");
-    lines = [cut(text, fit)];
-  }
-  const painted = state === "running" ? pulse(theme, name, open) : theme.fg(color, name);
-  const label = `${theme.bold(theme.italic(painted))} `;
-  const row = lines.map((l, i) => (i ? " ".repeat(visibleWidth(label)) : label) + l);
-  const tailText = lines.at(-1) ? tail : tail.slice(1);
-  let after = pulsing ? paint(tailText) : theme.fg(state === "error" ? "error" : "dim", tailText);
-  // An open edit's or write's line counts in the diff's colors.
-  if (open && (t.toolName === "edit" || t.toolName === "write"))
-    after = after.replace(
-      /\+(\d+)(?: -(\d+))?/,
-      (_, added, removed) =>
-        theme.fg("toolDiffAdded", `+${added}`) +
-        (removed ? ` ${theme.fg("toolDiffRemoved", `-${removed}`)}` : "") +
-        theme.getFgAnsi("dim"),
-    );
-  row[row.length - 1] += after;
-  if (toggle) row.push(" ".repeat(visibleWidth(name) + 1) + toggle);
-  t.clRowMore = toggle ? row.length - 1 : undefined;
+    const painted = state === "running" ? pulse(theme, name, open) : theme.fg(color, name);
+    const label = `${theme.bold(theme.italic(painted))} `;
+    const row = lines.map((l, i) => (i ? " ".repeat(visibleWidth(label)) : label) + l);
+    const tailText = lines.at(-1) ? tail : tail.slice(1);
+    let after = pulsing ? paint(tailText) : theme.fg(state === "error" ? "error" : "dim", tailText);
+    // An open edit's or write's line counts in the diff's colors.
+    if (open && (t.toolName === "edit" || t.toolName === "write"))
+      after = after.replace(
+        /\+(\d+)(?: -(\d+))?/,
+        (_, added, removed) =>
+          theme.fg("toolDiffAdded", `+${added}`) +
+          (removed ? ` ${theme.fg("toolDiffRemoved", `-${removed}`)}` : "") +
+          theme.getFgAnsi("dim"),
+      );
+    row[row.length - 1] += after;
+    if (toggle) row.push(" ".repeat(visibleWidth(name) + 1) + toggle);
+    t.clRowMore = toggle ? row.length - 1 : undefined;
+    return row;
+  };
+  // A settled row doesn't change: build it once. Measuring every row's text each frame is slow,
+  // and pi's width cache (512 strings) can't hold a long session's rows.
+  const row =
+    state === "running"
+      ? buildRow()
+      : memo(t, "clRow", [state, result, open, width, room, t.args, t.clFullRow, theme], buildRow);
   let content = body(t, theme, config);
   if (t.toolName === "bash" && state === "running") runningBash.add(t);
   else runningBash.delete(t);
@@ -1255,11 +1275,15 @@ export default function (pi: ExtensionAPI) {
       "render",
       (orig) =>
         function (this: Proto, width: number) {
-          const parent: Proto | null = (this.clParent ??= (chat && parentOf(chat, this)) ?? null);
+          // false: not in the chat (cached too: the search walks the whole chat).
+          if (this.clParent === undefined && chat) this.clParent = parentOf(chat, this) ?? false;
+          const parent: Proto | false | undefined = this.clParent;
           if (!parent) return orig.call(this, width);
           const list: Proto[] = parent.children;
           const i = list.indexOf(this);
-          const opens = list.slice(0, i).filter((c) => c instanceof DynamicBorder).length % 2 === 0;
+          // Whether it opens a panel (an even count of rules before it): the chat grows at the end.
+          const opens = (this.clOpens ??=
+            list.slice(0, i).filter((c) => c instanceof DynamicBorder).length % 2 === 0);
           for (let j = i + 1; opens && j < list.length; j++) {
             const member = list[j]!;
             if (member instanceof DynamicBorder) break;
@@ -1384,11 +1408,17 @@ export default function (pi: ExtensionAPI) {
           );
           const justCopied = Date.now() - (this.clCopied ?? 0) < 1200;
           const bullet = !replied ? "" : justCopied ? th.fg("success", "✓") : th.fg("text", "●");
-          text = memo(this, "clText", [body, th, stamp, bullet, width], () =>
-            stampFirst(bulleted(body, bullet ? () => bullet : undefined), stamp, width, th),
-          );
+          let bulletY: number;
+          [text, bulletY] = memo(this, "clText", [body, th, stamp, bullet, width], () => {
+            const out = stampFirst(
+              bulleted(body, bullet ? () => bullet : undefined),
+              stamp,
+              width,
+              th,
+            );
+            return [out, bullet ? out.findIndex((l) => !blank(l)) : -1] as const;
+          });
           this.clTextY = group.length;
-          const bulletY = bullet ? text.findIndex((l) => !blank(l)) : -1;
           this.clBulletY = bulletY < 0 ? undefined : group.length + bulletY;
           return [...group, ...text];
         },
