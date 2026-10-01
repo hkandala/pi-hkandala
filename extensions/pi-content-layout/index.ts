@@ -111,10 +111,15 @@ type FullScreen = {
 };
 type State = "running" | "done" | "error";
 
-/** Summary wording per tool: [verb, noun, plural noun]. Others read "ran <tool> N times". */
+/**
+ * Summary wording per tool: [verb, noun, plural noun]; no noun: the verb alone, uncounted. Others
+ * read "ran <tool> N times".
+ */
 type Wording = [string, string, string?];
 const SEARCHED: Wording = ["searched", "pattern"];
 const RAN: Wording = ["ran", "command"];
+const TALKED: Wording = ["talked to", "agent"];
+const CHECKED: Wording = ["checked agents", ""];
 const WORDING: Record<string, Wording> = {
   read: ["read", "file"],
   edit: ["edited", "file"],
@@ -129,6 +134,20 @@ const WORDING: Record<string, Wording> = {
   // pi-web's tools; web_fetch counts pages, not calls (one call fetches up to 10).
   web_search: ["searched the web", "time"],
   web_fetch: ["fetched", "web page"],
+  // pi-herd's tools count agents, not calls (one call can name several).
+  agent_start: ["started", "agent"],
+  agent_send: TALKED,
+  agent_watch: TALKED,
+  agent_read: CHECKED,
+  agent_list: CHECKED,
+  agent_stop: ["stopped", "agent"],
+};
+/** Agents a pi-herd call names: its to/ids list, or (agent_stop "all") how many it stopped. */
+const agentsIn = (t: Tool) => {
+  const v = t.args?.to ?? t.args?.ids;
+  if (Array.isArray(v)) return v.length;
+  const stopped = (t.result as { details?: { stopped?: number } } | undefined)?.details?.stopped;
+  return v === "all" ? (stopped ?? 1) : 1;
 };
 
 /** Terminal prompt marks (OSC 133) that pi puts around messages for jump-to-prompt. */
@@ -404,6 +423,7 @@ const IN_TARGET: Record<string, string[]> = {
   web_fetch: ["urls"],
   bash_watch: ["pid"],
 };
+const HERD_MESSAGE = new Set(["agent_start", "agent_send"]); // tools with pi-herd's message
 const OPTION_WIDTH = 40; // closed, longer (or multi-line) values show just their name
 
 /**
@@ -419,6 +439,15 @@ function options(t: Tool, full: boolean): string {
     .filter(([k, v]) => !shown.includes(k) && v !== undefined && v !== null && v !== false)
     .map(([k, v]) => {
       if (v === true) return k;
+      // pi-herd's message object: its text shows open as markdown; closed, only its flags.
+      if (k === "message" && HERD_MESSAGE.has(t.toolName) && typeof v === "object") {
+        const m = v as { delivery?: string; needsReply?: boolean };
+        const flags = [
+          m.delivery !== "steer" && m.delivery,
+          m.needsReply !== undefined && `needsReply ${m.needsReply}`,
+        ];
+        return [k, ...flags].filter(Boolean).join(" · ");
+      }
       const flat = Array.isArray(v) && v.every((x) => typeof x !== "object");
       const text = flat ? v.join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v);
       const big = text.includes("\n") || text.length > OPTION_WIDTH;
@@ -491,7 +520,7 @@ const isOpen = (t: Tool & Proto, config: Config): boolean =>
 /** Lines shown under an open row: the diff, written content, or output (red for failures). */
 function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
   const open = isOpen(t, config);
-  return memo(t, "clBody", [open, t.result, t.args?.content, theme], () =>
+  return memo(t, "clBody", [open, t.result, t.args?.content, t.args?.message, theme], () =>
     bodyLines(t, open, theme),
   );
 }
@@ -499,6 +528,14 @@ function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
   const lang = getLanguageFromPath(str(t.args?.path ?? t.args?.file_path));
   if (open && t.toolName === "write")
     return numbered(highlighted(untab(str(t.args?.content).trimEnd()), lang, theme), 1, theme);
+  const text = HERD_MESSAGE.has(t.toolName) && str((t.args?.message as { text?: unknown })?.text);
+  if (open && text) {
+    const out = t.result ? linesOf(t.result).map((l) => theme.fg("muted", l)) : [];
+    return [
+      ...highlighted(untab(text.trimEnd()), "markdown", theme),
+      ...(out.length ? ["", ...out] : []),
+    ];
+  }
   if (!open || !t.result) return [];
   if (t.toolName === "edit" && t.result.details?.diff)
     return diffOf(t.result.details.diff, lang, theme);
@@ -734,11 +771,13 @@ function summary(members: unknown[], theme: Theme, collapsed: boolean, live: boo
     if (stateOf(t) === "error") failed++;
     const wording = (WORDING[t.toolName] ??= [`ran ${t.toolName}`, "time"]); // one entry per tool
     const urls = t.toolName === "web_fetch" && t.args?.urls;
-    counts.set(wording, (counts.get(wording) ?? 0) + (Array.isArray(urls) ? urls.length : 1));
+    const n = Array.isArray(urls) ? urls.length : t.toolName.startsWith("agent_") ? agentsIn(t) : 1;
+    counts.set(wording, (counts.get(wording) ?? 0) + n);
   }
   const text =
-    [...counts].map(([[verb, noun, nouns], n]) => `${verb} ${plural(n, noun, nouns)}`).join(", ") ||
-    "thought";
+    [...counts]
+      .map(([[verb, noun, nouns], n]) => (noun ? `${verb} ${plural(n, noun, nouns)}` : verb))
+      .join(", ") || "thought";
   const color = collapsed ? "muted" : "text";
   const title = text[0]!.toUpperCase() + text.slice(1);
   const line = collapsed && live ? pulse(theme, title, false) : theme.fg(color, title);
@@ -794,11 +833,13 @@ function groupLines(
     // Fit to 3 columns in, 2 of rail, 2 for the └, 3 after: long lines wrap, or end in …. A diff
     // line's tint (a background it opens with) spans the whole row.
     const fit = Math.max(1, width - (alone ? 8 : 10));
+    // A pi-herd message is prose: it always wraps.
+    const wrap = wordWrap || HERD_MESSAGE.has((node as unknown as Tool).toolName);
     let wrapped = rowBody.flatMap((l) => {
       // oxlint-disable-next-line no-control-regex
       const tint = /^\x1b\[48;[\d;]*m/.exec(l)?.[0] ?? "";
       const cut = tint + theme.fg("muted", "…");
-      const parts = !wordWrap
+      const parts = !wrap
         ? [truncateToWidth(l, fit, cut)]
         : visibleWidth(l) > fit
           ? hanging(l, fit)
