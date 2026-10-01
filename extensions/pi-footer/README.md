@@ -6,7 +6,7 @@ A minimal one-line footer for pi, inside a rounded prompt box, that expands into
  ╭── ⠋ Working ─────────────────────────────────────────────────────────────────────────────────────────╮
  │ fix the footer so the cache goes cold after compaction                                               │
  │                                                                                                      │
- │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7              cold (~$0.46) · 󰦖 2 · 󰪟 47k/200k · opus-5.5 · high │
+ │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7          cold (~$0.46) · 󰫣 3 · 󰦖 2 · 󰪟 47k/200k · opus-5.5 · high │
  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -19,44 +19,58 @@ The box is pi's own editor (same keys, spinner, and autocomplete) drawn with rou
 | 󰘬 branch `󰁝2 󰁅1`  | git branch, commits to push / pull                                                                                                                               |
 | `+42 -7`          | pending line changes vs HEAD, including untracked files                                                                                                          |
 | `cold (~$0.46)`   | only while the prompt cache is cold (see below)                                                                                                                  |
+| `󰫣 3`             | [pi-herd](../pi-herd/README.md) agents this session watches, dim; click it for the agents tab                                                                    |
 | `󰦖 2`             | [pi-bash-bg](../pi-bash-bg/README.md) jobs running in this session, dim; click it for the jobs tab                                                               |
 | `󰪟 47k/200k`      | context used / window, hidden at 0; the pie fills in eighths, yellow above 75%, red above 90%; `~` marks an estimate until the first response after a compaction |
 | `opus-5.5 · high` | model and thinking level                                                                                                                                         |
 
-Tokens, cost and cache timing are in the dashboard's `usage` tab. Clicking a piece (fullscreen TUI mode) opens the dashboard at its tab: folder and git → `git`, cold and context → `usage`, jobs → `jobs`, model and effort → `session`. The rest of the line does nothing; clicking the prompt's text closes the dashboard.
+Tokens, cost and cache timing are in the dashboard's `usage` tab. Clicking a piece (fullscreen TUI mode) opens the dashboard at its tab: folder and git → `git`, cold and context → `usage`, agents → `agents`, jobs → `jobs`, model and effort → `session`. The rest of the line does nothing; clicking the prompt's text closes the dashboard.
 
 **Cache:** once the prompt cache expires, you switch models, or the session is compacted, `cold` shows in yellow: the next message re-bills the full context, and `(~$0.46)` estimates what that costs (when the model has pricing). The lifetime comes from the model (`promptCache`, honoring `PI_CACHE_RETENTION=long`), else pi's 5-minute default; refreshes from pi's `cacheWarming` setting extend it.
 
-On narrow terminals git drops first, then the context. Folder, cold, jobs and model always stay. Statuses from other extensions appear right-aligned on their own line below. Yellow and red use the theme's `warning` and `error` colors.
+On narrow terminals git drops first, then the context. Folder, cold, agents, jobs and model always stay. Statuses from other extensions appear right-aligned on their own line below. Yellow and red use the theme's `warning` and `error` colors.
 
 ## Dashboard
 
 Press ↓ at the end of the prompt (a first ↓ moves the cursor there) to open the dashboard and move the keys to it; ↑ (at the top) or Esc closes it and gives the keys back. Typing also gives them back (and closes a dashboard that ↓ opened). The prompt's cursor disappears while the dashboard has the keys. To keep it open while you type, click a footer piece or run `/footer [tab]` (`/footer` alone closes an open dashboard); clicking the prompt's text closes it.
 
-It has tabs, like Claude Code's dialogs: ←/→ or a click switches them, and the active tab is bold (with a background while the dashboard has the keys). ↓ and `/footer` open on the jobs tab while jobs run, else on the last tab you used. The dashboard keeps the height of its tallest tab, so switching tabs doesn't move anything.
+It has tabs, like Claude Code's dialogs: ←/→ or a click switches them, and the active tab is bold (with a background while the dashboard has the keys). ↓ and `/footer` open on the agents tab while watches run, the jobs tab while jobs run, else on the last tab you used. The dashboard keeps the height of its tallest tab, so switching tabs doesn't move anything.
 
 ```
-   overview  session  usage  git  jobs 1   ←→ switch · ↑ close
+   overview  session  usage  git  jobs   ←→ switch · ↑ close
 
    repo       pi-hkandala · master → origin/master · 7 files · +42 -7
    model      anthropic/claude-opus-5-5 · thinking high · 47k / 200k (23%)
    usage      ↑116 ↓29.6k · $1.24 · 99% last hit · expires in 4m
    session    12 user · 51 assistant · 87 tool calls · 42m working
-   jobs       1 running · 3 completed
+   waiting    2 agents · 1 job
 ```
 
 | Tab        | Shows                                                                                                                                                                                                       |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `overview` | one line per area (above)                                                                                                                                                                                   |
+| `overview` | one line per area (above); `waiting` lists what the agent still waits on (agents it watches, jobs running)                                                                                                  |
 | `session`  | model, messages, times, and speed (`n/a` before the first reply)                                                                                                                                            |
 | `usage`    | after the first prompt: context, tokens, cost (total, this or last turn, and split into input, output and cache), and cache (with the next message's cost)                                                  |
 | `git`      | only in a git repo: the repo URL with the folder (`https://github.com/you/repo (~/code/repo)`), worktrees, branch and sync, last commit, and changes: `7 files · 2 created, 4 modified, 1 deleted · +42 -7` |
+| `agents`   | with [pi-herd](../pi-herd/README.md) and agents this session started, watches or talks to (below)                                                                                                           |
 | `jobs`     | with [pi-bash-bg](../pi-bash-bg/README.md) and jobs in this session (below)                                                                                                                                 |
 
-**Jobs** (with pi-bash-bg): the footer line shows `󰦖 2` on its right, before the context, while this session has background jobs running; it never drops on narrow terminals, and a click on it opens the jobs tab. The tab shows running jobs, then completed ones, 3 at a time: ↑/↓ select, Enter opens the job's log viewer, and `x` twice kills it. A click selects a job, and a click on the selected job opens its log.
+**Agents** (with pi-herd): the footer line shows `󰫣 3` before the jobs count while this session watches agents; it never drops on narrow terminals, and a click on it opens the agents tab. The tab lists the agents this session started and the ones it has watched, ended ones included (`stopped` by this session, or `done` on their own). Stopped agents go last; otherwise rows keep the order the agents were first listed in, so a status change never moves a row. Each row shows, in aligned columns, the name with its dim markers (`󱖡` an agent this session didn't start, `󰅐` while this session waits on it), status, time (for ended ones, `1m ago`), folder, and messages sent `󱉱` and received `󱉰`. Only `working` and `blocked` are colored. 3 rows at a time: ↑/↓ select, Enter views a live agent (a herdr popup, or focus for an agent in this herdr session), and `x` twice stops a live agent this session started. A click selects an agent, and a click on the selected agent views it.
 
 ```
-   overview  session  usage  git  jobs 1   ←→ switch · ↑ close
+   overview  session  usage  git  agents   ←→ switch · ↑ close
+
+   ▸ reviewer 󰅐        working  2m      ~/code/app  󱉱 1 󱉰 0
+     frog-thunder 󱖡 󰅐  working  3m      ~/code/lib  󱉱 1 󱉰 0
+     docs              stopped  1m ago  ~/code/app  󱉱 1 󱉰 1
+
+   ↑↓ select · enter view · x stop
+```
+
+**Jobs** (with pi-bash-bg): the footer line shows `󰦖 2` on its right, before the context, while this session has background jobs running; it never drops on narrow terminals, and a click on it opens the jobs tab. The tab shows running jobs, then finished ones, 3 at a time: ↑/↓ select, Enter opens the job's log viewer, and `x` twice kills it. A click selects a job, and a click on the selected job opens its log.
+
+```
+   overview  session  usage  git  jobs   ←→ switch · ↑ close
 
    ▸ 48213  running  4m      npm run dev                               ~/proj
      48190  exit 0   12s     npm test                                  ~/proj

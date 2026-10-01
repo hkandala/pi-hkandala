@@ -5,15 +5,15 @@
  *    ╭── ⠋ Working ─────────────────────────────────────────────────────────────────────╮
  *    │ prompt                                                                            │
  *    │                                                                                   │
- *    │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7     cold (~$0.46) · 󰦖 2 · 󰪟 47k/200k · opus-5.5 · high │
+ *    │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   cold (~$0.46) · 󰫣 3 · 󰦖 2 · 󰪟 47k/200k · opus-5.5 · high │
  *    ╰───────────────────────────────────────────────────────────────────────────────────╯
  *
- * Right side: cold (only when the prompt cache is cold), pi-bash-bg's running jobs, context, model
- * and effort. A click on a piece opens its tab (folder/git → git, cold/context → usage, jobs → jobs,
- * model/effort → session); a click on the prompt's text closes the dashboard. The dashboard has
- * tabs: overview (a line per area), session, usage (after the first prompt), git (in a repo), and
- * jobs (pi-bash-bg).
- * Narrow terminals drop git, then context. Folder, cold, jobs and model always stay.
+ * Right side: cold (only when the prompt cache is cold), the agents pi-herd watches, pi-bash-bg's
+ * running jobs, context, model and effort. A click on a piece opens its tab (folder/git → git,
+ * cold/context → usage, agents → agents, jobs → jobs, model/effort → session); a click on the
+ * prompt's text closes the dashboard. The dashboard has tabs: overview (a line per area), session,
+ * usage (after the first prompt), git (in a repo), agents (pi-herd) and jobs (pi-bash-bg).
+ * Narrow terminals drop git, then context. Folder, cold, agents, jobs and model always stay.
  * Config (optional): ~/.pi/agent/extensions/pi-footer.json
  *   { "promptEditor": "box" | "default", "disableEffortColors": true, "style": "color" | "white",
  *     "iconColor": "accent", "gitStatusPollMins": 0.5, "gitFetchPollMins": 30 }
@@ -45,7 +45,12 @@ const ICON = {
   branch: "\u{f062c}", // 󰘬 md-source-branch
   ahead: "\u{f005d}", // 󰁝 md-arrow-up-bold (commits to push)
   behind: "\u{f0045}", // 󰁅 md-arrow-down-bold (commits to pull)
+  agents: "\u{f0ae3}", // 󰫣 md-star_four_points_outline (pi-herd agents watched)
   jobs: "\u{f0996}", // 󰦖 md-progress-clock (pi-bash-bg jobs running)
+  sent: "\u{f1271}", // 󱉱 md-inbox-arrow-up-outline (messages sent to an agent)
+  received: "\u{f1270}", // 󱉰 md-inbox-arrow-down-outline (messages received from it)
+  watching: "\u{f0150}", // 󰅐 md-clock-outline (this session waits on the agent)
+  other: "\u{f15a1}", // 󱖡 md-handshake-outline (an agent this session didn't start)
 };
 // Context pie in eighths: md-circle_outline, then md-circle_slice_1..8. Nerd Font glyphs, so they
 // match in size (Unicode's ○ ◔ ◑ ◕ ● mix fonts).
@@ -107,6 +112,21 @@ type Job = {
 };
 /** This session's pi-bash-bg jobs (running first), and the jobs tab's selection. */
 type Bg = Sel & { list: Job[]; running: number; armed: boolean /* x pressed once */ };
+/** An agent from pi-herd's herd:update event: this session's children and the agents it watched. */
+type Agent = {
+  id: string;
+  name: string;
+  state: string;
+  since: number;
+  cwd: string;
+  mine: boolean; // started by this session: it can stop it
+  watched: boolean;
+  sent: number;
+  received: number;
+  live: boolean; // false: it ended this session (state stopped or done)
+};
+/** pi-herd's agents (stopped ones last), and the agents tab's selection. */
+type Herd = Sel & { list: Agent[]; watching: number; armed: boolean /* x pressed once */ };
 
 const fmt = (n: number) =>
   n < 1000 ? `${n}` : n < 1e6 ? `${+(n / 1e3).toFixed(1)}k` : `${+(n / 1e6).toFixed(1)}M`;
@@ -281,6 +301,7 @@ function render(
   theme: Theme,
   config: Config,
   bg: Bg | undefined,
+  herd: Herd | undefined,
   branch: string | null,
   g: Git,
   statuses: ReadonlyMap<string, string>,
@@ -357,10 +378,11 @@ function render(
     (model ? paint("text", shortModel(model.id)) : dim("no model")) +
     (model?.reasoning ? dot + paint(levelColor, level) : "");
 
+  const agentsPiece = herd?.watching ? dim(`${ICON.agents} ${herd.watching}`) : undefined;
   const jobsPiece = bg?.running ? dim(`${ICON.jobs} ${bg.running}`) : undefined;
 
-  // Left: folder and git. Right: cold, jobs, context, model. Drop whole sections until the line
-  // fits: git, then context; folder, cold, jobs and model always stay.
+  // Left: folder and git. Right: cold, agents, jobs, context, model. Drop whole sections until the
+  // line fits: git, then context; folder, cold, agents, jobs and model always stay.
   const groups = (gs: (string | undefined)[]) => gs.filter(Boolean).join(dot);
   let left = "";
   let right: (string | undefined)[] = [];
@@ -369,15 +391,21 @@ function render(
       `${icon(ICON.folder)} ${paint("text", folder)}`,
       drop.includes("git") ? undefined : gitPiece,
     ]);
-    right = [coldPiece, jobsPiece, drop.includes("context") ? undefined : contextPiece, modelPiece];
+    right = [
+      coldPiece,
+      agentsPiece,
+      jobsPiece,
+      drop.includes("context") ? undefined : contextPiece,
+      modelPiece,
+    ];
     if (visibleWidth(left) + 2 + visibleWidth(groups(right)) <= width) break;
   }
   const rightText = groups(right);
   left = cut(left, Math.max(8, width - visibleWidth(rightText) - 2));
-  // Clicks open the matching tab: folder and git → git, cold and context → usage, jobs → jobs,
-  // model and effort → session.
+  // Clicks open the matching tab: folder and git → git, cold and context → usage, agents → agents,
+  // jobs → jobs, model and effort → session.
   const spans: Span[] = [{ x0: 0, x1: visibleWidth(left), tab: "git" }];
-  const tabOf = ["usage", "jobs", "usage", "session"];
+  const tabOf = ["usage", "agents", "jobs", "usage", "session"];
   let x = visibleWidth(left) + Math.max(2, width - visibleWidth(left + rightText));
   right.forEach((piece, i) => {
     if (!piece) return;
@@ -396,7 +424,12 @@ function render(
     const w = visibleWidth(line);
     lines.push(cut(w < room ? " ".repeat(room - w) + line : line, room));
   }
-  return { lines, spans, paint, tabs: tabData(pi, ctx, paint, bg, branch, g, s, width - MARGIN) };
+  return {
+    lines,
+    spans,
+    paint,
+    tabs: tabData(pi, ctx, paint, bg, herd, branch, g, s, width - MARGIN),
+  };
 }
 
 /** A piece of the footer line (its columns) and the dashboard tab a click on it opens. */
@@ -411,14 +444,15 @@ type Rendered = {
 
 /**
  * The dashboard's tabs, as data (tabs.ts draws them): overview (a line per area), session, usage
- * (after the first prompt), git (in a repo), and jobs while pi-bash-bg reports jobs in this
- * session.
+ * (after the first prompt), git (in a repo), agents while pi-herd reports agents, and jobs while
+ * pi-bash-bg reports jobs in this session.
  */
 function tabData(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   paint: (color: Color, s: string) => string,
   bg: Bg | undefined,
+  herd: Herd | undefined,
   branch: string | null,
   g: Git,
   s: ReturnType<typeof sessionStats>,
@@ -487,16 +521,12 @@ function tabData(
       ),
     );
   overview.push(row("session", join([...messages, `${duration(s.workingMs)} working`])));
-  if (bg?.list.length)
-    overview.push(
-      row(
-        "jobs",
-        join([
-          bg.running && `${bg.running} running`,
-          bg.list.length > bg.running && `${bg.list.length - bg.running} completed`,
-        ]),
-      ),
-    );
+  // What the agent still waits on: the agents it watches and the jobs it watches running.
+  const pending = [
+    herd?.watching && plural(herd.watching, "agent"),
+    bg?.running && plural(bg.running, "job"),
+  ];
+  if (pending.some(Boolean)) overview.push(row("waiting", join(pending)));
 
   // Git: only in a git repo. The repo's URL and the folder share a line.
   const git: string[] = [];
@@ -628,12 +658,78 @@ function tabData(
   ];
   if (s.userMessages) tabs.push({ id: "usage", label: "usage", lines: usage });
   if (branch) tabs.push({ id: "git", label: "git", lines: git });
+  if (herd?.list.length) {
+    const list = herd.list;
+    const picked = list[herd.selected];
+    // Like the jobs tab: the status colored only while it needs a look, the time dim.
+    const stateColor = (st: string): Color =>
+      st === "working" ? "accent" : st === "blocked" ? "warning" : "dim";
+    const when = (a: Agent) => duration(Date.now() - a.since) + (a.live ? "" : " ago");
+    // Markers after the name: another session's agent, and this session waits on it.
+    const marks = (a: Agent) =>
+      [!a.mine && ICON.other, a.watched && ICON.watching].filter(Boolean).join(" ");
+    const named = (a: Agent) => [cut(a.name, 28), marks(a)].filter(Boolean).join(" ");
+    const counts = (a: Agent) =>
+      a.sent + a.received ? `${ICON.sent} ${a.sent} ${ICON.received} ${a.received}` : "";
+    // Columns padded to their widest cell (by display width, for the glyphs).
+    const pad = (x: string, w: number) => x + " ".repeat(Math.max(0, w - visibleWidth(x)));
+    const widest = (f: (a: Agent) => string) => Math.max(...list.map((a) => visibleWidth(f(a))));
+    const [nameW, stateW, timeW, cwdW] = [
+      widest(named),
+      widest((a) => a.state),
+      widest(when),
+      Math.min(
+        32,
+        widest((a) => tilde(a.cwd)),
+      ),
+    ];
+    tabs.push({
+      id: "agents",
+      label: "agents",
+      lines: [],
+      list: {
+        sel: herd,
+        length: list.length,
+        row: (i, marker) => {
+          const a = list[i]!;
+          const name = cut(a.name, 28);
+          return (
+            `   ${marker} ${val(name)}${marks(a) ? ` ${dim(marks(a))}` : ""}` +
+            `${pad("", nameW - visibleWidth(named(a)))}  ` +
+            `${paint(stateColor(a.state), pad(a.state, stateW))}  ` +
+            `${dim(pad(when(a), timeW))}  ` +
+            `${dim(pad(cut(tilde(a.cwd), cwdW), cwdW))}  ` +
+            dim(counts(a))
+          );
+        },
+        keys:
+          "↑↓ select" +
+          (picked?.live ? " · enter view" : "") +
+          (picked?.live && picked.mine ? " · x stop" : ""),
+        note: herd.armed ? paint("warning", `press x again to stop ${picked?.name}`) : undefined,
+        // enter views it; x twice stops it (live, and started by this session); any other key
+        // disarms x.
+        onKey: (data, i) => {
+          const a = list[i]!;
+          if (matchesKey(data, Key.enter) && a.live) pi.events.emit("herd:attach", { id: a.id });
+          else if (matchesKey(data, "x") && a.live && a.mine) {
+            if (herd.armed) pi.events.emit("herd:stop", { id: a.id });
+            herd.armed = !herd.armed;
+            return true;
+          } else return (herd.armed = false);
+          herd.armed = false;
+          return true;
+        },
+        onPick: (i) => list[i]!.live && pi.events.emit("herd:attach", { id: list[i]!.id }),
+      },
+    });
+  }
   if (!bg?.list.length) return tabs;
   const cmdWidth = Math.max(10, Math.min(40, width - 42));
   const selected = bg.list[bg.selected];
   tabs.push({
     id: "jobs",
-    label: bg.running ? `jobs ${bg.running}` : "jobs",
+    label: "jobs",
     lines: [],
     list: {
       sel: bg,
@@ -783,7 +879,9 @@ export default function (pi: ExtensionAPI) {
   const tabs = new Tabs(); // the dashboard: open, focus, active tab
   let shown: Tab[] = []; // the tabs as last rendered, for keys and clicks
   let bg: Bg | undefined;
-  tabs.pick = () => (bg?.running ? "jobs" : undefined); // running jobs: open on their tab
+  let herd: Herd | undefined;
+  // Watches or running jobs: open on their tab.
+  tabs.pick = () => (herd?.watching ? "agents" : bg?.running ? "jobs" : undefined);
   let footerRow = -1; // the footer line's row in the footer component (-1: in the prompt box)
   let dashRow = 0; // the dashboard's first row there
   let spans: Span[] = []; // the footer line's pieces
@@ -852,12 +950,42 @@ export default function (pi: ExtensionAPI) {
   // list or overlay, and the prompt has focus (not /tree etc.): ↓ has nothing left to do there, so it moves on to the dashboard.
   let promptEnd = () => true;
   let tuiHasOverlay = () => false; // e.g. pi-bash-bg's log viewer, which gets its own keys
-  /** Selects a job row (and disarms x). */
-  const select = (b: Bg, i: number) => {
+  type List<T = unknown> = Sel & { list: readonly T[]; armed: boolean };
+  /** Selects a job or agent row (and disarms x). */
+  const select = (b: List, i: number) => {
     move(b, i, b.list.length);
     b.armed = false;
   };
-  tabs.onClose = () => bg && select(bg, 0); // reopening shows the top: running jobs first
+  // Reopening shows the top: running jobs and watched agents first.
+  tabs.onClose = () => {
+    if (bg) select(bg, 0);
+    if (herd) select(herd, 0);
+  };
+  /** The selection follows its row (by key) while the tab is open, and starts at the top otherwise. */
+  const reselect = <T>(
+    old: List<T> | undefined,
+    next: List<T>,
+    tab: string,
+    key: (x: T) => unknown,
+  ) => {
+    const open = tabs.expanded && tabs.tab === tab;
+    const was = open ? old?.list[old.selected] : undefined;
+    const at = was === undefined ? -1 : next.list.findIndex((x) => key(x) === key(was));
+    next.top = open ? (old?.top ?? 0) : 0;
+    select(next, Math.max(0, at));
+    next.armed = !!old?.armed && at >= 0;
+    requestRender();
+  };
+
+  // pi-herd lists agents in the order it first saw them; stopped ones go last.
+  pi.events.on("herd:update", (data) => {
+    const u = data as { agents: Agent[]; watching: number };
+    const stopped = (a: Agent) => a.state === "stopped";
+    const list = [...u.agents.filter((a) => !stopped(a)), ...u.agents.filter(stopped)];
+    const next: Herd = { list, watching: u.watching, selected: 0, top: 0, armed: false };
+    reselect(herd, next, "agents", (a) => a.id);
+    herd = next;
+  });
 
   pi.events.on("bash-bg:update", (data) => {
     const u = data as { jobs: Job[]; running: number };
@@ -865,21 +993,9 @@ export default function (pi: ExtensionAPI) {
       ...u.jobs.filter((j) => j.state === "running"),
       ...u.jobs.filter((j) => j.state !== "running"),
     ];
-    // The selection follows its job while the tab is open, and starts at the top otherwise.
-    const open = tabs.expanded && tabs.tab === "jobs";
-    const pid = open ? bg?.list[bg.selected]?.pid : undefined;
-    const at = list.findIndex((j) => j.pid === pid);
-    const next: Bg = {
-      list,
-      running: u.running,
-      selected: 0,
-      top: open ? (bg?.top ?? 0) : 0,
-      armed: false,
-    };
-    select(next, Math.max(0, at));
-    next.armed = !!bg?.armed && at >= 0;
+    const next: Bg = { list, running: u.running, selected: 0, top: 0, armed: false };
+    reselect(bg, next, "jobs", (j) => j.pid);
     bg = next;
-    requestRender();
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -929,6 +1045,7 @@ export default function (pi: ExtensionAPI) {
               theme,
               config,
               bg,
+              herd,
               footerData.getGitBranch(),
               g,
               footerData.getExtensionStatuses(),
