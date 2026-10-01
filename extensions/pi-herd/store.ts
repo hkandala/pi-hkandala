@@ -2,7 +2,8 @@
  * The files every agent shares in ~/.pi/agent/pi-herd/: agents/<id>.json (every agent, live or
  * ended),
  * messages/<toId>/<msgId>.json (one file per message), attached/<pid> (a popup shell and the agent
- * it shows), stopped/<id> (it was stopped, or ended with the agent that started it).
+ * it shows), stopped/<id> (it was stopped, or ended with the agent that started it), sessions/ (the
+ * pi sessions of the agents agent_start starts: out of the user's /resume list).
  */
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -25,6 +26,7 @@ export const AGENTS = join(DIR, "agents");
 export const MESSAGES = join(DIR, "messages");
 export const ATTACHED = join(DIR, "attached");
 export const STOPPED = join(DIR, "stopped");
+export const SESSIONS = join(DIR, "sessions");
 export const STAMP = join(DIR, ".cleanup");
 export const DAY = 86_400_000;
 

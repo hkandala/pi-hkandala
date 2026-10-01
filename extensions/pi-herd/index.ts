@@ -59,6 +59,7 @@ import {
   readAgent,
   readJson,
   rm,
+  SESSIONS,
   short,
   STAMP,
   STOPPED,
@@ -943,7 +944,7 @@ export default function (pi: ExtensionAPI) {
                   : existsSync(join(STOPPED, a.id))
                     ? "stopped"
                     : "exited",
-                since: a.ended ?? 0, // live ones aren't followed: no time in their status
+                since: 0, // only your agents show a time
                 live: isLive(a),
                 cwd: a.cwd,
                 parent: a.parent,
@@ -1004,7 +1005,8 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({
       name: Type.Optional(
         Type.String({
-          description: "A unique name, e.g. reviewer. Required unless you resume a session.",
+          description:
+            "A unique name that says what it works on: 2 to 4 words in kebab-case, e.g. auth-test-fixer. Required unless you resume a session.",
         }),
       ),
       session: Type.Optional(
@@ -1057,6 +1059,9 @@ export default function (pi: ExtensionAPI) {
         params.thinking ?? (resumed ? undefined : (config.thinking ?? pi.getThinkingLevel()));
       const env = { PI_HERD_PARENT: me.id, ...NO_STALL };
       const flags = [
+        // Its sessions (also a /new in it) go to pi-herd's folder: out of the user's /resume list.
+        "--session-dir",
+        SESSIONS,
         ...(resumed ? ["--session", resumed.file] : []),
         ...(params.name ? ["--name", params.name] : []),
         // Trust only what the user already trusts: a folder inside this trusted project.

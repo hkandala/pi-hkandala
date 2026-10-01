@@ -5,7 +5,8 @@ pi agents in [herdr](https://herdr.dev). Every pi session running in a herdr pan
 ```
  ● I started reviewer with the review request. I'll be woken when it replies.
  ╭┄┄ agent message ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╮
- ┆ 󱉰 reviewer replied · "Found 3 issues:" (ctrl+o to expand)      ┆
+ ┆ 󱉰 reviewer replied · Found 3 issues: 1. The token check in      ┆
+ ┆ src/auth.ts skips expired tokens. 2. Th… (ctrl+o to expand)     ┆
  ╰┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╯
 ```
 
@@ -46,7 +47,7 @@ Agents are addressed by id, the last 8 characters of it, or name. Every agent ge
 | `tab`               | A new tab in your herdr workspace, opened without focus                                                                  |
 | a pane id (`w1:p3`) | An existing pane in your herdr session. It must be an idle shell; when the agent exits, the pane goes back to its shell. |
 
-A new agent gets your model and thinking level unless config or the call names others; a resumed one keeps its own. A resumed session runs in its saved folder unless the call names a `cwd`. It gets `--approve` only when its folder is inside yours and you trust your project.
+A new agent gets your model and thinking level unless config or the call names others; a resumed one keeps its own. A resumed session runs in its saved folder unless the call names a `cwd`. It gets `--approve` only when its folder is inside yours and you trust your project. Started agents save their sessions in `~/.pi/agent/pi-herd/sessions/` (pi's `--session-dir`), so they stay out of your `/resume` and `pi --resume` lists; `agent_start({ session })` finds them there, and `pi --session-dir ~/.pi/agent/pi-herd/sessions --resume` lists them.
 
 ## Commands
 
@@ -59,22 +60,22 @@ A new agent gets your model and thinking level unless config or the call names o
 
 **The dashboard** opens with ← on an empty prompt (or `/agents dashboard`): a full-screen page with a margin all round, a title, a line of counts by status (`2 working · 1 idle · 1 stopped`, ended agents counted even while hidden), a rule, and three sections:
 
-- **this agent**, on top and selected; Enter on it closes the dashboard. It reads `working` while it runs or waits on agents it watches, as herdr shows it.
+- **current agent**: this one, on top and selected; Enter on it closes the dashboard. It reads `working` while it runs or waits on agents it watches, as herdr shows it.
 - **your agents**: the agents you started or watched.
 - **other agents**: every other live agent, from any session.
 
-Both lists are trees: each agent with the agents it started under it (`├ └ │`), to any depth, and the ended ones once `e` shows them (in both lists alike, also after the session was resumed: an agent's record stays once it ends). Columns: name, status, folder, messages, and time last (it grows). Their widths come from every row `e` can show, so toggling it doesn't move them.
+Both lists are trees: each agent with the agents it started under it (`├ └ │`), to any depth, and the ended ones once `e` shows them (in both lists alike, also after the session was resumed: an agent's record stays once it ends). Columns: name, status, folder, messages, and time last: how long it has had its status (`2m`, for every status), on your agents only. Their widths come from every row `e` can show, so toggling it doesn't move them.
 
 Rows stay in the order the agents came (started or watched; other agents by when they started), with ended ones last at every level of the tree: only an agent ending moves a row. pi-footer's agents tab orders by status instead: working first.
 
-The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent in a herdr popup, `x` twice stops one of yours, `e` shows or hides the ended ones, Esc or `q` closes.
+The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent in a herdr popup, `x` twice stops one of yours, `e` shows or hides the ended ones, Esc or `q` closes. In pi's fullscreen mode, a click on an agent does what Enter does.
 
 ```
     agents
     3 working · 1 idle · 1 stopped
     ──────────────────────────────────────────────────────
 
-    this agent
+    current agent
     ◆ main             working  ~/code/app
 
     your agents
@@ -141,6 +142,6 @@ Optional: `~/.pi/agent/extensions/pi-herd.json`. Every key has a default.
 
 ## Files
 
-Everything lives in `~/.pi/agent/pi-herd/`: `agents/<id>.json` (one per agent; once it ends, it stays with its end time and cost, for the lists and costs of the agents above it), `messages/<to>/<id>.json` (one per message, and a `.delivered` marker once it reaches the model), `attached/<pid>` (a popup's shell, naming the agent it shows), and `stopped/<id>` (it was stopped, or ended with the agent that started it). Once a day, the first session to start deletes records of dead agents (of ended ones after 7 days), messages older than 7 days, stale popup markers, and stop markers of dead agents older than 7 days, and closes orphaned panes in the `pi-herd` herdr session.
+Everything lives in `~/.pi/agent/pi-herd/`: `agents/<id>.json` (one per agent; once it ends, it stays with its end time and cost, for the lists and costs of the agents above it), `messages/<to>/<id>.json` (one per message, and a `.delivered` marker once it reaches the model), `attached/<pid>` (a popup's shell, naming the agent it shows), `stopped/<id>` (it was stopped, or ended with the agent that started it), and `sessions/` (the pi sessions of started agents). Once a day, the first session to start deletes records of dead agents (of ended ones after 7 days), messages older than 7 days, stale popup markers, and stop markers of dead agents older than 7 days, and closes orphaned panes in the `pi-herd` herdr session.
 
 See [docs/SPEC.md](docs/SPEC.md) for the design.

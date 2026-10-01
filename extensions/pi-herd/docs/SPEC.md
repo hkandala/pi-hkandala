@@ -194,10 +194,12 @@ and `pane.agent_status_changed` events). pi-herd adds no status logic.
 - **Display.** The renderer returns a pi `Box`, so pi-content-layout draws it in its dashed frame
   labelled `agent message`. A steer with only watch endings is labelled `agent watcher` instead
   (section 6).
-  - Collapsed, messages and replies alike: `󱉰 main · "Review the auth changes in src/auth…"`, or
-    `󱉰 reviewer · reply · "Found 3 issues:"`: the first line. A one-line text shows whole and
-    doesn't expand.
-  - Expanded (ctrl+o or a click): the full text, highlighted as markdown.
+  - Collapsed, messages and replies alike: the line, a dim `·`, then the text, dim, with its
+    line breaks dropped: `󱉰 main · Review the auth changes in src/auth…`, or
+    `󱉰 reviewer · reply · Found 3 issues: …`. Up to 2 rows, then `…`; the expand hint shows
+    only when something is cut.
+  - Expanded (ctrl+o or a click): the full text as highlighted markdown, right after the line's
+    `·` (no blank line). A watch ending's text starts after a blank line instead.
 
 ## 5. Transcripts
 
@@ -290,9 +292,9 @@ A watch belongs to the watching agent. It asks: "wake me when agent X stops work
 - **Display.** Endings without a message go in an `agent watcher` box (a message ending stays in
   the `agent message` box with its message), with circle glyphs for endings and
   md-inbox-arrow-down (`󱉰`) for anything received. Expanding shows what the ending carries, or a
-  message's full text (the line then drops its quoted first line, so the text shows once):
+  message's full text (section 4, Display):
   - `󰗡 reviewer finished · 3m12s` (red, `· with an error`, when its last turn failed)
-  - `󱉰 reviewer replied · "Found 3 issues:"`
+  - `󱉰 reviewer replied · Found 3 issues: …`
   - `󰗖 reviewer is blocked`
   - `󰗎 reviewer still working after 30m`
   - `󰅚 reviewer exited`
@@ -305,10 +307,10 @@ the name check.
 
 - **New:** `name` and `message` are both required.
 - **Resume:** `session` is a saved session id (or its last characters), such as the one `agent_stop`
-  prints. `name` and `message` are optional. pi-herd finds the file in pi's sessions folder, fails
-  if that session is live, and starts `pi --session <file>` in the session's saved cwd (unless
-  `cwd` is passed). The session keeps its own name, model and thinking level unless the call names
-  them. With a `message`, it is the resumed agent's next message; with none, the agent just
+  prints. `name` and `message` are optional. pi-herd finds the file in its own sessions folder or
+  pi's, fails if that session is live, and starts `pi --session <file>` in the session's saved cwd
+  (unless `cwd` is passed). The session keeps its own name, model and thinking level unless the
+  call names them. With a `message`, it is the resumed agent's next message; with none, the agent just
   starts, and nothing is sent or watched. It
   becomes a child of the caller.
 
@@ -348,13 +350,17 @@ the name check.
    - pi-herd talks to herdr's socket API directly (`pane.send_input` with the text and `enter`,
      which is what `herdr pane run` does), not through the CLI.
    - In a pane pi-herd created:
-     `herdr pane run <pane> "exec pi --name <name> [--approve] [--model m] [--thinking t]"`.
+     `herdr pane run <pane> "exec pi --session-dir <sessions> --name <name> [--approve] [--model m] [--thinking t]"`.
      `exec` makes pi the pane's process, so the pane closes when pi exits. No shell is left behind,
      and no stray `PI_HERD_PARENT` sits in one.
    - In a given pane: `herdr pane run <pane> "cd <cwd> && PI_HERD_PARENT=<my id> EDITOR=true … pi
 --name <name> …"`, without `exec`. The env applies only to pi, and the shell is still there
      when pi exits. `cd` is added only when `cwd` is passed.
    - herdr's `agent start` isn't used, because it waits on herdr's screen-based readiness.
+   - **`--session-dir ~/.pi/agent/pi-herd/sessions`** always (pi then keeps every session flat in
+     that folder): started agents' sessions, also a `/new` in one, stay out of the user's
+     `/resume` and `pi --resume` lists, which read pi's default folder. They are still saved, and
+     a resume finds them there (`findSession` reads that folder and pi's default one).
    - **`--approve`** only when `cwd` is inside the caller's cwd **and** the caller's project is
      trusted (`ctx.isProjectTrusted()`). Otherwise pi's own trust rules apply, and a trust dialog
      makes the spawn fail at step 3, with the screen capture.
@@ -519,8 +525,8 @@ working · 1 idle · 1 stopped`; only non-zero ones; ended agents counted even w
     selector or dialog), its text is empty, no overlay is up, and no popup shows this agent.
     Otherwise ← is the editor's. pi-herd gets pi's TUI from its widget's factory, and adds its
     input listener after the other extensions' (pi-footer's tabs use ← while they have the keys).
-  - Three sections: `this agent` (on top and selected; Enter on it closes the page; its status is
-    `working` while a run goes, else `idle`), `your
+  - Three sections: `current agent` (this one, on top and selected; Enter on it closes the page;
+    its status is `working` while a run goes, else `idle`), `your
 agents` (`herd:update`'s agents as a tree, `├ └ │` by `parent`; ended ones once `e` shows
     them), and `other agents` (every other live agent, its status read every 2 s while the page is
     open). `󱖡` marks only an agent this one watches but didn't start.
@@ -530,7 +536,8 @@ agents` (`herd:update`'s agents as a tree, `├ └ │` by `parent`; ended ones
     other live status, then ended; in each group, by when the agent entered it, so a newcomer goes
     last. pi-herd keeps those times, `byGroup`.)
   - Keys: ↑↓ and PgUp/PgDn select, Enter opens a live agent in a popup (section 11), `x` twice
-    stops a live agent below this one, `e` shows or hides the ended ones, Esc or `q` closes.
+    stops a live agent below this one, `e` shows or hides the ended ones, Esc or `q` closes. In
+    pi's fullscreen mode, a left click on an agent's row selects it and does what Enter does.
   - In a popup, ← does nothing special and `/agents dashboard` is refused: "Close the popup first
     (ctrl+b q or /detach)."
 - **In other extensions.** Both read `herd:update` next to pi-bash-bg's `bash-bg:update`.
@@ -558,7 +565,7 @@ running agents`, and the hint line at the bottom `e show ended (2)`.
         `▸ frog-thunder 󱖡 󰅐  working  40s  ~/code/lib  󱉱 1 󱉰 0`
       - Markers after the name, dim: `󱖡` (md-handshake-outline) on an agent this session didn't
         start, `󰅐` (md-clock-outline) while this session waits on the agent.
-      - Time: how long in this status (`1m ago` for an ended one).
+      - Time: how long in this status, plain for every status (`40s`, `2m`, `1h`; ended ones too).
       - Colors: only `working` (accent) and `blocked` (warning) stand out. `idle` and
         `done` are dim, and the time is always dim.
       - 3 rows at a time; it scrolls with the selection (`3/12`).

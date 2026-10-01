@@ -6,7 +6,7 @@ import {
   type MessageRenderer,
   type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Box, Text } from "@earendil-works/pi-tui";
+import { Box, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { label, short } from "./store.ts";
 
@@ -53,6 +53,7 @@ export const brief = (timeout: number) =>
     - pi agents you reach through these tools each run in their own herdr pane. herdr organizes terminals into workspaces, tabs and panes and recognizes the coding agents in them; \`herdr --skill\` prints its guide. Each agent has an id and a name; the tools accept either.
     - Starting agents:
         - agent_start starts an agent and sends it a message. Put everything it needs in that message, including where to write any files.
+        - Name it for what it works on, in 2 to 4 words of kebab-case: auth-test-fixer or api-docs-reviewer, not reviewer, so the user's agent lists say what each one does.
         - Leave placement unset unless the user asks for a tab or names a pane.
         - Agents you start stop when your session ends, and so do the agents they start. Agents from other sessions are never stopped by you.
     - Sending messages:
@@ -121,19 +122,19 @@ const GLYPH = {
   exited: "\u{f015a}", // 󰅚 md-close-circle-outline
 };
 
-/** The line of one steer item, and what expanding shows (below it, so the line drops its quote). */
-function itemLine(it: Item, theme: Theme, expanded: boolean): { line: string; more?: string } {
+/**
+ * The line of one steer item, what expanding shows below it, and for a message (or a reply) its
+ * text on one line, shown after the line while collapsed.
+ */
+function itemLine(it: Item, theme: Theme): { line: string; more?: string; preview?: string } {
   const dim = (s: string) => theme.fg("dim", s);
   if (it.kind === "message") {
-    // Messages and replies alike: a one-line one shows whole on its line (no expanding); a longer
-    // one shows its first line.
     const who = theme.fg("accent", label(it.msg.from));
     const kind = it.endsWatch ? " replied" : it.msg.replyTo ? dim(" · reply") : "";
-    const [first, ...rest] = it.msg.text.trim().split("\n");
-    const quote = expanded && rest.length ? "" : `${dim(" · ")}"${first}"`;
     return {
-      line: `${theme.fg("accent", GLYPH.received)} ${who}${kind}${quote}`,
-      more: rest.length ? it.msg.text : undefined,
+      line: `${theme.fg("accent", GLYPH.received)} ${who}${kind}`,
+      more: it.msg.text,
+      preview: it.msg.text.replace(/\s+/g, " ").trim(),
     };
   }
   const who = theme.fg("accent", label(it.agent));
@@ -155,20 +156,52 @@ function itemLine(it: Item, theme: Theme, expanded: boolean): { line: string; mo
   return { line: `${theme.fg("error", GLYPH.exited)} ${who} exited`, more };
 }
 
-/** Expanded, messages and last texts show as highlighted markdown (they usually are markdown). */
+/**
+ * Collapsed, a message's text follows its line, dim, its line breaks dropped, up to 2 rows, then
+ * `…`; the expand hint shows only when something is hidden. Expanded, messages and last texts
+ * show as highlighted markdown (they usually are markdown): a message's right after its line, as
+ * when collapsed; a watch ending's after a blank line.
+ */
 export const renderer: MessageRenderer<{ items: Item[] }> = (message, { expanded }, theme) => {
-  const items = message.details?.items ?? [];
+  const dim = (s: string) => theme.fg("dim", s);
   const box = new Box(1, 1, (s) => theme.bg("customMessageBg", s));
-  const shown = items.map((it) => itemLine(it, theme, expanded));
-  const hint = shown.some((s) => s.more)
-    ? theme.fg("dim", ` (${keyText("app.tools.expand")} to expand)`)
-    : "";
-  const out = expanded
-    ? shown.flatMap((s) => [
-        s.line,
-        ...(s.more ? [highlightCode(s.more.trim(), "markdown").join("\n"), ""] : []),
-      ])
-    : shown.map((s, i) => s.line + (i === shown.length - 1 ? hint : ""));
-  box.addChild(new Text(out.join("\n").trimEnd(), 0, 0));
+  const shown = (message.details?.items ?? []).map((it) => itemLine(it, theme));
+  if (expanded) {
+    const out = shown.flatMap((s) => {
+      if (!s.more) return [s.line];
+      const [first, ...rest] = highlightCode(s.more.trim(), "markdown");
+      return s.preview === undefined
+        ? [s.line, "", first!, ...rest, ""]
+        : [s.line + dim(" · ") + first, ...rest, ""];
+    });
+    box.addChild(new Text(out.join("\n").trimEnd(), 0, 0));
+    return box;
+  }
+  let last: { width: number; lines: string[] } | undefined; // drawn on every frame
+  box.addChild({
+    invalidate: () => (last = undefined),
+    render: (width: number) => {
+      if (last?.width === width) return last.lines;
+      const hint = dim(` (${keyText("app.tools.expand")} to expand)`);
+      let hidden = false;
+      let fitted = false; // the hint is already on the last row (the cut's)
+      const lines = shown.flatMap((s, i) => {
+        if (s.preview === undefined) {
+          hidden ||= !!s.more;
+          return wrapTextWithAnsi(s.line, width);
+        }
+        const rows = wrapTextWithAnsi(s.line + dim(` · ${s.preview}`), width);
+        if (rows.length <= 2) return rows;
+        hidden = true;
+        // The last item's second row leaves room for the hint.
+        fitted = i === shown.length - 1;
+        const room = width - 1 - (fitted ? visibleWidth(hint) : 0);
+        return [rows[0]!, truncateToWidth(rows[1]!, room, "") + dim("…") + (fitted ? hint : "")];
+      });
+      if (hidden && !fitted) lines.push(...wrapTextWithAnsi(lines.pop()! + hint, width));
+      last = { width, lines };
+      return lines;
+    },
+  });
   return box;
 };

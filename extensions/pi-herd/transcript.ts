@@ -4,7 +4,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { parseLine, rpc } from "./herdr.ts";
-import { list, type Agent } from "./store.ts";
+import { list, SESSIONS, type Agent } from "./store.ts";
 
 export const KB = 1024;
 const [TRANSCRIPT_MAX, ENTRY_MAX, LAST_MAX] = [16 * KB, KB, 4 * KB];
@@ -109,14 +109,15 @@ export const lastError = (a: Agent) => {
 
 /**
  * A saved pi session by id (or its last characters): its file, id, cwd, and name if it has one.
- * Looks in pi's default sessions folder only, not a custom --session-dir.
+ * Looks in pi-herd's sessions folder (agents it started) and pi's default one, not a custom
+ * --session-dir.
  */
 export function findSession(ref: string) {
   const root = join(getAgentDir(), "sessions");
-  const files = list(root).flatMap((d) =>
-    list(join(root, d))
+  const files = [SESSIONS, ...list(root).map((d) => join(root, d))].flatMap((d) =>
+    list(d)
       .filter((f) => f.endsWith(`${ref}.jsonl`) && f.includes("_"))
-      .map((f) => join(root, d, f)),
+      .map((f) => join(d, f)),
   );
   if (files.length !== 1)
     throw new Error(

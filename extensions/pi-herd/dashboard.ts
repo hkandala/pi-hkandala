@@ -1,12 +1,13 @@
 /**
- * The agent dashboard (← on an empty prompt, /agents dashboard), in three sections: this agent;
+ * The agent dashboard (← on an empty prompt, /agents dashboard), in three sections: current agent;
  * your agents (the ones this session started or watched, and the agents they started); other
  * agents (every other live agent, and the agents they started). Both as trees, ended agents once
  * `e` shows them. Columns: name, status, folder, messages, time. A clean
  * full-screen page: a margin, a title, a description, the list, and the keys pinned to the
  * bottom.
  * Keys: ↑↓ (PgUp PgDn) select, enter opens the agent in a popup (on this agent: closes), x twice
- * stops one of yours, e shows or hides ended ones, esc or q closes.
+ * stops one of yours, e shows or hides ended ones, esc or q closes. A click on an agent does what
+ * enter does (pi's fullscreen mode only).
  */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -195,7 +196,7 @@ export class AgentsDashboard {
     const rowsWith = (showEnded: boolean) => {
       const pick = (list: Row[]) => tree(showEnded ? list : list.filter((a) => a.live));
       return [
-        "this agent",
+        "current agent",
         { a: self, guide: "" },
         ...section("your agents", pick(agents)),
         ...section(
@@ -222,8 +223,8 @@ export class AgentsDashboard {
         .join(" ");
     const name = (r: Line) => r.guide + cut(r.a.name, 28);
     const named = (r: Line) => [name(r), marks(r)].filter(Boolean).join(" ");
-    const when = (a: Row) =>
-      a.since ? duration(Date.now() - a.since) + (a.live ? "" : " ago") : ""; // others: no time
+    // How long in its status, plain for every status; only your agents (since 0: no time).
+    const when = (a: Row) => (a.since ? duration(Date.now() - a.since) : "");
     const all = [...this.rows, ...rowsWith(!this.showEnded)].filter((r) => typeof r !== "string");
     const widest = (f: (r: Line) => string) => Math.max(0, ...all.map((r) => visibleWidth(f(r))));
     const nameW = widest(named);
@@ -232,7 +233,7 @@ export class AgentsDashboard {
     const counts = (a: Row) =>
       a.sent + a.received ? `${ICON.sent} ${a.sent} ${ICON.received} ${a.received}` : "";
     const countsW = widest((r) => counts(r.a));
-    const room = bodyWidth(width) - (2 + nameW + 2 + stateW + 2) - (countsW && countsW + 2) - 9; // 9: 2 + "59m ago"
+    const room = bodyWidth(width) - (2 + nameW + 2 + stateW + 2) - (countsW && countsW + 2) - 5; // 5: 2 + "59m"
     const cwdW = Math.max(
       10,
       Math.min(
@@ -292,6 +293,18 @@ export class AgentsDashboard {
       list.push(line(i));
 
     return page(t, width, height, describe.join(" · "), list, keys, counter);
+  }
+
+  /** A left click on an agent's row selects it and does what enter does. */
+  handleMouse(event: { type: string; button: string; y: number }) {
+    if (event.type !== "click" || event.button !== "left") return undefined;
+    // The body starts below the margin and the title, description, rule and blank line.
+    const i = this.top + event.y - MARGIN.top - 4;
+    if (event.y < MARGIN.top + 4 || i >= this.top + this.page || !this.at(i)) return undefined;
+    this.selected = i;
+    this.pickedId = this.at(i)!.a.id;
+    this.handleInput("\r");
+    return { handled: true };
   }
 
   handleInput(data: string) {
