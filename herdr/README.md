@@ -5,7 +5,7 @@ Optional pieces for [herdr](https://herdr.dev), shared by the extensions in this
 | Folder              | What                                                                                                           | Used by                                                                                                                                |
 | ------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | [`patch/`](patch)   | A patch to herdr's pi integration: keeps a pane `working` while work that will wake the agent is still pending | [pi-bash-bg](../extensions/pi-bash-bg/README.md) (background jobs), [pi-herd](../extensions/pi-herd/README.md) (waits on other agents) |
-| [`plugin/`](plugin) | A herdr plugin with popups: attach to, or watch, another pane's terminal in a floating window                  | [pi-herd](../extensions/pi-herd/README.md) (`/agents`)                                                                                 |
+| [`plugin/`](plugin) | A herdr plugin with popups: attach to another pane's terminal in a floating window                             | [pi-herd](../extensions/pi-herd/README.md) (`/agents dashboard`, pi-footer's agents tab)                                               |
 
 Each extension works without them. They only make herdr's display right and add the popups.
 

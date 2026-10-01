@@ -20,7 +20,7 @@ The root `package.json` intentionally has no `pi` manifest: pi then auto-discove
 
 ## Rules
 
-- Import pi APIs from `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`. Pi provides them at runtime: list them only as `peerDependencies` (`"*"`), never as dependencies.
+- Import pi APIs from `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` (and TypeBox's `Type`/`StringEnum` from `@earendil-works/pi-ai`). Pi provides them at runtime: list them only as `peerDependencies` (`"*"`), never as dependencies.
 - Runtime npm dependencies go in the extension's own `package.json`. The root holds dev tooling only.
 - No build step: pi loads `.ts` directly.
 - Extension config lives in `~/.pi/agent/extensions/<name>.json`, is optional, and every key has a default.
