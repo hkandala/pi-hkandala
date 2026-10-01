@@ -110,23 +110,35 @@ type Job = {
   endedAt?: number;
   state: string;
 };
-/** This session's pi-bash-bg jobs (running first), and the jobs tab's selection. */
+/** This session's running pi-bash-bg jobs, and the jobs tab's selection. */
 type Bg = Sel & { list: Job[]; running: number; armed: boolean /* x pressed once */ };
-/** An agent from pi-herd's herd:update event: this session's children and the agents it watched. */
+/**
+ * An agent from pi-herd's herd:update event: this session's children and the agents it watched,
+ * and below them the agents they started.
+ */
 type Agent = {
   id: string;
   name: string;
   state: string;
   since: number;
   cwd: string;
-  mine: boolean; // started by this session: it can stop it
+  parent?: string;
+  mine: boolean; // started by this session, at any depth: it can stop it
   watched: boolean;
   sent: number;
   received: number;
-  live: boolean; // false: it ended this session (state stopped or done)
+  live: boolean; // false: it ended this session (state stopped or exited)
 };
-/** pi-herd's agents (stopped ones last), and the agents tab's selection. */
-type Herd = Sel & { list: Agent[]; watching: number; armed: boolean /* x pressed once */ };
+/**
+ * pi-herd's live top-level agents (not under another listed agent), how many live agents each has
+ * below it, and the agents tab's selection.
+ */
+type Herd = Sel & {
+  list: Agent[];
+  below: Map<string, number>;
+  watching: number;
+  armed: boolean; // x pressed once
+};
 
 const fmt = (n: number) =>
   n < 1000 ? `${n}` : n < 1e6 ? `${+(n / 1e3).toFixed(1)}k` : `${+(n / 1e6).toFixed(1)}M`;
@@ -444,8 +456,8 @@ type Rendered = {
 
 /**
  * The dashboard's tabs, as data (tabs.ts draws them): overview (a line per area), session, usage
- * (after the first prompt), git (in a repo), agents while pi-herd reports agents, and jobs while
- * pi-bash-bg reports jobs in this session.
+ * (after the first prompt), git (in a repo), agents while pi-herd reports live ones, and jobs
+ * while pi-bash-bg reports running ones. `d` in those two opens pi-herd's or pi-bash-bg's dashboard.
  */
 function tabData(
   pi: ExtensionAPI,
@@ -664,11 +676,13 @@ function tabData(
     // Like the jobs tab: the status colored only while it needs a look, the time dim.
     const stateColor = (st: string): Color =>
       st === "working" ? "accent" : st === "blocked" ? "warning" : "dim";
-    const when = (a: Agent) => duration(Date.now() - a.since) + (a.live ? "" : " ago");
+    const when = (a: Agent) => duration(Date.now() - a.since);
     // Markers after the name: another session's agent, and this session waits on it.
     const marks = (a: Agent) =>
       [!a.mine && ICON.other, a.watched && ICON.watching].filter(Boolean).join(" ");
-    const named = (a: Agent) => [cut(a.name, 28), marks(a)].filter(Boolean).join(" ");
+    // A live agent's count of live agents below it, dim after its name: `reviewer +2`.
+    const below = (a: Agent) => (herd.below.get(a.id) ? `+${herd.below.get(a.id)}` : "");
+    const named = (a: Agent) => [cut(a.name, 28), below(a), marks(a)].filter(Boolean).join(" ");
     const counts = (a: Agent) =>
       a.sent + a.received ? `${ICON.sent} ${a.sent} ${ICON.received} ${a.received}` : "";
     // Columns padded to their widest cell (by display width, for the glyphs).
@@ -685,7 +699,7 @@ function tabData(
     ];
     tabs.push({
       id: "agents",
-      label: "agents",
+      label: herd.watching ? `agents ${herd.watching}` : "agents", // the agents it waits on
       lines: [],
       list: {
         sel: herd,
@@ -694,7 +708,7 @@ function tabData(
           const a = list[i]!;
           const name = cut(a.name, 28);
           return (
-            `   ${marker} ${val(name)}${marks(a) ? ` ${dim(marks(a))}` : ""}` +
+            `   ${marker} ${val(name)}${dim([below(a), marks(a)].map((x) => x && ` ${x}`).join(""))}` +
             `${pad("", nameW - visibleWidth(named(a)))}  ` +
             `${paint(stateColor(a.state), pad(a.state, stateW))}  ` +
             `${dim(pad(when(a), timeW))}  ` +
@@ -702,17 +716,15 @@ function tabData(
             dim(counts(a))
           );
         },
-        keys:
-          "↑↓ select" +
-          (picked?.live ? " · enter view" : "") +
-          (picked?.live && picked.mine ? " · x stop" : ""),
+        keys: `↑↓ select · enter view${picked?.mine ? " · x stop" : ""} · d dashboard`,
         note: herd.armed ? paint("warning", `press x again to stop ${picked?.name}`) : undefined,
-        // enter views it; x twice stops it (live, and started by this session); any other key
-        // disarms x.
+        // enter views it; x twice stops it (started by this session); d opens pi-herd's
+        // dashboard; any other key disarms x.
         onKey: (data, i) => {
           const a = list[i]!;
-          if (matchesKey(data, Key.enter) && a.live) pi.events.emit("herd:attach", { id: a.id });
-          else if (matchesKey(data, "x") && a.live && a.mine) {
+          if (matchesKey(data, Key.enter)) pi.events.emit("herd:attach", { id: a.id });
+          else if (matchesKey(data, "d")) pi.events.emit("herd:dashboard", {});
+          else if (matchesKey(data, "x") && a.mine) {
             if (herd.armed) pi.events.emit("herd:stop", { id: a.id });
             herd.armed = !herd.armed;
             return true;
@@ -720,7 +732,7 @@ function tabData(
           herd.armed = false;
           return true;
         },
-        onPick: (i) => list[i]!.live && pi.events.emit("herd:attach", { id: list[i]!.id }),
+        onPick: (i) => pi.events.emit("herd:attach", { id: list[i]!.id }),
       },
     });
   }
@@ -729,7 +741,7 @@ function tabData(
   const selected = bg.list[bg.selected];
   tabs.push({
     id: "jobs",
-    label: "jobs",
+    label: `jobs ${bg.list.length}`,
     lines: [],
     list: {
       sel: bg,
@@ -750,13 +762,15 @@ function tabData(
           `${val(cut(j.command.split("\n")[0]!.padEnd(cmdWidth), cmdWidth))}  ${dim(tilde(j.cwd))}`
         );
       },
-      keys: "↑↓ select · enter logs" + (selected?.state === "running" ? " · x kill" : ""),
+      keys: "↑↓ select · enter logs · x kill · d dashboard",
       note: bg.armed ? paint("warning", `press x again to kill ${selected?.pid}`) : undefined,
-      // enter opens the log; x twice kills; any other key disarms x.
+      // enter opens the log; x twice kills; d opens pi-bash-bg's dashboard; any other key
+      // disarms x.
       onKey: (data, i) => {
         const j = bg.list[i]!;
         if (matchesKey(data, Key.enter)) pi.events.emit("bash-bg:logs", { pid: j.pid });
-        else if (matchesKey(data, "x") && j.state === "running") {
+        else if (matchesKey(data, "d")) pi.events.emit("bash-bg:dashboard", {});
+        else if (matchesKey(data, "x")) {
           if (bg.armed) pi.events.emit("bash-bg:kill", { pid: j.pid });
           bg.armed = !bg.armed;
           return true;
@@ -977,22 +991,32 @@ export default function (pi: ExtensionAPI) {
     requestRender();
   };
 
-  // pi-herd lists agents in the order it first saw them; stopped ones go last.
+  // pi-herd lists agents in the order it first saw them. The tab shows the live top-level ones
+  // (not under another listed agent), each with how many live agents are below it.
   pi.events.on("herd:update", (data) => {
     const u = data as { agents: Agent[]; watching: number };
-    const stopped = (a: Agent) => a.state === "stopped";
-    const list = [...u.agents.filter((a) => !stopped(a)), ...u.agents.filter(stopped)];
-    const next: Herd = { list, watching: u.watching, selected: 0, top: 0, armed: false };
+    const live = u.agents.filter((a) => a.live);
+    const byId = new Map(live.map((a) => [a.id, a]));
+    const list = live.filter((a) => !(a.parent && byId.has(a.parent)));
+    const below = new Map<string, number>();
+    for (const a of live)
+      for (let p = a.parent, n = 0; p && byId.has(p) && n < 100; p = byId.get(p)!.parent, n++)
+        below.set(p, (below.get(p) ?? 0) + 1);
+    const next: Herd = {
+      list,
+      below,
+      watching: u.watching,
+      selected: 0,
+      top: 0,
+      armed: false,
+    };
     reselect(herd, next, "agents", (a) => a.id);
     herd = next;
   });
 
   pi.events.on("bash-bg:update", (data) => {
     const u = data as { jobs: Job[]; running: number };
-    const list = [
-      ...u.jobs.filter((j) => j.state === "running"),
-      ...u.jobs.filter((j) => j.state !== "running"),
-    ];
+    const list = u.jobs.filter((j) => j.state === "running"); // finished: /background dashboard
     const next: Bg = { list, running: u.running, selected: 0, top: 0, armed: false };
     reselect(bg, next, "jobs", (j) => j.pid);
     bg = next;
