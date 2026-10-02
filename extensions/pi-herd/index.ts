@@ -52,6 +52,7 @@ import {
   cleanup,
   DAY,
   derived,
+  isJson,
   isLive,
   label,
   list,
@@ -109,6 +110,8 @@ const TOOLS = [
 
 /** herdr's status for an agent's pane, or exited (no pane, or its pi is gone). */
 type Status = "working" | "idle" | "done" | "blocked" | "unknown" | "exited";
+/** Not working: done is herdr's idle that nobody has looked at yet. */
+const idle = (s: Status) => s === "idle" || s === "done";
 /**
  * A watch on one agent. armed: leaving working ends it. A watch on a message (awaiting: its id)
  * arms once the recipient marks it delivered (pi handed it to the model); a plain agent_watch is
@@ -123,24 +126,46 @@ type Watch = {
   since: number; // when it was armed
   ending?: boolean;
 };
-// Survives /reload: the messages taken in, the watches, and the last herdr:working value.
-const g = ((globalThis as { __piHerd?: unknown }).__piHerd ??= {}) as {
-  me?: string;
-  queued?: Set<string>;
-  watches?: Map<string, Watch>;
-  counts?: Map<string, { sent: number; received: number }>; // messages with each agent
+/** What a new session starts with (/reload keeps it). */
+const fresh = () => ({
+  queued: new Set<string>(), // the messages taken in
+  watches: new Map<string, Watch>(),
+  counts: new Map<string, { sent: number; received: number }>(), // messages with each agent
   // The footer's agents, in the order they were first listed: this session's children and the
   // agents it has watched, and below them the agents they started. Ended ones stay: when they
   // ended, and whether they were stopped (a stopped/<id> marker).
-  listed?: Map<string, Agent>;
-  watched?: Set<string>;
-  ended?: Map<string, { at: number; stopped: boolean }>;
-  since?: Map<string, number>; // when each followed agent's status last changed (for the footer)
-  grouped?: Map<string, { group: number; at: number }>; // when each listed agent entered its group
+  listed: new Map<string, Agent>(),
+  watched: new Set<string>(),
+  ended: new Map<string, { at: number; stopped: boolean }>(),
+  since: new Map<string, number>(), // when each followed agent's status last changed (for the footer)
+  grouped: new Map<string, { group: number; at: number }>(), // when each listed agent entered its group
+});
+// Survives /reload: the session's state, and the last herdr:working value.
+const g = ((globalThis as { __piHerd?: unknown }).__piHerd ??= {}) as ReturnType<typeof fresh> & {
+  me?: string;
   herdr?: boolean;
   removedTools?: string[]; // the agent tools this process removed (a session where pi-herd is off)
 };
+for (const [k, v] of Object.entries(fresh())) (g as Record<string, unknown>)[k] ??= v;
 
+/** Adds each agent of `pool` that is below one `under` accepts (any depth; has: added already). */
+const addBelow = (
+  pool: Agent[],
+  has: (id: string) => boolean,
+  add: (a: Agent) => void,
+  under = has,
+) => {
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const a of pool)
+      if (!has(a.id) && a.parent && under(a.parent)) {
+        add(a);
+        grew = true;
+      }
+  }
+};
+const isStopped = (id: string) => existsSync(join(STOPPED, id));
+const writeAgent = (a: Agent) => writeAtomic(AGENTS, `${a.id}.json`, a);
 const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 const inside = (dir: string, p: string) => !relative(dir, p).startsWith("..");
 const duration = (ms: number) => {
@@ -224,7 +249,7 @@ export default function (pi: ExtensionAPI) {
    * in each group, by when the agent entered it (a newcomer goes last; g.grouped keeps the times).
    */
   const byGroup = (list: Row[]) => {
-    const entered = (g.grouped ??= new Map());
+    const entered = g.grouped;
     const group = (st: string) =>
       st === "working" ? 0 : st === "stopped" || st === "exited" ? 2 : 1;
     const now = Date.now();
@@ -239,29 +264,12 @@ export default function (pi: ExtensionAPI) {
     return [...list].sort((x, y) => key(x).group - key(y).group || key(x).at - key(y).at);
   };
 
-  /** A new session's state (not on /reload, which keeps it). */
-  const reset = () =>
-    Object.assign(g, {
-      queued: new Set(),
-      watches: new Map(),
-      counts: new Map(),
-      ended: new Map(),
-      listed: new Map(),
-      watched: new Set(),
-      since: new Map(),
-      grouped: new Map(),
-    });
-  const watches = () => (g.watches ??= new Map());
-  const counts = () => (g.counts ??= new Map());
-  const ended = () => (g.ended ??= new Map());
-  const listed = () => (g.listed ??= new Map());
-  const watched = () => (g.watched ??= new Set());
+  const reset = () => Object.assign(g, fresh());
   const count = (id: string, key: "sent" | "received") => {
-    const c = counts().get(id) ?? { sent: 0, received: 0 };
+    const c = g.counts.get(id) ?? { sent: 0, received: 0 };
     c[key]++;
-    counts().set(id, c);
+    g.counts.set(id, c);
   };
-  const queued = () => (g.queued ??= new Set());
   const children = (agents = liveAgents()) => agents.filter((a) => me && a.parent === me.id);
   /** Whether `a` is below this agent in the tree of agents started with agent_start (byId: the tree). */
   const below = (a: Agent, byId: Map<string, Agent>) => {
@@ -274,6 +282,19 @@ export default function (pi: ExtensionAPI) {
     const byId = new Map(agents.map((x) => [x.id, x]));
     return agents.filter((a) => below(a, byId));
   };
+
+  /** An agent's row (herd:update, the dashboard): `r` gives its state and overrides the rest. */
+  const toRow = (a: Agent, r: Pick<Row, "state" | "since" | "live"> & Partial<Row>): Row => ({
+    id: a.id,
+    name: label(a),
+    cwd: a.cwd,
+    parent: a.parent,
+    mine: false,
+    watched: false,
+    sent: g.counts.get(a.id)?.sent ?? 0,
+    received: g.counts.get(a.id)?.received ?? 0,
+    ...r,
+  });
 
   /** This session's cost so far, counted as pi-footer does: every response and usage entry. */
   const ownCost = (c: ExtensionContext) => {
@@ -291,7 +312,7 @@ export default function (pi: ExtensionAPI) {
     const cost = ownCost(c);
     if (!me || cost === me.cost) return;
     me.cost = cost;
-    writeAtomic(AGENTS, `${me.id}.json`, me);
+    writeAgent(me);
   };
 
   // herdr (optional patch, see herdr/README.md): working while watches run. herdr plays "done" on
@@ -314,32 +335,30 @@ export default function (pi: ExtensionAPI) {
     const byId = new Map(all.map((a) => [a.id, a]));
     const subs = all.filter((a) => below(a, byId));
     const live = new Map(
-      agents.filter((a) => a.parent === me!.id || watched().has(a.id)).map((a) => [a.id, a]),
+      agents.filter((a) => a.parent === me!.id || g.watched.has(a.id)).map((a) => [a.id, a]),
     );
     // Ended ones this process never saw (the session was resumed): from their records.
-    for (const a of subs.filter((x) => x.ended && !listed().has(x.id)).reverse()) {
-      listed().set(a.id, a);
-      ended().set(a.id, { at: a.ended!, stopped: existsSync(join(STOPPED, a.id)) });
+    for (const a of subs.filter((x) => x.ended && !g.listed.has(x.id)).reverse()) {
+      g.listed.set(a.id, a);
+      g.ended.set(a.id, { at: a.ended!, stopped: isStopped(a.id) });
     }
-    for (let grew = true; grew;) {
-      grew = false;
-      for (const a of agents)
-        // Also under a listed agent that ended: until its own record goes (by then it has marked
-        // itself stopped), an agent whose parent just ended is still live.
-        if (!live.has(a.id) && a.parent && (live.has(a.parent) || listed().has(a.parent))) {
-          live.set(a.id, a);
-          grew = true;
-        }
-    }
+    // Also under a listed agent that ended: until its own record goes (by then it has marked
+    // itself stopped), an agent whose parent just ended is still live.
+    addBelow(
+      agents,
+      (id) => live.has(id),
+      (a) => live.set(a.id, a),
+      (id) => live.has(id) || g.listed.has(id),
+    );
     // New ones are listed in the order they started (liveAgents() is newest first).
     for (const a of [...live.values()].sort((x, y) => x.startedAt - y.startedAt)) {
-      listed().set(a.id, a);
-      ended().delete(a.id); // resumed
+      g.listed.set(a.id, a);
+      g.ended.delete(a.id); // resumed
     }
-    for (const id of listed().keys())
-      if (!live.has(id) && !ended().has(id)) {
+    for (const id of g.listed.keys())
+      if (!live.has(id) && !g.ended.has(id)) {
         const at = byId.get(id)?.ended ?? Date.now();
-        ended().set(id, { at, stopped: existsSync(join(STOPPED, id)) });
+        g.ended.set(id, { at, stopped: isStopped(id) });
       }
     for (const [id, f] of follows)
       if (!live.has(id)) {
@@ -347,25 +366,19 @@ export default function (pi: ExtensionAPI) {
         follows.delete(id);
       }
     for (const a of live.values()) if (!follows.has(a.id)) follow(a);
-    const n = [...watches().values()].filter((w) => !w.ending).length;
+    const n = [...g.watches.values()].filter((w) => !w.ending).length;
     // In first-listed order for the dashboard; herd:update sends them grouped (pi-footer's order).
-    rows = [...listed().values()].map((a) => {
+    rows = [...g.listed.values()].map((a) => {
       const f = follows.get(a.id);
-      const e = ended().get(a.id);
-      return {
-        id: a.id,
-        name: label(a),
+      const e = g.ended.get(a.id);
+      return toRow(a, {
         // herdr's status while it is live; once it ended, stopped or exited.
         state: e ? (e.stopped ? "stopped" : "exited") : (f?.status ?? "unknown"),
         since: e?.at ?? f?.since ?? a.startedAt,
         live: !e,
-        cwd: a.cwd,
-        parent: a.parent,
-        mine: below(a, listed()), // started by this agent, at any depth
-        watched: watches().has(a.id),
-        sent: counts().get(a.id)?.sent ?? 0,
-        received: counts().get(a.id)?.received ?? 0,
-      };
+        mine: below(a, g.listed), // started by this agent, at any depth
+        watched: g.watches.has(a.id),
+      });
     });
     const update = {
       agents: byGroup(rows),
@@ -385,9 +398,9 @@ export default function (pi: ExtensionAPI) {
     dashboard?.();
     // Working while watches run, also during the turn (herdr publishes idle when the turn settles,
     // before this could say otherwise), and while a message or an ending waits for its steer (an
-    // ending's watch stays in watches() until then): an agent watching this one would take any
+    // ending's watch stays in g.watches until then): an agent watching this one would take any
     // idle as finished.
-    const active = watches().size > 0 || !!waking || afterSettle.length > 0 || outbox.length > 0;
+    const active = g.watches.size > 0 || !!waking || afterSettle.length > 0 || outbox.length > 0;
     if (active !== g.herdr) emitHerdr(active);
   };
 
@@ -395,7 +408,7 @@ export default function (pi: ExtensionAPI) {
   const follow = (a: Agent) => {
     let stopped = false;
     let sock: net.Socket | undefined;
-    const since = (g.since ??= new Map());
+    const since = g.since;
     const f = {
       agent: a,
       status: "unknown" as Status,
@@ -477,11 +490,10 @@ export default function (pi: ExtensionAPI) {
    * second is for herdr's report of the new turn, which can arrive after the marker).
    */
   const checkDelivered = (a: Agent) => {
-    const w = watches().get(a.id);
+    const w = g.watches.get(a.id);
     if (!w?.awaiting || w.ending) return;
     if (!existsSync(join(MESSAGES, a.id, `${w.awaiting}.delivered`))) return;
     Object.assign(w, { awaiting: undefined, armed: true, since: Date.now() });
-    const idle = (s: Status) => s === "idle" || s === "done";
     void status(a).then(async (s) => {
       if (!idle(s)) return;
       await new Promise((r) => setTimeout(r, 1000));
@@ -491,11 +503,11 @@ export default function (pi: ExtensionAPI) {
   };
   /** A followed agent's status changed: may end its watch (spec section 6). */
   const onStatus = (a: Agent, s: Status) => {
-    const w = watches().get(a.id);
+    const w = g.watches.get(a.id);
     if (!w || w.ending) return;
     if (s === "exited") void endExited(a.id);
     else if (s === "blocked") void end(w, "blocked");
-    else if (w.armed && (s === "idle" || s === "done")) void end(w, "idle");
+    else if (w.armed && idle(s)) void end(w, "idle");
   };
 
   /** An agent's status: its follow's, unless that hasn't heard from herdr yet (after /reload). */
@@ -504,6 +516,13 @@ export default function (pi: ExtensionAPI) {
     return s && s !== "unknown" ? s : status(a);
   };
 
+  /** A steer's message: its items' text for the model, the items for the renderer. */
+  const steer = (customType: string, items: Item[]) => ({
+    customType,
+    content: items.map(itemText).join("\n\n"),
+    display: true as const,
+    details: { items },
+  });
   /** Queues a steer item; items within BATCH_MS share one steer. */
   const post = (it: Item) => {
     if (!me) return; // an old runtime's late ending, after /reload
@@ -518,34 +537,26 @@ export default function (pi: ExtensionAPI) {
     // Drop the watches this steer ends; others marked ending may still be gathering their ending.
     for (const it of items) {
       const id = it.kind === "watch" ? it.agent.id : it.endsWatch ? it.msg.from.id : undefined;
-      if (id && watches().get(id)?.ending) watches().delete(id);
+      if (id && g.watches.get(id)?.ending) g.watches.delete(id);
     }
-    if (!items.length) return;
     // Messages go by their delivery; watch endings on their own, in an "agent watcher" box.
-    const groups = new Map<string, Item[]>();
-    for (const it of items) {
-      const key = it.kind === "message" ? (it.msg.delivery ?? "steer") : WATCHER;
-      groups.set(key, [...(groups.get(key) ?? []), it]);
-    }
+    const groups = Map.groupBy(items, (it) =>
+      it.kind === "message" ? (it.msg.delivery ?? "steer") : WATCHER,
+    );
     for (const [key, group] of groups) {
-      const message = {
-        customType: key === WATCHER ? WATCHER : TYPE,
-        content: group.map(itemText).join("\n\n"),
-        display: true as const,
-        details: { items: group },
-      };
       if (key === "immediate" && busy) {
         // Abort the running turn, then deliver once pi has settled.
         afterSettle.push(...group);
         ctx?.abort();
-      } else deliver(message, key === "followUp" ? "followUp" : "steer");
+      } else
+        deliver(
+          steer(key === WATCHER ? WATCHER : TYPE, group),
+          key === "followUp" ? "followUp" : "steer",
+        );
     }
     refresh();
   };
-  const deliver = (
-    message: { customType: string; content: string; display: true; details: unknown },
-    deliverAs: "steer" | "followUp",
-  ) => {
+  const deliver = (message: ReturnType<typeof steer>, deliverAs: "steer" | "followUp") => {
     if (!busy) {
       // Keep herdr working until the woken run starts.
       clearTimeout(waking);
@@ -559,7 +570,7 @@ export default function (pi: ExtensionAPI) {
 
   /** Ends a watch with an event, gathering what that ending carries. */
   const end = async (w: Watch, event: Exclude<End, "message">) => {
-    if (!me || w.ending || watches().get(w.agent.id) !== w) return;
+    if (!me || w.ending || g.watches.get(w.agent.id) !== w) return;
     w.ending = true;
     armDeadline();
     refresh();
@@ -581,12 +592,12 @@ export default function (pi: ExtensionAPI) {
         it.transcript = await transcript(a, config.transcriptMessages, config.captureLines);
       }
     } catch {} // a broken session file: the ending goes out with what was read
-    if (watches().get(a.id) === w) post(it); // not when agent_stop dropped it meanwhile
+    if (g.watches.get(a.id) === w) post(it); // not when agent_stop dropped it meanwhile
   };
   /** Exited: scan the inbox first, so a final message still in flight ends the watch as `message`. */
   const endExited = async (id: string) => {
     scan();
-    const w = watches().get(id);
+    const w = g.watches.get(id);
     if (w) await end(w, "exited");
   };
 
@@ -594,12 +605,12 @@ export default function (pi: ExtensionAPI) {
   const armDeadline = () => {
     clearTimeout(deadlineTimer);
     const next = Math.min(
-      ...[...watches().values()].map((w) => (!w.ending && w.deadline) || Infinity),
+      ...[...g.watches.values()].map((w) => (!w.ending && w.deadline) || Infinity),
     );
     if (next === Infinity) return;
     deadlineTimer = setTimeout(
       () => {
-        for (const w of watches().values())
+        for (const w of g.watches.values())
           if (w.deadline && w.deadline <= Date.now()) void end(w, "timeout");
         armDeadline();
       },
@@ -614,7 +625,7 @@ export default function (pi: ExtensionAPI) {
    */
   const startWatch = async (a: Agent, awaiting?: string, minutes = config.watchTimeoutMinutes) => {
     const deadline = minutes > 0 ? Date.now() + minutes * 60_000 : 0;
-    const old = watches().get(a.id);
+    const old = g.watches.get(a.id);
     if (old && !old.ending) {
       // A new message: wait for its delivery again, so an earlier turn's end doesn't count.
       Object.assign(old, { minutes, deadline }, awaiting && { awaiting, armed: false });
@@ -626,8 +637,8 @@ export default function (pi: ExtensionAPI) {
     if (s === "exited") return s;
     if (!awaiting && s !== "working") return s;
     const w: Watch = { agent: a, minutes, deadline, armed: !awaiting, awaiting, since: Date.now() };
-    watches().set(a.id, w);
-    watched().add(a.id);
+    g.watches.set(a.id, w);
+    g.watched.add(a.id);
     armDeadline();
     refresh();
     checkDelivered(a);
@@ -640,18 +651,18 @@ export default function (pi: ExtensionAPI) {
     if (!me) return;
     const dir = join(MESSAGES, me.id);
     const fresh = list(dir)
-      .filter((f) => f.endsWith(".json") && !f.startsWith("."))
+      .filter(isJson)
       .map((f) => f.slice(0, -5))
-      .filter((id) => parseInt(id) >= me!.startedAt && !queued().has(id))
+      .filter((id) => parseInt(id) >= me!.startedAt && !g.queued.has(id))
       .sort();
     for (const id of fresh) {
       const msg = readJson<Message>(join(dir, `${id}.json`));
       if (!msg) continue;
-      queued().add(id);
+      g.queued.add(id);
       if (typeof msg.text !== "string" || typeof msg.from?.id !== "string") continue; // broken
       msg.id = id; // the file's name: its .delivered marker and replies use it
       count(msg.from.id, "received");
-      const w = watches().get(msg.from.id);
+      const w = g.watches.get(msg.from.id);
       const ends = !!w && !w.ending;
       if (ends) w.ending = true;
       post({
@@ -670,7 +681,7 @@ export default function (pi: ExtensionAPI) {
   const onAgents = () => {
     if (!me) return;
     if (!parentAlive()) return die();
-    for (const id of watches().keys()) if (!isLive(readAgent(id))) void endExited(id);
+    for (const id of g.watches.keys()) if (!isLive(readAgent(id))) void endExited(id);
     for (const w of waiters) w();
     refresh();
   };
@@ -727,9 +738,11 @@ export default function (pi: ExtensionAPI) {
       return undefined;
     }
   };
+  /** Ends the popup's attach: the popup then closes, or attaches the agent its marker now names. */
+  const endAttach = () => execFile("pkill", ["-TERM", "-P", String(popupPid)], () => {});
   const detach = () => {
     if (!inPopup()) return ctx?.ui.notify("Not shown in a pi-herd popup.", "info");
-    execFile("pkill", ["-TERM", "-P", String(popupPid)], () => {});
+    endAttach();
   };
 
   const watchDir = (dir: string, fn: () => void, debounce = 50) => {
@@ -766,6 +779,11 @@ export default function (pi: ExtensionAPI) {
     });
   const refs = (to: string | string[]) => (Array.isArray(to) ? to : [to]);
 
+  /** This agent's record, for the tools: they fail while it isn't registered. */
+  const registered = () => {
+    if (!me) throw new Error("pi-herd isn't registered in this session.");
+    return me;
+  };
   /** Writes one message file per recipient; with needsReply, watches it. Returns the ids. */
   const send = async (
     targets: Agent[],
@@ -773,13 +791,14 @@ export default function (pi: ExtensionAPI) {
     replyTo?: string,
   ) => {
     checkSize(m.text);
-    if (targets.some((t) => t.id === me!.id)) throw new Error("Can't message yourself.");
+    const self = registered();
+    if (targets.some((t) => t.id === self.id)) throw new Error("Can't message yourself.");
     const ids: string[] = [];
     for (const t of targets) {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const msg: Message = {
         id,
-        from: { id: me!.id, name: me!.name },
+        from: { id: self.id, name: self.name },
         text: m.text,
         replyTo: replyTo ?? null,
         needsReply: !!m.needsReply,
@@ -802,7 +821,7 @@ export default function (pi: ExtensionAPI) {
    */
   const stop = (a: Agent) => {
     markStopped(a.id); // so every list shows it as stopped
-    watches().delete(a.id);
+    g.watches.delete(a.id);
     armDeadline();
     refresh();
     try {
@@ -833,7 +852,7 @@ export default function (pi: ExtensionAPI) {
       } catch {
         return ctx.ui.notify("Can't switch the popup to that agent.", "warning");
       }
-      execFile("pkill", ["-TERM", "-P", String(popupPid)], () => {});
+      endAttach();
       return;
     }
     // The shell attaches to the agent its marker names, again after a switch (a new agent there);
@@ -905,7 +924,7 @@ export default function (pi: ExtensionAPI) {
   };
   /** How this agent relates to `a`: it started it, it watches it. */
   const tags = (a: Agent) =>
-    [a.parent === me?.id && "child", watches().has(a.id) && "watched"].filter(Boolean) as string[];
+    [a.parent === me?.id && "child", g.watches.has(a.id) && "watched"].filter(Boolean) as string[];
 
   /** The /agents dashboard, over the whole screen until esc. */
   const openDashboard = async () => {
@@ -922,21 +941,18 @@ export default function (pi: ExtensionAPI) {
     const poll = async () => {
       if (polling) return; // a slow herdr: skip, don't pile up
       polling = true;
-      const all = allAgents().filter((a) => a.id !== me?.id && !listed().has(a.id));
+      const all = allAgents().filter((a) => a.id !== me?.id && !g.listed.has(a.id));
       const list = all.filter(isLive);
       const shown = new Set(list.map((a) => a.id));
-      for (let grew = true; grew;) {
-        grew = false;
-        for (const a of all)
-          if (!shown.has(a.id) && a.parent && shown.has(a.parent)) {
-            shown.add(a.id);
-            grew = true;
-          }
-      }
+      addBelow(
+        all,
+        (id) => shown.has(id),
+        (a) => shown.add(a.id),
+      );
       others = all.filter((a) => shown.has(a.id));
       ended.clear();
       for (const a of others)
-        if (!isLive(a)) ended.set(a.id, existsSync(join(STOPPED, a.id)) ? "stopped" : "exited");
+        if (!isLive(a)) ended.set(a.id, isStopped(a.id) ? "stopped" : "exited");
       const read = await Promise.all(list.map(status));
       list.forEach((a, i) => statuses.set(a.id, read[i]!));
       polling = false;
@@ -955,37 +971,27 @@ export default function (pi: ExtensionAPI) {
           tui,
           theme,
           () => ({
-            self: {
-              id: me!.id,
-              name: label(me!),
+            self: toRow(me!, {
               state: busy || g.herdr ? "working" : "idle", // as herdr shows it
               since: 0,
               live: true,
-              cwd: me!.cwd,
-              mine: false,
-              watched: false,
+              parent: undefined,
               self: true,
               sent: 0,
               received: 0,
-            },
+            }),
             agents: rows,
             // Oldest first, like the agents above (liveAgents() is newest first).
             others: others
-              .filter((a) => !listed().has(a.id)) // listed since the last read
+              .filter((a) => !g.listed.has(a.id)) // listed since the last read
               .reverse()
-              .map((a) => ({
-                id: a.id,
-                name: label(a),
-                state: ended.get(a.id) ?? statuses.get(a.id) ?? "unknown",
-                since: 0, // only your agents show a time
-                live: !ended.has(a.id),
-                cwd: a.cwd,
-                parent: a.parent,
-                mine: false,
-                watched: false,
-                sent: counts().get(a.id)?.sent ?? 0,
-                received: counts().get(a.id)?.received ?? 0,
-              })),
+              .map((a) =>
+                toRow(a, {
+                  state: ended.get(a.id) ?? statuses.get(a.id) ?? "unknown",
+                  since: 0, // only your agents show a time
+                  live: !ended.has(a.id),
+                }),
+              ),
           }),
           { attach: attachId, stop: stopId },
           done,
@@ -1071,7 +1077,7 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_id, params, signal, _u, c) {
-      if (!me) throw new Error("pi-herd isn't registered in this session.");
+      const self = registered();
       const resumed = params.session ? findSession(params.session) : undefined;
       if (!resumed && (!params.name || !params.message))
         throw new Error("name and message are required unless you resume a session.");
@@ -1091,7 +1097,7 @@ export default function (pi: ExtensionAPI) {
         (resumed ? undefined : (config.model ?? (c.model && `${c.model.provider}/${c.model.id}`)));
       const thinking =
         params.thinking ?? (resumed ? undefined : (config.thinking ?? pi.getThinkingLevel()));
-      const env = { PI_HERD_PARENT: me.id, ...NO_STALL };
+      const env = { PI_HERD_PARENT: self.id, ...NO_STALL };
       // Trust only what the user already trusts: a folder inside this trusted project (real
       // paths, so a symlink out of it doesn't count).
       const trusted = () => {
@@ -1120,6 +1126,10 @@ export default function (pi: ExtensionAPI) {
       let target: string;
       let created = true;
       let rename: string | undefined; // a new workspace's tab
+      /** A new tab in a workspace of `sock`, unfocused: its pane. */
+      const newTab = async (workspace_id: string): Promise<string> =>
+        (await rpc(sock, "tab.create", { workspace_id, cwd, label: name, env, focus: false }))
+          .root_pane.pane_id;
       if (where === "hidden") {
         await ensureServer();
         sock = HIDDEN;
@@ -1127,16 +1137,8 @@ export default function (pi: ExtensionAPI) {
         const ws = (workspaces as { workspace_id: string; label: string }[]).find(
           (w) => w.label === tilde(cwd),
         );
-        if (ws) {
-          const r = await rpc(sock, "tab.create", {
-            workspace_id: ws.workspace_id,
-            cwd,
-            label: name,
-            env,
-            focus: false,
-          });
-          target = r.root_pane.pane_id;
-        } else {
+        if (ws) target = await newTab(ws.workspace_id);
+        else {
           const r = await rpc(sock, "workspace.create", {
             cwd,
             label: tilde(cwd),
@@ -1148,14 +1150,7 @@ export default function (pi: ExtensionAPI) {
         }
       } else if (where === "tab") {
         const { pane: mine } = await rpc(sock, "pane.get", { pane_id: pane });
-        const r = await rpc(sock, "tab.create", {
-          workspace_id: mine.workspace_id,
-          cwd,
-          label: name,
-          env,
-          focus: false,
-        });
-        target = r.root_pane.pane_id;
+        target = await newTab(mine.workspace_id);
       } else {
         created = false;
         target = where;
@@ -1250,7 +1245,7 @@ export default function (pi: ExtensionAPI) {
       }),
     }),
     async execute(_id, { ids }) {
-      if (!me) throw new Error("pi-herd isn't registered in this session.");
+      registered();
       const { lines, stopped } = stopMany(ids === "all" ? "all" : refs(ids));
       return {
         content: [{ type: "text" as const, text: lines.join("\n") || "No agents to stop." }],
@@ -1272,7 +1267,7 @@ export default function (pi: ExtensionAPI) {
       replyTo: Type.Optional(Type.String({ description: "The id of the message this answers" })),
     }),
     async execute(_id, { to, message, replyTo }) {
-      if (!me) throw new Error("pi-herd isn't registered in this session.");
+      registered();
       const ids = await send(resolveAll(refs(to)), message, replyTo);
       return text(
         `Sent: ${ids.join(", ")}.` +
@@ -1296,10 +1291,10 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_id, { to, timeout }) {
-      if (!me) throw new Error("pi-herd isn't registered in this session.");
+      const self = registered();
       const out: string[] = [];
       const targets = resolveAll(refs(to));
-      if (targets.some((a) => a.id === me!.id)) throw new Error("Can't watch yourself.");
+      if (targets.some((a) => a.id === self.id)) throw new Error("Can't watch yourself.");
       for (const a of targets) {
         const s = await startWatch(a, undefined, timeout ?? config.watchTimeoutMinutes);
         out.push(
@@ -1342,12 +1337,11 @@ export default function (pi: ExtensionAPI) {
           `pane: ${a.herdr.pane}${a.herdr.socket === HIDDEN ? ` (herdr session ${SESSION})` : ""}`,
         ];
         // The transcript ends with the last text; without it, the last text alone.
-        if (!withTranscript)
-          parts.push(`last text:\n${(await lastText(a, config.captureLines, KB)) || "(none)"}`);
-        if (withTranscript)
-          parts.push(
-            `transcript:\n${await transcript(a, config.transcriptMessages, config.captureLines)}`,
-          );
+        parts.push(
+          withTranscript
+            ? `transcript:\n${await transcript(a, config.transcriptMessages, config.captureLines)}`
+            : `last text:\n${(await lastText(a, config.captureLines, KB)) || "(none)"}`,
+        );
         if (screen)
           parts.push(
             `screen:\n${(await capture(a.herdr.socket, a.herdr.pane, config.captureLines)) || "(empty)"}`,
@@ -1372,9 +1366,9 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_id, { scope = "children" }, _s, _u, c) {
-      if (!me) throw new Error("pi-herd isn't registered in this session.");
+      const self = registered();
       const shown = scoped(scope, c.cwd);
-      const rows = [`${short(me.id)}  ${label(me)}  (you)  ${tilde(me.cwd)}`];
+      const rows = [`${short(self.id)}  ${label(self)}  (you)  ${tilde(self.cwd)}`];
       rows.push(...(await Promise.all(shown.map(line))));
       if (scope === "children" && !shown.length)
         rows.push('No children; use scope "cwd" or "all".');
@@ -1515,7 +1509,7 @@ export default function (pi: ExtensionAPI) {
     }
     if (g.me !== id || event.reason !== "reload") reset();
     // Endings queued when the old runtime stopped weren't sent: let them fire again.
-    for (const w of watches().values()) w.ending = false;
+    for (const w of g.watches.values()) w.ending = false;
     g.me = id;
     mkdirSync(AGENTS, { recursive: true });
     mkdirSync(STOPPED, { recursive: true });
@@ -1531,7 +1525,7 @@ export default function (pi: ExtensionAPI) {
       session: c.sessionManager.getSessionFile(),
       cost: ownCost(c),
     };
-    writeAtomic(AGENTS, `${id}.json`, me);
+    writeAgent(me);
     busy = !c.isIdle();
     g.herdr = undefined; // refresh() emits the current value
     lastUpdate = "";
@@ -1576,7 +1570,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_info_changed", (event) => {
     if (!me || me.name === event.name) return;
     me.name = event.name;
-    writeAtomic(AGENTS, `${me.id}.json`, me);
+    writeAgent(me);
   });
 
   pi.on("agent_start", () => {
@@ -1596,16 +1590,7 @@ export default function (pi: ExtensionAPI) {
     busy = false;
     const items = afterSettle;
     afterSettle = [];
-    if (items.length)
-      deliver(
-        {
-          customType: TYPE,
-          content: items.map(itemText).join("\n\n"),
-          display: true,
-          details: { items },
-        },
-        "steer",
-      );
+    if (items.length) deliver(steer(TYPE, items), "steer");
     refresh();
   });
 
@@ -1633,8 +1618,8 @@ export default function (pi: ExtensionAPI) {
     // Messages not yet delivered are taken in again by the next runtime.
     for (const it of [...outbox, ...afterSettle])
       if (it.kind === "message") {
-        queued().delete(it.msg.id);
-        const c = counts().get(it.msg.from.id);
+        g.queued.delete(it.msg.id);
+        const c = g.counts.get(it.msg.from.id);
         if (c) c.received--; // counted again when taken in again
       }
     outbox = [];
@@ -1646,7 +1631,7 @@ export default function (pi: ExtensionAPI) {
     if (me && event.reason !== "reload") {
       // The record stays, ended: the agents above it still list it and count its cost.
       if (readAgent(me.id)?.pid === process.pid)
-        writeAtomic(AGENTS, `${me.id}.json`, { ...me, cost: ownCost(c), ended: Date.now() });
+        writeAgent({ ...me, cost: ownCost(c), ended: Date.now() });
       reset();
       g.me = undefined;
       g.herdr = undefined; // the next session's runtime starts with nothing pending

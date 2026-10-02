@@ -18,12 +18,7 @@ export const parseLine = (line: string) => {
 };
 
 /** One request to a herdr socket; resolves with its result, rejects with herdr's error. */
-export function rpc(
-  socket: string,
-  method: string,
-  params: object = {},
-  timeout = 5000,
-): Promise<any> {
+export function rpc(socket: string, method: string, params: object = {}): Promise<any> {
   return new Promise((ok, fail) => {
     const s = net.createConnection(socket);
     let buf = "";
@@ -33,7 +28,7 @@ export function rpc(
       if (err) fail(err);
       else ok(result);
     };
-    const timer = setTimeout(() => done(new Error(`herdr ${method}: timed out`)), timeout);
+    const timer = setTimeout(() => done(new Error(`herdr ${method}: timed out`)), 5000);
     s.on("connect", () => s.write(`${JSON.stringify({ id: "pi-herd", method, params })}\n`));
     s.on("data", (d) => {
       buf += d;
