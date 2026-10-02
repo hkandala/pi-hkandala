@@ -78,7 +78,7 @@ The columns are name, status, folder, messages, and time. The time column comes 
 
 Rows stay in the order the agents came (started or watched; other agents by when they started), with ended ones last at every level of the tree: only an agent ending moves a row. pi-footer's agents tab orders by status instead: working first.
 
-The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent in a herdr popup, `x` twice stops one of yours, `e` shows or hides the ended ones, Esc or `q` closes. In pi's fullscreen mode, a click on an agent does what Enter does.
+The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent in a herdr popup, `x` twice stops one of yours, `e` shows or hides the ended ones, Esc or `q` closes. In pi's fullscreen mode, a click on an agent does what Enter does, and the mouse wheel moves the selection.
 
 ```
     agents

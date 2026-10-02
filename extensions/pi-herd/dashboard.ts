@@ -7,7 +7,7 @@
  * bottom.
  * Keys: ↑↓ (PgUp PgDn) select, enter opens the agent in a popup (on this agent: closes), x twice
  * stops one of yours, e shows or hides ended ones, esc or q closes. A click on an agent does what
- * enter does (pi's fullscreen mode only).
+ * enter does, and the mouse wheel moves the selection (pi's fullscreen mode only).
  */
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -295,8 +295,15 @@ export class AgentsDashboard {
     return page(t, width, height, describe.join(" · "), list, keys, counter);
   }
 
-  /** A left click on an agent's row selects it and does what enter does. */
-  handleMouse(event: { type: string; button: string; y: number }) {
+  /**
+   * A left click on an agent's row selects it and does what enter does; the wheel moves the
+   * selection one agent per step (no wrap-around).
+   */
+  handleMouse(event: { type: string; button: string; y: number; wheelDelta?: number }) {
+    if (event.type === "wheel" && event.wheelDelta) {
+      this.move(Math.sign(event.wheelDelta));
+      return { handled: true }; // pi renders after a handled wheel
+    }
     if (event.type !== "click" || event.button !== "left") return undefined;
     // The body starts below the margin and the title, description, rule and blank line.
     const i = this.top + event.y - MARGIN.top - 4;

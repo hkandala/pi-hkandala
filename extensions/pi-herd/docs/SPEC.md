@@ -543,7 +543,8 @@ agents` (`herd:update`'s agents as a tree, `├ └ │` by `parent`; ended ones
     last. pi-herd keeps those times, `byGroup`.)
   - Keys: ↑↓ and PgUp/PgDn select, Enter opens a live agent in a popup (section 11), `x` twice
     stops a live agent below this one, `e` shows or hides the ended ones, Esc or `q` closes. In
-    pi's fullscreen mode, a left click on an agent's row selects it and does what Enter does.
+    pi's fullscreen mode, a left click on an agent's row selects it and does what Enter does, and
+    the mouse wheel moves the selection one agent per step, like ↑↓ but without wrapping around.
   - In a popup, ← does nothing special and `/agents dashboard` is refused: "Close the popup first
     (ctrl+b q or /detach)."
 - **In other extensions.** Both read `herd:update` next to pi-bash-bg's `bash-bg:update`.
