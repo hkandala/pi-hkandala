@@ -1,0 +1,30 @@
+{
+  "name": "@hkandala/pi-prompt-keep",
+  "version": "0.1.0",
+  "description": "Keeps hook-added system prompt sections in runs an extension message starts, so the prompt cache survives",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hkandala/pi-hkandala.git",
+    "directory": "extensions/pi-prompt-keep"
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

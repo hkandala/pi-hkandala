@@ -15,6 +15,7 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 | [pi-herd](extensions/pi-herd/README.md)                         | pi agents in herdr: message and watch other pi sessions, start agents in herdr panes, woken when they reply or finish                         |
 | [pi-ponytail](extensions/pi-ponytail/README.md)                 | Lazy-senior-dev ruleset from ponytail as a cache-friendly system prompt section, with `/ponytail` to set the mode and run its skills          |
 | [pi-prompt-clipboard](extensions/pi-prompt-clipboard/README.md) | ctrl+shift+s copies the prompt to the clipboard and clears it; paste long text again at its `[paste #N]` marker to expand it for editing      |
+| [pi-prompt-keep](extensions/pi-prompt-keep/README.md)           | Keeps hook-added system prompt sections in runs an extension message starts, so the prompt cache survives                                     |
 | [pi-retry](extensions/pi-retry/README.md)                       | Makes pi's auto-retry cover every model error (unknown errors, 400s, ...), except auth and quota errors                                       |
 | [pi-time-sense](extensions/pi-time-sense/README.md)             | Gives the agent a sense of time: a hidden current-time marker at most once an hour by default, cache-friendly                                 |
 | [pi-web](extensions/pi-web/README.md)                           | `web_search` and `web_fetch` tools backed by TinyFish's free APIs; fetched pages are saved to files, previewed only for a single URL          |
