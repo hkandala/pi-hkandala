@@ -27,6 +27,7 @@ import {
   Box,
   Container,
   Key,
+  Loader,
   Markdown,
   Text,
   sliceByColumn,
@@ -585,8 +586,9 @@ function indentNotices(list: Proto[]) {
   let panel = false; // between two rules: the panel's own render places it
   for (const node of list) {
     if (node instanceof DynamicBorder) panel = !panel;
-    // Exactly Text: subclasses (pi's loaders) draw their own way.
-    if (panel || overridden.has(node) || Object.getPrototypeOf(node) !== Text.prototype) continue;
+    // A Text or pi's ThemedText (its status lines); loaders draw their own way.
+    if (panel || overridden.has(node) || !(node instanceof Text) || node instanceof Loader)
+      continue;
     override(node, (orig, width) => atColumn3(node, width, orig));
   }
 }
