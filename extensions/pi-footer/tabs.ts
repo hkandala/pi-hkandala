@@ -18,7 +18,7 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 
-export const PAGE = 3; // rows a list shows at once
+const PAGE = 3; // rows a list shows at once
 
 /** Cuts `text` to `width` with a … in the style at the cut (pi's truncateToWidth resets it). */
 export function cut(text: string, width: number): string {

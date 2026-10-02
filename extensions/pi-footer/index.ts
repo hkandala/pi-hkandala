@@ -1,47 +1,34 @@
 /**
- * pi-footer: minimal one-line footer inside a rounded input box; press ↓ at the end of the prompt,
- * run /footer [tab], or click a piece (fullscreen mode) to expand the dashboard below the box.
- *
- *    ╭── ⠋ Working ─────────────────────────────────────────────────────────────────────╮
- *    │ prompt                                                                            │
- *    │                                                                                   │
- *    │  pi-hkandala · 󰘬 master 󰁝2 󰁅1 · +42 -7   cold (~$0.46) · 󰫣 3 · 󰦖 2 · 󰪟 47k/200k · opus-5.5 · high │
- *    ╰───────────────────────────────────────────────────────────────────────────────────╯
- *
- * Right side: cold (only when the prompt cache is cold), the agents pi-herd watches, pi-bash-bg's
- * running jobs, context, model and effort. A click on a piece opens its tab (folder/git → git,
- * cold/context → usage, agents → agents, jobs → jobs, model/effort → session); a click on the
- * prompt's text closes the dashboard. The dashboard has tabs: overview (a line per area), session,
- * usage (after the first response), git (in a repo), jobs (pi-bash-bg) and agents (pi-herd).
- * Narrow terminals drop git, then context. Folder, cold, agents, jobs and model always stay.
- * Config (optional): ~/.pi/agent/extensions/pi-footer.json
- *   { "promptEditor": "box" | "default", "disableEffortColors": true, "style": "color" | "white",
- *     "iconColor": "accent", "gitStatusPollMins": 0.5, "gitFetchPollMins": 30 }
- *   promptEditor "default" keeps pi's editor with the footer below it; disableEffortColors false
- *   lets the prompt border and the footer's level label follow pi's thinking-level colors instead
- *   of staying gray / text;
- *   iconColor: a theme color name or "#rrggbb"; a poll of 0 disables it.
+ * pi-footer: a one-line footer inside a rounded prompt box (box.ts) that expands into a dashboard
+ * of tabs (tabs.ts) below it. The numbers come from the session (stats.ts) and git (git.ts), the
+ * agents and jobs from pi-herd and pi-bash-bg events. See README.md.
  */
 
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  KeybindingsManager,
-  Theme,
-} from "@earendil-works/pi-coding-agent";
-import { CustomEditor, estimateTokens, getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
-import {
-  CURSOR_MARKER,
-  Key,
-  matchesKey,
-  truncateToWidth,
-  visibleWidth,
-} from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import {
+  BoxEditor,
+  editorUnfocused,
+  findEditor,
+  type MouseEvent,
+  type Node,
+  pinBorderColor,
+  promptAtEnd,
+} from "./box.ts";
 import { EMPTY_GIT, type Git, git, readGit } from "./git.ts";
+import {
+  type CacheModel,
+  cacheState,
+  contextUsage,
+  noteFirstToken,
+  perLeaf,
+  sessionStats,
+  type Stats,
+} from "./stats.ts";
 import { cut, type Sel, type Tab, Tabs, move } from "./tabs.ts";
 
 const ICON = {
@@ -65,9 +52,12 @@ const PIE = [
   ...Array.from({ length: 8 }, (_, i) => String.fromCodePoint(0xf0a9e + i)),
 ];
 const MARGIN = 3; // the dashboard's and statuses' right margin, like the box's and the transcript's
-const DEFAULT_CACHE_TTL_S = 300; // pi's own default when a model declares no prompt-cache lifetime
+const CUBE = [0, 95, 135, 175, 215, 255]; // the xterm 256-color cube's levels
+// Tools that never change the work tree: no git refresh after them.
+const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
 type Color = Parameters<Theme["fg"]>[0];
+type Paint = (color: Color, s: string) => string;
 type Config = {
   promptEditor?: "box" | "default";
   disableEffortColors?: boolean;
@@ -75,32 +65,6 @@ type Config = {
   iconColor?: string;
   gitStatusPollMins?: number;
   gitFetchPollMins?: number;
-};
-type Usage = {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  cost?: { total: number };
-};
-type Entry = {
-  type: string;
-  kind?: string; // "cache_warm" on usage entries written by pi's cache warming
-  timestamp?: string;
-  usage?: Usage;
-  message?: {
-    role: string;
-    usage?: Usage;
-    timestamp?: number;
-    content?: unknown;
-    provider?: string;
-    model?: string;
-    stopReason?: string;
-  };
-};
-type CacheModel = {
-  cost?: { cacheRead: number; cacheWrite: number }; // $ per million tokens
-  promptCache?: { short?: number; long?: number }; // lifetimes in seconds
 };
 /** A job from pi-bash-bg's bash-bg:update event. */
 type Job = {
@@ -110,18 +74,6 @@ type Job = {
   startedAt: number;
   endedAt?: number;
   state: string;
-};
-/**
- * This session's pi-bash-bg jobs, the jobs tab's rows (running ones, then finished ones while `e`
- * shows them), and its selection.
- */
-type Bg = Sel & {
-  live: Job[];
-  ended: Job[];
-  showEnded: boolean;
-  list: Job[];
-  running: number;
-  armed: boolean; // x pressed once
 };
 /**
  * An agent from pi-herd's herd:update event: this session's children and the agents it watched,
@@ -140,22 +92,25 @@ type Agent = {
   received: number;
   live: boolean; // false: it ended this session (state stopped or exited)
 };
-/**
- * pi-herd's top-level agents (not under another listed agent), the agents tab's rows (live ones,
- * then ended ones while `e` shows them), how many live agents each has below it, and the
- * selection.
- */
-type Herd = Sel & {
-  placeholder?: string;
-  live: Agent[];
-  ended: Agent[];
+/** A list tab's rows (live ones, then ended ones while `e` shows them) and its selection. */
+type Ended<T> = Sel & {
+  live: T[];
+  ended: T[];
   showEnded: boolean;
-  list: Agent[];
+  list: T[];
+  armed: boolean; // x pressed once
+};
+/** This session's pi-bash-bg jobs. */
+type Bg = Ended<Job> & { running: number };
+/**
+ * pi-herd's top-level agents (not under another listed agent), and how many live agents each has
+ * below it.
+ */
+type Herd = Ended<Agent> & {
+  placeholder?: string;
   below: Map<string, number>;
   watching: number;
   subagents: { cost: number; count: number }; // the agents below this one, ended ones too
-
-  armed: boolean; // x pressed once
 };
 
 const fmt = (n: number) =>
@@ -172,6 +127,13 @@ const duration = (ms: number) => {
 const tilde = (p: string) =>
   p === homedir() || p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p;
 
+/** Pads `x` with spaces to `w` columns (display width, for the glyphs). */
+const pad = (x: string, w: number) => x + " ".repeat(Math.max(0, w - visibleWidth(x)));
+
+/** Line changes: `+42 -7`, either side left out at 0. */
+const plusMinus = (paint: Paint, a: number, r: number) =>
+  [a ? paint("success", `+${a}`) : "", r ? paint("error", `-${r}`) : ""].filter(Boolean).join(" ");
+
 /** Generic rules: provider/x → x, drop "claude-", drop date suffixes, trailing -4-7 → -4.7. */
 const shortModel = (id: string) =>
   id
@@ -183,173 +145,19 @@ const shortModel = (id: string) =>
 
 function readConfig(): Config {
   try {
-    return JSON.parse(readFileSync(join(getAgentDir(), "extensions", "pi-footer.json"), "utf8"));
+    const c = JSON.parse(readFileSync(join(getAgentDir(), "extensions", "pi-footer.json"), "utf8"));
+    return c && typeof c === "object" && !Array.isArray(c) ? c : {};
   } catch {
     return {};
   }
 }
 
-/**
- * Keeps `fn`'s result until a new entry lands (the leaf moves), the session or the model changes:
- * the footer draws on every frame (every wheel tick in full screen), and these walk the session.
- */
-function perLeaf<T>(fn: (ctx: ExtensionContext) => T) {
-  let last: { key: string; value: T } | undefined;
-  return (ctx: ExtensionContext) => {
-    const m = ctx.model;
-    const key = `${ctx.sessionManager.getSessionFile()}|${ctx.sessionManager.getLeafId()}|${m?.provider}/${m?.id}`;
-    if (last?.key !== key) last = { key, value: fn(ctx) };
-    return last.value;
-  };
-}
-
-const sessionStats = perLeaf((ctx) => {
-  const s = {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    cost: 0,
-    turnCost: 0, // since the last user message: the running turn, or the last one
-    cacheHit: undefined as number | undefined,
-    responses: 0,
-    userMessages: 0,
-    toolCalls: 0,
-    compactions: 0,
-    lastSpeed: undefined as number | undefined,
-    streamMs: 0,
-    streamOutput: 0,
-    lastTtft: undefined as number | undefined,
-    ttftMs: 0,
-    ttftCount: 0,
-    workingMs: 0,
-    lastTurnMs: 0, // the last run, from its user message to its last entry
-    startedAt: undefined as number | undefined,
-    cachedAt: undefined as number | undefined, // last response or warm refresh that used the cache
-    lastCached: false, // last response read or wrote the prompt cache
-    lastModel: undefined as string | undefined, // provider/model of the last response
-    compactedSince: false, // compaction after the last response: history no longer matches the cache
-  };
-  let runStart: number | undefined;
-  let runEnd = 0;
-  let idle = true; // the last response ended its run (or there is none yet)
-  let woke: number | undefined; // a custom message while idle (another agent's, a job's end)
-  const startRun = (ts: number) => {
-    s.turnCost = 0;
-    if (runStart !== undefined) s.workingMs += runEnd - runStart;
-    runStart = runEnd = ts;
-  };
-  for (const e of ctx.sessionManager.getEntries() as Entry[]) {
-    const ts = e.timestamp ? Date.parse(e.timestamp) : undefined;
-    const assistant = e.type === "message" && e.message?.role === "assistant";
-    if (ts !== undefined) {
-      s.startedAt ??= ts;
-      // A run (working time, the turn's cost): from a user message, or a custom message that woke
-      // the idle agent (once a response follows it), to the last entry before the next run.
-      if (e.type === "message" && e.message?.role === "user") {
-        s.userMessages++;
-        woke = undefined;
-        startRun(ts);
-      } else if (e.type === "custom_message" && idle) woke ??= ts;
-      else if (assistant && woke !== undefined) {
-        startRun(woke);
-        runEnd = ts;
-        woke = undefined;
-      } else if (runStart !== undefined) runEnd = ts;
-    }
-    if (assistant) idle = e.message!.stopReason !== "toolUse";
-    if (e.type === "compaction") {
-      s.compactions++;
-      s.compactedSince = true;
-    }
-    const usage =
-      e.type === "usage"
-        ? e.usage
-        : e.type === "message" && e.message?.role !== "user"
-          ? e.message?.usage
-          : undefined;
-    if (!usage) continue;
-    s.input += usage.input;
-    s.output += usage.output;
-    s.cacheRead += usage.cacheRead;
-    s.cacheWrite += usage.cacheWrite;
-    s.cost += usage.cost?.total ?? 0;
-    s.turnCost += usage.cost?.total ?? 0;
-    if (e.type === "usage" && e.kind === "cache_warm") s.cachedAt = ts ?? s.cachedAt; // refresh extends the cache
-    if (e.message?.role !== "assistant") continue;
-    s.lastCached = usage.cacheRead + usage.cacheWrite > 0;
-    if (s.lastCached) s.cachedAt = ts ?? s.cachedAt;
-    s.lastModel = `${e.message.provider}/${e.message.model}`;
-    s.compactedSince = false;
-    s.responses++;
-    if (Array.isArray(e.message.content))
-      s.toolCalls += e.message.content.filter((c) => c?.type === "toolCall").length;
-    const prompt = usage.input + usage.cacheRead + usage.cacheWrite;
-    if (prompt > 0) s.cacheHit = (usage.cacheRead / prompt) * 100;
-    // Time to first token, and tokens per second from it to saved (this session's responses only).
-    const sent = e.message.timestamp ?? 0;
-    const first = firstTokenAt.get(sent);
-    if (first === undefined || ts === undefined) continue;
-    s.lastTtft = first - sent;
-    s.ttftMs += s.lastTtft;
-    s.ttftCount++;
-    // Output arrives in bursts (a short reply can land in one chunk), so skip sub-second streams.
-    const ms = ts - first;
-    if (ms >= 1000 && usage.output > 0) {
-      s.lastSpeed = usage.output / (ms / 1000);
-      s.streamMs += ms;
-      s.streamOutput += usage.output;
-    }
-  }
-  if (runStart !== undefined) {
-    s.lastTurnMs = runEnd - runStart;
-    s.workingMs += s.lastTurnMs;
-  }
-  return s;
-});
-
-// After a compaction pi reports no context tokens until the next response (e.g. a session resumed
-// right after an auto-compaction). Estimate them the way pi does (chars / 4, the system message
-// including its tools), once per leaf entry.
-let estimate: { leaf: string | null; tokens: number } | undefined;
-const getContextUsage = perLeaf((ctx) => ctx.getContextUsage());
-function contextUsage(ctx: ExtensionContext) {
-  const usage = getContextUsage(ctx);
-  if (usage?.tokens !== null) return usage && { ...usage, estimated: false };
-  const leaf = ctx.sessionManager.getLeafId();
-  if (estimate?.leaf !== leaf) {
-    const { messages } = ctx.sessionManager.buildSessionContext();
-    estimate = { leaf, tokens: messages.reduce((n, m) => n + estimateTokens(m), 0) };
-  }
-  const { tokens } = estimate;
-  return { ...usage, tokens, percent: (tokens / usage.contextWindow) * 100, estimated: true };
-}
-
-/**
- * Prompt cache: alive for its lifetime after the last cached response (or warm refresh); cold
- * once that passes, the model changed, or the history was compacted: the next message re-bills.
- */
-function cacheState(ctx: ExtensionContext, s: ReturnType<typeof sessionStats>) {
-  const model = ctx.model;
-  const ttlMs =
-    ((model as CacheModel | undefined)?.promptCache?.[
-      process.env.PI_CACHE_RETENTION === "long" ? "long" : "short"
-    ] ?? DEFAULT_CACHE_TTL_S) * 1000;
-  const cacheAge = s.cachedAt !== undefined ? Date.now() - s.cachedAt : 0;
-  const expired = cacheAge > ttlMs;
-  const modelChanged = !!model && !!s.lastModel && s.lastModel !== `${model.provider}/${model.id}`;
-  return {
-    ttlMs,
-    cacheAge,
-    expired,
-    cold: s.lastCached && (expired || modelChanged || s.compactedSince),
-  };
-}
+/** A poll in minutes as ms; setInterval treats anything over 2^31-1 ms as 1 ms. */
+const pollMs = (mins: number | undefined, fallback: number) =>
+  Math.min(2 ** 31 - 1, (mins ?? fallback) * 60_000);
 
 /** When the running turn started (agent_start), while one runs. */
 let turnStartedAt: number | undefined;
-/** First token time by assistant message timestamp (set just before its request). Not saved. */
-const firstTokenAt = new Map<number, number>();
 
 function render(
   pi: ExtensionAPI,
@@ -365,11 +173,21 @@ function render(
   withTabs = true, // the prompt box takes just the first line
 ): Rendered {
   const white = config.style === "white";
-  const paint = (color: Color, s: string) => theme.fg(white ? "text" : color, s);
+  const paint: Paint = (color, s) => theme.fg(white ? "text" : color, s);
   const iconColor = config.iconColor ?? "accent";
   const icon = (s: string) => {
-    if (/^#[0-9a-f]{6}$/i.test(iconColor) && !white)
-      return `\x1b[38;2;${[1, 3, 5].map((i) => parseInt(iconColor.slice(i, i + 2), 16)).join(";")}m${s}\x1b[39m`;
+    if (/^#[0-9a-f]{6}$/i.test(iconColor) && !white) {
+      const rgb = [1, 3, 5].map((i) => parseInt(iconColor.slice(i, i + 2), 16));
+      // Like pi's theme colors: 24-bit, or the nearest 256-color cube entry.
+      const nearest = (v: number) =>
+        CUBE.reduce((best, c, i) => (Math.abs(v - c) < Math.abs(v - CUBE[best]!) ? i : best), 0);
+      const [r, gr, b] = rgb.map(nearest) as [number, number, number];
+      const code =
+        theme.getColorMode?.() !== "256color"
+          ? `38;2;${rgb.join(";")}`
+          : `38;5;${16 + 36 * r + 6 * gr + b}`;
+      return `\x1b[${code}m${s}\x1b[39m`;
+    }
     try {
       return paint(iconColor as Color, s);
     } catch {
@@ -395,20 +213,17 @@ function render(
     ]
       .filter(Boolean)
       .join(" ");
-    const diff = [
-      g.added ? paint("success", `+${g.added}`) : "",
-      g.removed ? paint("error", `-${g.removed}`) : "",
-    ].filter(Boolean);
+    const diff = plusMinus(paint, g.added, g.removed);
     gitPiece =
       `${repo}${icon(ICON.branch)} ${paint("text", branch)}` +
       (sync ? ` ${dim(sync)}` : "") +
-      (diff.length ? dot + diff.join(" ") : "");
+      (diff ? dot + diff : "");
   }
   const model = ctx.model;
   const cacheModel = (model ?? {}) as CacheModel;
   const ctxUsage = contextUsage(ctx);
   const approx = ctxUsage?.estimated ? "~" : "";
-  // Only a cold cache shows (the next message re-bills the context): "cold (~$0.46)".
+  // Only a cold cache shows: "cold (~$0.46)", what the next message costs over a warm cache.
   const { cold } = cacheState(ctx, s);
   const coldExtra =
     ((ctxUsage?.tokens ?? 0) *
@@ -418,13 +233,13 @@ function render(
     ? paint("warning", "cold") +
       (coldExtra >= 0.01 ? paint("text", ` (~$${coldExtra.toFixed(2)})`) : "")
     : undefined;
-  const pct = ctxUsage?.percent ?? undefined;
+  const pct = ctxUsage?.percent ?? 0;
   const window = ctxUsage?.contextWindow ?? model?.contextWindow ?? 0;
-  const ctxColor: Color = (pct ?? 0) > 90 ? "error" : (pct ?? 0) > 75 ? "warning" : "text";
+  const ctxColor: Color = pct > 90 ? "error" : pct > 75 ? "warning" : "text";
   const contextPiece = ctxUsage?.tokens
     ? paint(
         ctxColor,
-        `${PIE[Math.min(8, Math.round((pct ?? 0) / 12.5))]} ${approx}${fmt(ctxUsage.tokens)}/${fmt(window)}`,
+        `${PIE[Math.min(8, Math.round(pct / 12.5))]} ${approx}${fmt(ctxUsage.tokens)}/${fmt(window)}`,
       )
     : undefined;
   const level = pi.getThinkingLevel();
@@ -464,18 +279,18 @@ function render(
   }
   const rightText = groups(right);
   left = cut(left, Math.max(8, width - visibleWidth(rightText) - 2));
+  const gap = Math.max(2, width - visibleWidth(left + rightText));
   // Clicks open the matching tab: folder and git → git, cold and context → usage, agents → agents,
   // jobs → jobs, model and effort → session.
   const spans: Span[] = [{ x0: 0, x1: visibleWidth(left), tab: "git" }];
   const tabOf = ["usage", "agents", "jobs", "usage", "session"];
-  let x = visibleWidth(left) + Math.max(2, width - visibleWidth(left + rightText));
+  let x = visibleWidth(left) + gap;
   right.forEach((piece, i) => {
     if (!piece) return;
     spans.push({ x0: x, x1: (x += visibleWidth(piece)), tab: tabOf[i]! });
     x += visibleWidth(dot);
   });
-  left += " ".repeat(Math.max(2, width - visibleWidth(left + rightText)));
-  const lines = [cut(left + rightText, width)];
+  const lines = [cut(left + " ".repeat(gap) + rightText, width)];
 
   if (statuses.size) {
     const line = [...statuses.entries()]
@@ -500,38 +315,69 @@ type Span = { x0: number; x1: number; tab: string };
 type Rendered = {
   lines: string[];
   spans: Span[]; // lines[0]'s pieces and the tab each opens
-  paint: (color: Color, s: string) => string;
+  paint: Paint;
   tabs: Tab[];
 };
 
-type Ended<T> = Sel & { live: T[]; ended: T[]; showEnded: boolean; list: T[]; armed: boolean };
 /** A tab's rows: the running ones, then the ended ones while `e` shows them. */
 const rowsOf = <T>(b: Ended<T>) => (b.showEnded ? [...b.live, ...b.ended] : b.live);
+/** Selects a job or agent row (and disarms x). */
+const select = <T>(b: Ended<T>, i: number) => {
+  move(b, i, b.list.length);
+  b.armed = false;
+};
 /** `e` on the agents or jobs tab: shows or hides the ended rows, keeping the selection in range. */
 const toggleEnded = <T>(b: Ended<T>) => {
   b.showEnded = !b.showEnded;
   b.list = rowsOf(b);
-  move(b, b.selected, b.list.length);
-  b.armed = false;
+  select(b, b.selected);
 };
 const endedHint = <T>(b: Ended<T>) =>
   b.ended.length ? (b.showEnded ? "e hide ended" : `e show ended (${b.ended.length})`) : "";
 const hint = (parts: (string | false | undefined)[]) => parts.filter(Boolean).join(" · ");
+/**
+ * A list tab's own keys: enter (and a click on the selected row) runs `open`; x twice runs `stop`
+ * where `canStop`; e shows or hides ended rows; any other key disarms x.
+ */
+const listKeys = <T>(
+  b: Ended<T>,
+  open: (x: T) => void,
+  canStop: (x: T) => boolean,
+  stop: (x: T) => void,
+) => ({
+  onKey: (data: string, i: number) => {
+    const x = b.list[i];
+    if (matchesKey(data, "e") && (b.ended.length || b.showEnded)) toggleEnded(b);
+    else if (x === undefined) return false;
+    else if (matchesKey(data, Key.enter)) open(x);
+    else if (matchesKey(data, "x") && canStop(x)) {
+      if (b.armed) stop(x);
+      b.armed = !b.armed;
+      return true;
+    } else return (b.armed = false);
+    b.armed = false;
+    return true;
+  },
+  onPick: (i: number) => {
+    const x = b.list[i];
+    if (x !== undefined) open(x);
+  },
+});
 
 /**
  * The dashboard's tabs, as data (tabs.ts draws them): overview (a line per area), session, usage
  * (after the first response), git (in a repo), jobs while pi-bash-bg reports any, and agents while
- * pi-herd lists any (last): their running ones, and ended ones while `e` shows them.
+ * pi-herd lists any (last).
  */
 function tabData(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
-  paint: (color: Color, s: string) => string,
+  paint: Paint,
   bg: Bg | undefined,
   herd: Herd | undefined,
   branch: string | null,
   g: Git,
-  s: ReturnType<typeof sessionStats>,
+  s: Stats,
   width: number,
 ): Tab[] {
   const dim = (x: string) => paint("dim", x);
@@ -545,10 +391,6 @@ function tabData(
       .filter(Boolean)
       .map((p) => val(p as string))
       .join(dot);
-  const plusMinus = (a: number, r: number) =>
-    [a ? paint("success", `+${a}`) : "", r ? paint("error", `-${r}`) : ""]
-      .filter(Boolean)
-      .join(" ");
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
   const model = ctx.model;
@@ -577,7 +419,9 @@ function tabData(
   ];
   const upstream = branch && branch + (g.upstream ? ` → ${g.upstream}` : "");
   const files = g.files.length;
-  const changes = files ? val(plural(files, "file")) + dot + plusMinus(g.added, g.removed) : "";
+  const changes = files
+    ? val(plural(files, "file")) + dot + plusMinus(paint, g.added, g.removed)
+    : "";
 
   const overview = [
     branch
@@ -646,7 +490,7 @@ function tabData(
               .join(", "),
           ]) +
             dot +
-            plusMinus(g.added, g.removed),
+            plusMinus(paint, g.added, g.removed),
         ),
       );
     }
@@ -718,97 +562,95 @@ function tabData(
     usage.push(row("cache", join([...cache, next >= 0.01 && `next message ~$${next.toFixed(2)}`])));
   }
 
-  const tabs: Tab[] = [
+  const tabs: (Tab | undefined)[] = [
     { id: "overview", label: "overview", lines: overview },
     { id: "session", label: "session", lines: session },
+    s.responses || total > 0 ? { id: "usage", label: "usage", lines: usage } : undefined,
+    branch ? { id: "git", label: "git", lines: git } : undefined,
+    bg && jobsTab(pi, bg, paint, width),
+    herd && agentsTab(pi, herd, paint), // always the last tab
   ];
-  if (s.responses || total > 0) tabs.push({ id: "usage", label: "usage", lines: usage });
-  if (branch) tabs.push({ id: "git", label: "git", lines: git });
-  let agentsTab: Tab | undefined; // the last tab
-  if (herd && herd.live.length + herd.ended.length) {
-    const list = herd.list;
-    const picked = list[herd.selected];
-    // Like the jobs tab: the status colored only while it needs a look, the time dim.
-    const stateColor = (st: string): Color =>
-      st === "working" ? "accent" : st === "blocked" ? "warning" : "dim";
-    const when = (a: Agent) => duration(Date.now() - a.since); // plain, for every status
-    // Markers after the name: another session's agent, and this session waits on it.
-    const marks = (a: Agent) =>
-      [!a.mine && ICON.other, a.watched && ICON.watching].filter(Boolean).join(" ");
-    // A live agent's count of live agents below it, dim after its name: `reviewer +2`.
-    const below = (a: Agent) => (herd.below.get(a.id) ? `+${herd.below.get(a.id)}` : "");
-    const named = (a: Agent) => [cut(a.name, 28), below(a), marks(a)].filter(Boolean).join(" ");
-    const counts = (a: Agent) =>
-      a.sent + a.received ? `${ICON.sent} ${a.sent} ${ICON.received} ${a.received}` : "";
-    // Columns padded to their widest cell (by display width, for the glyphs) among the rows e can
-    // show, so e doesn't move them. The status has a fixed width, and the time (it grows) goes last.
-    const pad = (x: string, w: number) => x + " ".repeat(Math.max(0, w - visibleWidth(x)));
-    const every = [...herd.live, ...herd.ended];
-    const widest = (f: (a: Agent) => string) =>
-      Math.max(0, ...every.map((a) => visibleWidth(f(a))));
-    const nameW = widest(named);
-    const stateW = 7; // working, blocked, unknown, stopped
-    const cwdW = Math.min(
-      32,
-      widest((a) => tilde(a.cwd)),
-    );
-    const countsW = widest(counts);
-    agentsTab = {
-      id: "agents",
-      label: herd.watching ? `agents ${herd.watching}` : "agents", // the agents it waits on
-      lines: [],
-      list: {
-        sel: herd,
-        length: list.length,
-        row: (i, marker) => {
-          const a = list[i]!;
-          const name = cut(a.name, 28);
-          return (
-            `   ${marker} ${val(name)}${dim([below(a), marks(a)].map((x) => x && ` ${x}`).join(""))}` +
-            `${pad("", nameW - visibleWidth(named(a)))}  ` +
-            `${paint(stateColor(a.state), pad(a.state, stateW))}  ` +
-            `${dim(pad(cut(tilde(a.cwd), cwdW), cwdW))}  ` +
-            `${countsW ? `${dim(pad(counts(a), countsW))}  ` : ""}${dim(when(a))}`
-          );
-        },
-        keys: hint([
-          list.length > 0 && "↑↓ select",
-          picked?.live && "enter view",
-          picked?.live && picked.mine && "x stop",
-          endedHint(herd),
-        ]),
-        empty: "no running agents",
-        note: herd.armed ? paint("warning", `press x again to stop ${picked?.name}`) : undefined,
-        // enter opens it in a popup; x twice stops it (started by this session); e shows or
-        // hides ended ones; any other key disarms x.
-        onKey: (data, i) => {
-          const a = list[i];
-          if (matchesKey(data, "e") && (herd.ended.length || herd.showEnded)) toggleEnded(herd);
-          else if (!a) return false;
-          else if (matchesKey(data, Key.enter)) {
-            if (a.live) pi.events.emit("herd:attach", { id: a.id });
-          } else if (matchesKey(data, "x") && a.live && a.mine) {
-            if (herd.armed) pi.events.emit("herd:stop", { id: a.id });
-            herd.armed = !herd.armed;
-            return true;
-          } else return (herd.armed = false);
-          herd.armed = false;
-          return true;
-        },
-        onPick: (i) => list[i]?.live && pi.events.emit("herd:attach", { id: list[i]!.id }),
-      },
-    };
-  }
-  if (!bg || !(bg.live.length + bg.ended.length)) return agentsTab ? [...tabs, agentsTab] : tabs;
-  const cmdWidth = Math.max(10, Math.min(40, width - 42));
-  const pad = (x: string, w: number) => x + " ".repeat(Math.max(0, w - visibleWidth(x)));
-  // Over every job e can show, so e doesn't move the time.
+  return tabs.filter((t): t is Tab => !!t);
+}
+
+/** The agents tab (with pi-herd): its running agents, and ended ones while `e` shows them. */
+function agentsTab(pi: ExtensionAPI, herd: Herd, paint: Paint): Tab | undefined {
+  if (!(herd.live.length + herd.ended.length)) return undefined;
+  const dim = (x: string) => paint("dim", x);
+  const list = herd.list;
+  const picked = list[herd.selected];
+  // Like the jobs tab: the status colored only while it needs a look, the time dim.
+  const stateColor = (st: string): Color =>
+    st === "working" ? "accent" : st === "blocked" ? "warning" : "dim";
+  const when = (a: Agent) => duration(Date.now() - a.since); // plain, for every status
+  // Markers after the name: another session's agent, and this session waits on it.
+  const marks = (a: Agent) =>
+    [!a.mine && ICON.other, a.watched && ICON.watching].filter(Boolean).join(" ");
+  // A live agent's count of live agents below it, dim after its name: `reviewer +2`.
+  const below = (a: Agent) => (herd.below.get(a.id) ? `+${herd.below.get(a.id)}` : "");
+  const named = (a: Agent) => [cut(a.name, 28), below(a), marks(a)].filter(Boolean).join(" ");
+  const counts = (a: Agent) =>
+    a.sent + a.received ? `${ICON.sent} ${a.sent} ${ICON.received} ${a.received}` : "";
+  // Columns padded to their widest cell (by display width, for the glyphs) among the rows e can
+  // show, so e doesn't move them. The status has a fixed width, and the time (it grows) goes last.
+  const every = [...herd.live, ...herd.ended];
+  const widest = (f: (a: Agent) => string) => Math.max(0, ...every.map((a) => visibleWidth(f(a))));
+  const nameW = widest(named);
+  const stateW = 7; // working, blocked, unknown, stopped
   const cwdW = Math.min(
     32,
-    Math.max(0, ...[...bg.live, ...bg.ended].map((j) => tilde(j.cwd).length)),
+    widest((a) => tilde(a.cwd)),
   );
+  const countsW = widest(counts);
+  const attach = (a: Agent) => a.live && pi.events.emit("herd:attach", { id: a.id });
+  return {
+    id: "agents",
+    label: herd.watching ? `agents ${herd.watching}` : "agents", // the agents it waits on
+    lines: [],
+    list: {
+      sel: herd,
+      length: list.length,
+      row: (i, marker) => {
+        const a = list[i]!;
+        return (
+          `   ${marker} ${paint("text", cut(a.name, 28))}` +
+          `${dim([below(a), marks(a)].map((x) => x && ` ${x}`).join(""))}` +
+          `${pad("", nameW - visibleWidth(named(a)))}  ` +
+          `${paint(stateColor(a.state), pad(a.state, stateW))}  ` +
+          `${dim(pad(cut(tilde(a.cwd), cwdW), cwdW))}  ` +
+          `${countsW ? `${dim(pad(counts(a), countsW))}  ` : ""}${dim(when(a))}`
+        );
+      },
+      keys: hint([
+        list.length > 0 && "↑↓ select",
+        picked?.live && "enter view",
+        picked?.live && picked.mine && "x stop",
+        endedHint(herd),
+      ]),
+      empty: "no running agents",
+      note: herd.armed ? paint("warning", `press x again to stop ${picked?.name}`) : undefined,
+      // enter opens it in a popup; x twice stops it (started by this session).
+      ...listKeys(
+        herd,
+        attach,
+        (a) => a.live && a.mine,
+        (a) => pi.events.emit("herd:stop", { id: a.id }),
+      ),
+    },
+  };
+}
+
+/** The jobs tab (with pi-bash-bg): its running jobs, and finished ones while `e` shows them. */
+function jobsTab(pi: ExtensionAPI, bg: Bg, paint: Paint, width: number): Tab | undefined {
+  if (!(bg.live.length + bg.ended.length)) return undefined;
+  const dim = (x: string) => paint("dim", x);
+  const cmdWidth = Math.max(10, Math.min(40, width - 42));
+  // Over every job e can show, so e doesn't move the columns.
+  const every = [...bg.live, ...bg.ended];
+  const pidW = Math.max(7, ...every.map((j) => String(j.pid).length + 1));
+  const cwdW = Math.min(32, Math.max(0, ...every.map((j) => visibleWidth(tilde(j.cwd)))));
   const selected = bg.list[bg.selected];
-  tabs.push({
+  return {
     id: "jobs",
     label: bg.running ? `jobs ${bg.running}` : "jobs",
     lines: [],
@@ -825,10 +667,13 @@ function tabData(
               : j.state === "killed"
                 ? "warning"
                 : "error";
+        // Control characters (a tab, \r, ESC) would move the cursor or restyle the row.
+        // oxlint-disable-next-line no-control-regex
+        const command = j.command.split("\n")[0]!.replace(/[\x00-\x1f\x7f]/g, " ");
         // The time last (it grows), as on the agents tab.
         return (
-          `   ${marker} ${val(String(j.pid).padEnd(7))}${paint(color, j.state.padEnd(9))}` +
-          `${val(cut(j.command.split("\n")[0]!.padEnd(cmdWidth), cmdWidth))}  ` +
+          `   ${marker} ${paint("text", String(j.pid).padEnd(pidW))}${paint(color, j.state.padEnd(9))}` +
+          `${paint("text", pad(cut(command, cmdWidth), cmdWidth))}  ` +
           `${dim(pad(cut(tilde(j.cwd), cwdW), cwdW))}  ` +
           dim(duration((j.endedAt ?? Date.now()) - j.startedAt))
         );
@@ -841,151 +686,21 @@ function tabData(
       ]),
       empty: "no running jobs",
       note: bg.armed ? paint("warning", `press x again to kill ${selected?.pid}`) : undefined,
-      // enter opens the log; x twice kills a running one; e shows or hides finished ones; any
-      // other key disarms x.
-      onKey: (data, i) => {
-        const j = bg.list[i];
-        if (matchesKey(data, "e") && (bg.ended.length || bg.showEnded)) toggleEnded(bg);
-        else if (!j) return false;
-        else if (matchesKey(data, Key.enter)) pi.events.emit("bash-bg:logs", { pid: j.pid });
-        else if (matchesKey(data, "x") && j.state === "running") {
-          if (bg.armed) pi.events.emit("bash-bg:kill", { pid: j.pid });
-          bg.armed = !bg.armed;
-          return true;
-        } else return (bg.armed = false);
-        bg.armed = false;
-        return true;
-      },
-      onPick: (i) => pi.events.emit("bash-bg:logs", { pid: bg.list[i]!.pid }),
+      // enter opens the log; x twice kills a running one.
+      ...listKeys(
+        bg,
+        (j) => pi.events.emit("bash-bg:logs", { pid: j.pid }),
+        (j) => j.state === "running",
+        (j) => pi.events.emit("bash-bg:kill", { pid: j.pid }),
+      ),
     },
-  });
-  return agentsTab ? [...tabs, agentsTab] : tabs;
+  };
 }
-
-type MouseEvent = { type: string; button: string; x: number; y: number; width: number };
-
-/** What the box needs from the footer: its line, where clicks go, whether the dashboard has the keys. */
-type BoxHooks = {
-  footer: (width: number) => string;
-  clickFooter: (x: number) => void;
-  clickInput: () => void;
-  footerFocused: () => boolean;
-  name: () => string | undefined; // the session's, at the top border's right end
-  placeholder: () => string | undefined; // styled, in the empty prompt (pi-herd's popup hint)
-};
-
-/**
- * pi's editor drawn six columns narrower inside a rounded box set a column in on each side (so
- * the text lines up with the transcript's), with the footer as its last row.
- * Assumes pi's editor layout: top border, text rows, bottom border, then the autocomplete list.
- */
-class BoxEditor extends CustomEditor {
-  hooks: BoxHooks;
-
-  constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, hooks: BoxHooks) {
-    super(tui, theme, keybindings, { embedWorkingStatus: true });
-    this.hooks = hooks;
-  }
-
-  // Text rows pi's editor rendered last frame (private in pi, but set on every render).
-  private get rows(): number {
-    return (this as unknown as { renderedVisibleLineCount: number }).renderedVisibleLineCount;
-  }
-
-  render(width: number): string[] {
-    if (width < 10) return super.render(width);
-    const inner = width - 6;
-    const lines = super.render(inner);
-    const bottom = this.rows + 1;
-    const b = (s: string) => this.borderColor(s);
-    const side = (line: string) => ` ${b("│")} ${line} ${b("│")} `;
-    const footer = cut(this.hooks.footer(inner), inner);
-    // While the dashboard has the keys, drop pi's cursor (an inverse cell, and the hardware
-    // cursor's marker) so it's clear typing isn't going to the prompt.
-    const text = lines.slice(1, bottom);
-    // oxlint-disable-next-line no-control-regex
-    const inverse = /\x1b\[7m(.*?)\x1b\[0m/;
-    const rows = !this.hooks.footerFocused()
-      ? text
-      : text.map((l) => l.replace(CURSOR_MARKER, "").replace(inverse, "$1"));
-    // The placeholder after the cursor, in place of the empty row's trailing spaces.
-    const placeholder = this.hooks.placeholder();
-    if (placeholder && this.getText() === "" && rows[0] !== undefined) {
-      const row = rows[0].replace(/ +$/, "");
-      const free = inner - visibleWidth(row) - 1;
-      const withHint = `${row} ${cut(placeholder, free)}`;
-      if (free > 0) rows[0] = withHint + " ".repeat(Math.max(0, inner - visibleWidth(withHint)));
-    }
-    // The session name at the right end of the top border, if pi's label (on the left) leaves room.
-    let top = lines[0]!;
-    const name = this.hooks.name();
-    if (name) {
-      const label = ` ${cut(name, 32)} `;
-      // oxlint-disable-next-line no-control-regex
-      const used = visibleWidth(top.replace(/\x1b\[[0-9;]*m/g, "").replace(/─+$/, ""));
-      if (used + visibleWidth(label) + 2 <= inner)
-        top = truncateToWidth(top, inner - visibleWidth(label), "") + label;
-    }
-    return [
-      b(" ╭─") + top + b("─╮ "),
-      ...rows.map(side),
-      side(" ".repeat(inner)),
-      side(footer + " ".repeat(Math.max(0, inner - visibleWidth(footer)))),
-      b(" ╰─") + lines[bottom] + b("─╯ "),
-      ...lines.slice(bottom + 1).map((line) => `   ${line}   `), // autocomplete list, below the box
-    ];
-  }
-
-  // Clicks map back onto pi's editor: three columns for margin, border and padding, two rows for
-  // the footer. One on the text (or the blank row under it) also gives the prompt the keys back
-  // and closes the dashboard; one on the footer line goes to the footer (its pieces open tabs).
-  handleMouse(event: MouseEvent) {
-    if (event.width < 10) return super.handleMouse(event);
-    const shifted = { ...event, x: event.x - 3, width: event.width - 6 };
-    const click = event.type === "click" && event.button === "left";
-    if (click && event.y <= this.rows + 1) this.hooks.clickInput();
-    if (event.y <= this.rows) return super.handleMouse(shifted);
-    if (event.y === this.rows + 1) return { handled: true, focus: true };
-    if (event.y === this.rows + 2) {
-      if (click) this.hooks.clickFooter(event.x - 3);
-      return { handled: true };
-    }
-    return super.handleMouse({ ...shifted, y: event.y - 2 });
-  }
-}
-
-type Node = { children?: Node[]; isShowingAutocomplete?: () => boolean; getText?: () => string };
-/** pi's editor, for where its cursor is (historyIndex is private: -1 when not browsing history). */
-type PromptEditor = {
-  getLines?: () => string[];
-  getCursor?: () => { line: number; col: number };
-  historyIndex?: number;
-  focused?: boolean; // false while a selector (e.g. /tree) replaces it
-};
-// Found by duck typing; if pi's layout changes, the autocomplete gap and border pinning just stop
-// applying.
-const findEditor = (node: Node): Node | undefined => {
-  if (typeof node.isShowingAutocomplete === "function") return node;
-  for (const child of node.children ?? []) {
-    const found = findEditor(child);
-    if (found) return found;
-  }
-  return undefined;
-};
-
-// pi reassigns editor.borderColor on thinking-level changes; a no-op setter pins it.
-const pinBorderColor = (editor: Node, theme: Theme) =>
-  Object.defineProperty(editor, "borderColor", {
-    configurable: true,
-    get: () => (s: string) =>
-      theme.fg(editor.getText?.().trimStart().startsWith("!") ? "bashMode" : "muted", s),
-    set: () => {},
-  });
 
 export default function (pi: ExtensionAPI) {
   const config = readConfig();
-  const statusPollMs = (config.gitStatusPollMins ?? 0.5) * 60_000;
-  const fetchPollMs = (config.gitFetchPollMins ?? 30) * 60_000;
+  const statusPollMs = pollMs(config.gitStatusPollMins, 0.5);
+  const fetchPollMs = pollMs(config.gitFetchPollMins, 30);
 
   let g: Git = EMPTY_GIT;
   const tabs = new Tabs(); // the dashboard: open, focus, active tab
@@ -1005,6 +720,8 @@ export default function (pi: ExtensionAPI) {
   let session: ExtensionContext | undefined;
   // Git can run repo hooks, so only in trusted projects (re-checked each time: trust can change).
   const trusted = () => session?.isProjectTrusted() === true;
+  // A /name adds an entry, so the leaf moves: read once per leaf, not on every frame.
+  const sessionName = perLeaf(() => pi.getSessionName());
 
   const refresh = async (): Promise<void> => {
     if (!session || !trusted()) return;
@@ -1030,14 +747,17 @@ export default function (pi: ExtensionAPI) {
   };
   const gitFetch = async () => {
     if (!session || !trusted() || !g.upstream) return;
-    // Never prompt for credentials: fail quietly and show an older "fetched" time instead.
+    const cwd = session.cwd;
+    // Never prompt for credentials: fail quietly and show an older "fetched" time instead. Batch
+    // mode is added to the user's own ssh command, so their keys still apply.
+    const ssh =
+      process.env.GIT_SSH_COMMAND ||
+      (await git(cwd, ["config", "core.sshCommand"])).trim() ||
+      "ssh";
     await git(
-      session.cwd,
+      cwd,
       ["fetch", "--quiet", "--no-tags"],
-      {
-        GIT_TERMINAL_PROMPT: "0",
-        GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
-      },
+      { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: `${ssh} -o BatchMode=yes` },
       60_000,
     );
     await refresh();
@@ -1058,16 +778,10 @@ export default function (pi: ExtensionAPI) {
     tabs.show(tab);
     requestRender();
   };
-  // The cursor is at the end of the prompt's text (not browsing history), with no autocomplete
-  // list or overlay, and the prompt has focus (not /tree etc.): ↓ has nothing left to do there, so it moves on to the dashboard.
+  // ↓ has nothing left to do in the prompt, so it moves on to the dashboard (see promptAtEnd).
   let promptEnd = () => true;
-  let tuiHasOverlay = () => false; // e.g. pi-bash-bg's log viewer, which gets its own keys
-  type List<T = unknown> = Sel & { list: readonly T[]; armed: boolean };
-  /** Selects a job or agent row (and disarms x). */
-  const select = (b: List, i: number) => {
-    move(b, i, b.list.length);
-    b.armed = false;
-  };
+  // An overlay (e.g. pi-bash-bg's log viewer) or a dialog in the editor's place gets its own keys.
+  let tuiHasOverlay = () => false;
   // Reopening shows the top: running jobs and watched agents first.
   tabs.onClose = () => {
     if (bg) select(bg, 0);
@@ -1075,8 +789,8 @@ export default function (pi: ExtensionAPI) {
   };
   /** The selection follows its row (by key) while the tab is open, and starts at the top otherwise. */
   const reselect = <T>(
-    old: List<T> | undefined,
-    next: List<T>,
+    old: Ended<T> | undefined,
+    next: Ended<T>,
     tab: string,
     key: (x: T) => unknown,
   ) => {
@@ -1098,6 +812,7 @@ export default function (pi: ExtensionAPI) {
       placeholder?: string;
       subagents?: { cost: number; count: number };
     };
+    if (!Array.isArray(u?.agents)) return; // another pi-herd version
     // Top level: not under another listed agent. Live ones first, then ended (while e shows them).
     const ids = new Set(u.agents.map((a) => a.id));
     const top = u.agents.filter((a) => !(a.parent && ids.has(a.parent)));
@@ -1128,6 +843,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.events.on("bash-bg:update", (data) => {
     const u = data as { jobs: Job[]; running: number };
+    if (!Array.isArray(u?.jobs)) return; // another pi-bash-bg version
     const next: Bg = {
       // Each group in the order its jobs entered it: started, then ended.
       live: u.jobs.filter((j) => j.state === "running").sort((a, b) => a.startedAt - b.startedAt),
@@ -1153,10 +869,36 @@ export default function (pi: ExtensionAPI) {
     g = EMPTY_GIT;
     ctx.ui.setFooter((tui, theme, footerData) => {
       requestRender = () => tui.requestRender();
-      let editor: Node | undefined;
+      let editor: Node | undefined; // pi's editor (or the box), once found
+      let unpin = () => {};
       const unsubscribe = footerData.onBranchChange(refreshSoon);
+      promptEnd = () => promptAtEnd(editor, tui);
+      tuiHasOverlay = () => tui.hasOverlay() || editorUnfocused(editor);
+      const draw = (w: number, withTabs?: boolean) =>
+        render(
+          pi,
+          ctx,
+          theme,
+          config,
+          bg,
+          herd,
+          footerData.getGitBranch(),
+          g,
+          footerData.getExtensionStatuses(),
+          w,
+          withTabs,
+        );
+      // The box draws the collapsed line at its own width, so its clicks map onto that line.
+      footerLine = (w) => {
+        const drawn = draw(w, false);
+        spans = drawn.spans;
+        return drawn.lines[0]!;
+      };
       return {
-        dispose: unsubscribe,
+        dispose() {
+          unsubscribe();
+          unpin();
+        },
         invalidate() {},
         // Mouse events only arrive in fullscreen TUI mode. The footer line's pieces (below pi's
         // editor) open their tabs; inside the dashboard, tabs and list rows react.
@@ -1170,39 +912,11 @@ export default function (pi: ExtensionAPI) {
         render: (width: number) => {
           if (!editor) {
             editor = findEditor(tui);
-            if (editor && config.disableEffortColors !== false) pinBorderColor(editor, theme);
-            tuiHasOverlay = () => tui.hasOverlay();
-            promptEnd = () => {
-              const e = editor as Node & PromptEditor;
-              const lines = e.getLines?.() ?? [""];
-              const cursor = e.getCursor?.() ?? { line: 0, col: 0 };
-              return (
-                e.focused !== false &&
-                cursor.line === lines.length - 1 &&
-                cursor.col === lines.at(-1)!.length &&
-                (e.historyIndex ?? -1) === -1 &&
-                !e.isShowingAutocomplete?.() &&
-                !tui.hasOverlay()
-              );
-            };
+            if (editor && config.disableEffortColors !== false)
+              unpin = pinBorderColor(editor, theme);
           }
-          const draw = (w: number, withTabs?: boolean) =>
-            render(
-              pi,
-              ctx,
-              theme,
-              config,
-              bg,
-              herd,
-              footerData.getGitBranch(),
-              g,
-              footerData.getExtensionStatuses(),
-              w,
-              withTabs,
-            );
-          footerLine = (w) => draw(w, false).lines[0]!;
           const drawn = draw(width);
-          spans = drawn.spans;
+          if (!box) spans = drawn.spans;
           shown = drawn.tabs;
           // In box mode the collapsed line lives in the editor; the rest stays down here.
           const lines = box ? drawn.lines.slice(1) : drawn.lines;
@@ -1228,7 +942,7 @@ export default function (pi: ExtensionAPI) {
               requestRender();
             },
             footerFocused: () => tabs.focus,
-            name: () => pi.getSessionName(),
+            name: () => sessionName(ctx),
             placeholder: () => herd?.placeholder && ctx.ui.theme.fg("dim", herd.placeholder),
           }),
       );
@@ -1242,13 +956,15 @@ export default function (pi: ExtensionAPI) {
       requestRender();
       return { consume: true };
     });
-    await refresh();
     timers.push(setInterval(() => requestRender(), 10_000)); // keeps the cache countdown current
     if (statusPollMs > 0) timers.push(setInterval(refresh, statusPollMs));
-    if (fetchPollMs > 0) {
-      timers.push(setInterval(gitFetch, fetchPollMs));
-      if (!g.fetchedAt || Date.now() - g.fetchedAt > fetchPollMs) void gitFetch();
-    }
+    if (fetchPollMs > 0) timers.push(setInterval(gitFetch, fetchPollMs));
+    // Not awaited: pi runs session_start handlers one at a time, so the git read would hold up
+    // the extensions after this one. Fetch at start when the last fetch is older than the poll.
+    void refresh().then(() => {
+      if (session === ctx && fetchPollMs > 0 && Date.now() - (g.fetchedAt ?? 0) > fetchPollMs)
+        void gitFetch();
+    });
   });
   pi.on("session_shutdown", async () => {
     stop();
@@ -1257,11 +973,12 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Anything that may have edited files or moved HEAD.
-  pi.on("tool_result", async () => refreshSoon());
+  pi.on("tool_result", async (event) => {
+    if (!READ_ONLY_TOOLS.has(event.toolName)) refreshSoon();
+  });
   pi.on("user_bash", async () => refreshSoon());
   pi.on("message_update", async ({ message }) => {
-    if (message.role === "assistant" && !firstTokenAt.has(message.timestamp))
-      firstTokenAt.set(message.timestamp, Date.now());
+    if (message.role === "assistant") noteFirstToken(message.timestamp);
   });
   pi.on("agent_start", async () => {
     turnStartedAt = Date.now();
