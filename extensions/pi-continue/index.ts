@@ -26,9 +26,9 @@ export default function (pi: ExtensionAPI) {
   pi.registerShortcut("ctrl+shift+enter", {
     description: "Nudge the agent to continue",
     handler: (ctx) => {
-      if (ctx.isIdle()) return pi.sendMessage(nudge, { triggerTurn: true });
+      // When idle, pi ignores deliverAs and starts a turn.
       pi.sendMessage(nudge, { triggerTurn: true, deliverAs: "followUp" });
-      ctx.ui.notify("Queued: nudge to continue", "info");
+      if (!ctx.isIdle()) ctx.ui.notify("Queued: nudge to continue", "info");
     },
   });
 }
