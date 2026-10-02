@@ -3,8 +3,8 @@
  * Collapsed shows resource counts; ctrl+o expands the lists; /loaded prints full paths.
  * Clicking the logo (fullscreen TUI mode) toggles color/white and saves the choice; clicking the
  * text expands or collapses the header, like ctrl+o.
- * Info lines posted before the first message (pi's status lines, other extensions' info notices)
- * are hidden so nothing sits under the header.
+ * Before the first message, pi's "Tool output: …" line for ctrl+o is hidden (the header expanding
+ * is the feedback); every other status line and notice shows.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-header.json
  *   →  { "logo": "color" | "white", "compact": false }  (compact: 2-row half-block logo)
@@ -263,20 +263,20 @@ const parentOf = (node: Node, target: Node): Node | undefined => {
 };
 
 /**
- * pi posts status lines ("Thinking level: xhigh", "Tool output: collapsed", …) to the chat as a
- * Spacer + Text pair. Before the first message they would sit wedged under the header, so drop them
- * there; errors and warnings (same shape) stay, told apart by Text's private `text` field.
+ * ctrl+o makes pi post "Tool output: expanded" to the chat as a Spacer + Text pair. Before the first
+ * message the header expanding is the feedback, and the line would sit wedged under it, so drop it
+ * there. Every other status line stays; they are told apart by Text's private `text` field.
  * Returns false once the conversation has started.
  */
-function dropEarlyStatuses(below: Node[]): boolean {
+function dropToolOutputStatus(below: Node[]): boolean {
   const chat = below[1] as Container | undefined;
   if (!chat) return false;
   const c = chat.children;
   let i = 0;
   while (c[i] instanceof Spacer && c[i + 1] instanceof Text) {
     const text = (c[i + 1] as unknown as { text: string }).text;
-    if (/(Error|Warning): /.test(text)) i += 2;
-    else c.splice(i, 2);
+    if (text.includes("Tool output: ")) c.splice(i, 2);
+    else i += 2;
   }
   return i === c.length;
 }
@@ -378,7 +378,7 @@ export default function (pi: ExtensionAPI) {
         render: (width: number) => {
           // The header renders before the chat, so dropped lines never reach the screen.
           below = below.length ? below : containersBelow(tui, header);
-          if (fresh) fresh = dropEarlyStatuses(below);
+          if (fresh) fresh = dropToolOutputStatus(below);
           const blanks = leadingBlanks(below, width, rowsFor(compact));
           shown = render(ctx.ui.theme, res, expanded, white, compact, quiet, width, blanks).map(
             (l) => cut(l, width),

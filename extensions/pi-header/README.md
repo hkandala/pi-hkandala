@@ -17,7 +17,7 @@ A minimal startup header for pi with the official pi logo.
 
 The counts and lists leave out pi's built-in `dark` and `light` themes.
 
-Until you send your first message, pi-header hides the info lines that pi would post under the header, so nothing sits between the header and the chat. These are pi's status lines, at startup and from shortcuts and commands (for example `Thinking level: xhigh`, `TUI mode: fullscreen`, `Tool output: expanded`), and the info notices of other extensions. Errors and warnings still show.
+Until you send your first message, pi-header hides the `Tool output: expanded` (or `collapsed`) line that pi posts for `ctrl+o`: the header expanding or collapsing already shows the change, and the line would sit between the header and the chat. All other status lines and notices still show, for example `Thinking level: xhigh`, `Switched to <model>`, `/login` results, and other extensions' notices.
 
 The logo is rendered pixel-accurately: each pixel is one row tall and exactly one cell-height wide, measured from the terminal's reported cell size. Edges are placed with 1/8-cell block characters, so pixels stay square in any font.
 
