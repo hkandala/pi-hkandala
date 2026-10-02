@@ -138,7 +138,7 @@ const g = ((globalThis as { __piHerd?: unknown }).__piHerd ??= {}) as {
   since?: Map<string, number>; // when each followed agent's status last changed (for the footer)
   grouped?: Map<string, { group: number; at: number }>; // when each listed agent entered its group
   herdr?: boolean;
-  toolsOff?: boolean; // this process removed the agent tools (a session where pi-herd is off)
+  removedTools?: string[]; // the agent tools this process removed (a session where pi-herd is off)
 };
 
 const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
@@ -371,9 +371,10 @@ export default function (pi: ExtensionAPI) {
     lastUpdate = json;
     dashboard?.();
     // Working while watches run, also during the turn (herdr publishes idle when the turn settles,
-    // before this could say otherwise) and while an ending waits for its steer (watches().size
-    // still counts it): an agent watching this one would take any idle as finished.
-    const active = watches().size > 0 || !!waking || afterSettle.length > 0;
+    // before this could say otherwise), and while a message or an ending waits for its steer (an
+    // ending's watch stays in watches() until then): an agent watching this one would take any
+    // idle as finished.
+    const active = watches().size > 0 || !!waking || afterSettle.length > 0 || outbox.length > 0;
     if (active !== g.herdr) emitHerdr(active);
   };
 
@@ -1461,9 +1462,19 @@ export default function (pi: ExtensionAPI) {
 
   /** Off in this session: no tools, and herdr hears no pending work from here. */
   const off = () => {
-    pi.setActiveTools(pi.getActiveTools().filter((t) => !TOOLS.includes(t)));
-    g.toolsOff = true;
+    const active = pi.getActiveTools();
+    pi.setActiveTools(active.filter((t) => !TOOLS.includes(t)));
+    g.removedTools = [
+      ...new Set([...(g.removedTools ?? []), ...active.filter((t) => TOOLS.includes(t))]),
+    ];
     if (g.herdr) emitHerdr(false);
+    // pi-footer and pi-working drop the last session's agents.
+    pi.events.emit("herd:update", {
+      agents: [],
+      watching: 0,
+      waiting: 0,
+      subagents: { cost: 0, count: 0 },
+    });
   };
   pi.on("session_start", (event, c) => {
     ctx = c;
@@ -1478,9 +1489,9 @@ export default function (pi: ExtensionAPI) {
       );
     }
     // Back on (after a session that was off in this process): the tools again.
-    if (g.toolsOff) {
-      pi.setActiveTools([...new Set([...pi.getActiveTools(), ...TOOLS])]);
-      g.toolsOff = false;
+    if (g.removedTools) {
+      pi.setActiveTools([...new Set([...pi.getActiveTools(), ...g.removedTools])]);
+      g.removedTools = undefined;
     }
     if (g.me !== id || event.reason !== "reload") reset();
     // Endings queued when the old runtime stopped weren't sent: let them fire again.
@@ -1551,7 +1562,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_start", () => {
     busy = true;
     clearTimeout(waking);
-    waking = undefined;
+    // A woken run: stay working one macrotask more, until herdr's integration (which may load
+    // after pi-herd) has heard agent_start too.
+    if (waking)
+      waking = setTimeout(() => {
+        waking = undefined;
+        refresh();
+      });
     refresh();
   });
   pi.on("turn_end", (_e, c) => publishCost(c));
@@ -1608,6 +1625,7 @@ export default function (pi: ExtensionAPI) {
         writeAtomic(AGENTS, `${me.id}.json`, { ...me, cost: ownCost(c), ended: Date.now() });
       reset();
       g.me = undefined;
+      g.herdr = undefined; // the next session's runtime starts with nothing pending
     }
     me = ctx = undefined;
   });
