@@ -43,6 +43,7 @@ import {
   HIDDEN,
   launchCommand,
   openPane,
+  type Placed,
   PLUGIN,
   popupCommand,
   q,
@@ -1012,6 +1013,88 @@ export default function (pi: ExtensionAPI) {
       { description },
     );
 
+  /** agent_start's checks, before anything starts: the session it resumes, its folder and name. */
+  const startChecks = (
+    p: { name?: string; session?: string; message?: { text: string }; cwd?: string },
+    c: ExtensionContext,
+  ) => {
+    const resumed = p.session ? findSession(p.session) : undefined;
+    if (!resumed && (!p.name || !p.message))
+      throw new Error("name and message are required unless you resume a session.");
+    if (p.message) checkSize(p.message.text);
+    const agents = liveAgents();
+    if (resumed && agents.some((a) => a.id === resumed.id))
+      throw new Error(`Session ${resumed.id} is already live.`);
+    if (p.name && agents.some((a) => label(a) === p.name))
+      throw new Error(`An agent named "${p.name}" is live; pick another name.`);
+    const cwd = resolve(c.cwd, p.cwd ?? resumed?.cwd ?? ".");
+    if (!existsSync(cwd)) throw new Error(`No such directory: ${cwd}`);
+    const name = p.name ?? (resumed && (resumed.name || derived(resumed.id)));
+    return { resumed, cwd, name };
+  };
+  /** The flags agent_start runs pi with, quoted for sh. */
+  const piFlags = (
+    p: { name?: string; model?: string; thinking?: string },
+    resumed: { file: string } | undefined,
+    cwd: string,
+    c: ExtensionContext,
+  ) => {
+    // A resumed session keeps its own model and thinking level unless the call names them.
+    const model =
+      p.model ??
+      (resumed ? undefined : (config.model ?? (c.model && `${c.model.provider}/${c.model.id}`)));
+    const thinking =
+      p.thinking ?? (resumed ? undefined : (config.thinking ?? pi.getThinkingLevel()));
+    // Trust only what the user already trusts: a folder inside this trusted project (real
+    // paths, so a symlink out of it doesn't count).
+    const trusted = () => {
+      try {
+        return inside(realpathSync(c.cwd), realpathSync(cwd)) && c.isProjectTrusted();
+      } catch {
+        return false;
+      }
+    };
+    return [
+      // Its sessions (also a /new in it) go to pi-herd's folder: out of the user's /resume list.
+      "--session-dir",
+      SESSIONS,
+      ...(resumed ? ["--session", resumed.file] : []),
+      ...(p.name ? ["--name", p.name] : []),
+      ...(trusted() ? ["--approve"] : []),
+      ...(model ? ["--model", model] : []),
+      ...(thinking ? ["--thinking", thinking] : []),
+      ...config.args,
+    ]
+      .map(q)
+      .join(" ");
+  };
+  /** The agent that registers from `target` on `sock`; undefined after 30 s or on abort. */
+  const registration = (sock: string, target: string, signal?: AbortSignal) =>
+    new Promise<Agent | undefined>((done) => {
+      const check = () => {
+        const a = liveAgents().find((x) => x.herdr.pane === target && x.herdr.socket === sock);
+        if (a) finish(a);
+      };
+      const finish = (a?: Agent) => {
+        waiters.delete(check);
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        done(a);
+      };
+      const onAbort = () => finish();
+      const timer = setTimeout(finish, SPAWN_WAIT);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      waiters.add(check);
+      if (signal?.aborted) finish(); // aborted before the wait started
+      else check();
+    });
+  /** agent_start failed once its pane was open: releases the pane; the error shows its screen. */
+  const abandon = async (placed: Placed, why: string) => {
+    const screen = await capture(placed.sock, placed.target, config.captureLines);
+    await releasePane(placed);
+    return new Error(`${why}${screen ? `\nScreen:\n${screen}` : ""}`);
+  };
+
   const line = async (a: Agent) =>
     [short(a.id), label(a), await statusText(a), tilde(a.cwd), ...tags(a)].join("  ");
   // Registered in this order, the order of the tools list in the system prompt.
@@ -1059,48 +1142,10 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, params, signal, _u, c) {
       const self = registered();
-      const resumed = params.session ? findSession(params.session) : undefined;
-      if (!resumed && (!params.name || !params.message))
-        throw new Error("name and message are required unless you resume a session.");
-      if (params.message) checkSize(params.message.text); // before anything starts
-      const agents = liveAgents();
-      if (resumed && agents.some((a) => a.id === resumed.id))
-        throw new Error(`Session ${resumed.id} is already live.`);
-      if (params.name && agents.some((a) => label(a) === params.name))
-        throw new Error(`An agent named "${params.name}" is live; pick another name.`);
-      const cwd = resolve(c.cwd, params.cwd ?? resumed?.cwd ?? ".");
-      if (!existsSync(cwd)) throw new Error(`No such directory: ${cwd}`);
-      const name = params.name ?? (resumed && (resumed.name || derived(resumed.id)));
+      const { resumed, cwd, name } = startChecks(params, c);
       const where = params.placement ?? config.placement;
-      // A resumed session keeps its own model and thinking level unless the call names them.
-      const model =
-        params.model ??
-        (resumed ? undefined : (config.model ?? (c.model && `${c.model.provider}/${c.model.id}`)));
-      const thinking =
-        params.thinking ?? (resumed ? undefined : (config.thinking ?? pi.getThinkingLevel()));
       const env = { PI_HERD_PARENT: self.id, ...NO_STALL };
-      // Trust only what the user already trusts: a folder inside this trusted project (real
-      // paths, so a symlink out of it doesn't count).
-      const trusted = () => {
-        try {
-          return inside(realpathSync(c.cwd), realpathSync(cwd)) && c.isProjectTrusted();
-        } catch {
-          return false;
-        }
-      };
-      const flags = [
-        // Its sessions (also a /new in it) go to pi-herd's folder: out of the user's /resume list.
-        "--session-dir",
-        SESSIONS,
-        ...(resumed ? ["--session", resumed.file] : []),
-        ...(params.name ? ["--name", params.name] : []),
-        ...(trusted() ? ["--approve"] : []),
-        ...(model ? ["--model", model] : []),
-        ...(thinking ? ["--thinking", thinking] : []),
-        ...config.args,
-      ]
-        .map(q)
-        .join(" ");
+      const flags = piFlags(params, resumed, cwd, c);
 
       // 1. The pane.
       const placed = await openPane(where, { socket, pane, cwd, folder: tilde(cwd), name, env });
@@ -1108,40 +1153,19 @@ export default function (pi: ExtensionAPI) {
 
       // 2. Start pi: exec in a pane we created (it closes with pi); in a given pane the shell stays.
       const cmd = launchCommand(placed, flags, env, params.cwd || resumed ? cwd : undefined);
-      const fail = async (why: string) => {
-        const screen = await capture(sock, target, config.captureLines);
-        await releasePane(placed);
-        return new Error(`${why}${screen ? `\nScreen:\n${screen}` : ""}`);
-      };
       try {
         // A new workspace's tab is named with the launch: a failure here closes the pane.
         if (placed.rename) await rpc(sock, "tab.rename", { tab_id: placed.rename, label: name });
         await rpc(sock, "pane.send_input", { pane_id: target, text: cmd, keys: ["enter"] });
       } catch (err) {
-        throw await fail(`herdr: ${(err as Error).message}`);
+        throw await abandon(placed, `herdr: ${(err as Error).message}`);
       }
 
       // 3. Wait for its registration: that is real readiness.
-      const child = await new Promise<Agent | undefined>((done) => {
-        const check = () => {
-          const a = liveAgents().find((x) => x.herdr.pane === target && x.herdr.socket === sock);
-          if (a) finish(a);
-        };
-        const finish = (a?: Agent) => {
-          waiters.delete(check);
-          clearTimeout(timer);
-          signal?.removeEventListener("abort", onAbort);
-          done(a);
-        };
-        const onAbort = () => finish();
-        const timer = setTimeout(finish, SPAWN_WAIT);
-        signal?.addEventListener("abort", onAbort, { once: true });
-        waiters.add(check);
-        if (signal?.aborted) finish(); // aborted before the wait started
-        else check();
-      });
+      const child = await registration(sock, target, signal);
       if (!child)
-        throw await fail(
+        throw await abandon(
+          placed,
           signal?.aborted
             ? "Aborted."
             : `${name} didn't register within 30 s (a trust dialog, or pi-herd not loaded).`,
