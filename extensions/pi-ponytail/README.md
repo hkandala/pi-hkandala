@@ -9,11 +9,11 @@ Makes the agent a lazy senior developer: the simplest solution that works, the s
 
 ## Commands
 
-| Command                                               | Effect                                                                                                                                                                                 |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/ponytail mode <lite\|full\|ultra\|off>`             | Set the mode for this session. It applies from the next prompt.                                                                                                                        |
-| `/ponytail status`                                    | Show the current and default mode.                                                                                                                                                     |
-| `/ponytail run [ponytail\|review\|audit\|debt\|gain]` | Send that skill as a message. While the agent is working, it is queued as a follow-up. `ponytail`, the default, resends the rules. While the mode is `off`, it sends the `full` rules. |
+| Command                                               | Effect                                                                                                                                                                                                                                          |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/ponytail mode <lite\|full\|ultra\|off>`             | Set the mode for this session. It applies from the next prompt.                                                                                                                                                                                 |
+| `/ponytail status`                                    | Show the current and default mode.                                                                                                                                                                                                              |
+| `/ponytail run [ponytail\|review\|audit\|debt\|gain]` | Send that skill as a message. While the agent is working, it is queued as a follow-up. During a `/compact`, it waits until the compaction ends. `ponytail`, the default, resends the rules. While the mode is `off`, it sends the `full` rules. |
 
 Modes:
 

@@ -10,7 +10,7 @@
  * Config (optional): ~/.pi/agent/extensions/pi-ponytail.json  →  { "defaultMode": "full" }
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -75,10 +75,38 @@ function gist(skill: string, mode: string): string {
 export default function (pi: ExtensionAPI) {
   const skill = readFileSync(skillPath("ponytail"), "utf8");
   let mode = defaultMode();
+  let pending: ReturnType<typeof setInterval> | undefined;
+  const stopPending = () => {
+    clearInterval(pending);
+    pending = undefined;
+  };
+
+  /**
+   * During a compaction with no run (a manual /compact), pi would start a run beside it for a custom
+   * message, and refuses a prompt. Then `send` waits until it ends (checked every 100 ms) and this
+   * returns true; one waits at a time.
+   */
+  function afterCompaction(ctx: ExtensionContext, send: () => void): boolean {
+    const compacting = () => !ctx.isIdle() && !ctx.signal;
+    if (!compacting()) return false;
+    stopPending();
+    ctx.ui.notify("Queued until compaction ends", "info");
+    pending = setInterval(() => {
+      try {
+        if (compacting()) return;
+        stopPending();
+        send();
+      } catch {
+        stopPending(); // the session was replaced: ctx is stale
+      }
+    }, 100);
+    return true;
+  }
 
   pi.on("session_start", () => {
     mode = defaultMode();
   });
+  pi.on("session_shutdown", stopPending);
 
   // A prompt section (not a full systemPrompt override), so a mode change is sent as a
   // section delta and the cached prefix survives.
@@ -110,11 +138,10 @@ export default function (pi: ExtensionAPI) {
           arg === "ponytail"
             ? instructions(text, mode === "off" ? "full" : mode)
             : stripFrontmatter(text);
+        const message = `<skill name="${skillName(arg)}" location="${path}">\nReferences are relative to ${dirname(path)}.\n\n${body}\n</skill>`;
         // When idle, pi ignores deliverAs and sends it now.
-        pi.sendUserMessage(
-          `<skill name="${skillName(arg)}" location="${path}">\nReferences are relative to ${dirname(path)}.\n\n${body}\n</skill>`,
-          { deliverAs: "followUp" },
-        );
+        const send = () => pi.sendUserMessage(message, { deliverAs: "followUp" });
+        if (!afterCompaction(ctx, send)) send();
       } else {
         ctx.ui.notify(USAGE, "warning");
       }
