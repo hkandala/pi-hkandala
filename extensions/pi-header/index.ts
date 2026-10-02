@@ -274,7 +274,9 @@ function dropToolOutputStatus(below: Node[]): boolean {
   const c = chat.children;
   let i = 0;
   while (c[i] instanceof Spacer && c[i + 1] instanceof Text) {
-    const text = (c[i + 1] as unknown as { text: string }).text;
+    // pi's ThemedText fills `text` from `build` only when it renders, after the header.
+    const t = c[i + 1] as unknown as { text: string; build?: () => string };
+    const text = t.build?.() ?? t.text;
     if (text.includes("Tool output: ")) c.splice(i, 2);
     else i += 2;
   }
