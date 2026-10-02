@@ -7,6 +7,8 @@
  * at the end of the transcript. It only rides on activity that already calls the model, so it never
  * starts a turn of its own:
  * - before_agent_start: attached to the user's prompt.
+ * - agent_start, for a run with no prompt (a custom message with triggerTurn: a nudge, a job's end, a
+ *   wake-up): queued as a steer, which the run's first model call picks up after that message.
  * - tool_execution_end: queued as a steer, consumed by the call that delivers the tool result.
  *   (Not turn_start: a steer queued during the final text-only turn would start a turn of its own.)
  *
@@ -89,6 +91,9 @@ export default function (pi: ExtensionAPI) {
   const interval = minutes * 60_000;
   let start = Date.now();
   let lastSent = 0;
+  // A run spans the first agent_start to agent_settled (retries and compaction start the agent again).
+  let running = false;
+  let prompted = false; // the run about to start had a prompt, which before_agent_start saw
 
   pi.on("session_start", (_event, ctx) => {
     const header = ctx.sessionManager.getHeader();
@@ -110,8 +115,21 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.on("before_agent_start", () => {
+    prompted = true;
     const message = due();
     return message ? { message } : undefined;
+  });
+
+  // pi awaits agent_start before the loop's first steering poll, so the steer rides the first call.
+  pi.on("agent_start", () => {
+    if (running) return;
+    running = true;
+    const message = prompted ? undefined : due();
+    prompted = false;
+    if (message) pi.sendMessage(message);
+  });
+  pi.on("agent_settled", () => {
+    running = false;
   });
 
   pi.on("tool_execution_end", (event) => {
