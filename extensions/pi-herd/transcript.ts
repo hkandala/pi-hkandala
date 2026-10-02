@@ -64,7 +64,7 @@ const callLine = (c: { name: string; arguments?: Record<string, unknown> }) => {
 /** One transcript block per entry, or undefined for entries a transcript skips. */
 function block(e: Entry): string | undefined {
   if (e.type === "custom_message") return `${e.customType}:\n${textOf(e.content)}`;
-  if (e.type !== "message") return undefined;
+  if (e.type !== "message" || !e.message) return undefined;
   const m = e.message;
   if (m.role === "user") return `user:\n${textOf(m.content)}`;
   if (m.role === "toolResult")
@@ -91,7 +91,7 @@ export async function transcript(a: Agent, n: number, captureLines: number) {
 export async function lastText(a: Agent, captureLines: number, max = LAST_MAX) {
   if (!a.session) return cap(await capture(a.herdr.socket, a.herdr.pane, captureLines), max);
   for (const e of branch(a.session))
-    if (e.type === "message" && e.message.role === "assistant") {
+    if (e.type === "message" && e.message?.role === "assistant") {
       const text = textOf(e.message.content).trim();
       if (text) return cap(text, max);
     }
@@ -100,7 +100,7 @@ export async function lastText(a: Agent, captureLines: number, max = LAST_MAX) {
 /** The error the agent's last turn ended with, if it failed (an API error, say). */
 export const lastError = (a: Agent) => {
   const last = a.session
-    ? branch(a.session).find((e) => e.type === "message" && e.message.role === "assistant")
+    ? branch(a.session).find((e) => e.type === "message" && e.message?.role === "assistant")
     : undefined;
   return last?.message.stopReason === "error"
     ? cap(String(last.message.errorMessage ?? "error"), KB)

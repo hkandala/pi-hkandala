@@ -354,7 +354,10 @@ export default function (pi: ExtensionAPI) {
       watching: n,
       waiting: busy ? 0 : n,
       // The agents below this one, ended ones too: what they cost, and how many.
-      subagents: { cost: subs.reduce((sum, a) => sum + (a.cost ?? 0), 0), count: subs.length },
+      subagents: {
+        cost: subs.reduce((sum, a) => sum + (typeof a.cost === "number" ? a.cost : 0), 0),
+        count: subs.length,
+      },
       // While a popup shows this agent: pi-footer's prompt box shows it as its placeholder.
       placeholder: inPopup() ? CLOSE_HINT : undefined,
     };
@@ -537,20 +540,22 @@ export default function (pi: ExtensionAPI) {
     refresh();
     const a = w.agent;
     const it: Item = { kind: "watch", event, agent: { id: a.id, name: a.name } };
-    if (event === "idle") {
-      it.worked = duration(Date.now() - w.since);
-      it.text = await lastText(a, config.captureLines);
-      it.error = lastError(a);
-      if (!it.text) it.transcript = await transcript(a, 5, config.captureLines);
-    }
-    if (event === "exited") it.text = await lastText(a, config.captureLines);
-    if (event === "blocked")
-      it.screen = await capture(a.herdr.socket, a.herdr.pane, config.captureLines);
-    if (event === "timeout") {
-      it.status = follows.get(a.id)?.status ?? (await status(a));
-      it.after = duration(w.minutes * 60_000);
-      it.transcript = await transcript(a, config.transcriptMessages, config.captureLines);
-    }
+    try {
+      if (event === "idle") {
+        it.worked = duration(Date.now() - w.since);
+        it.text = await lastText(a, config.captureLines);
+        it.error = lastError(a);
+        if (!it.text) it.transcript = await transcript(a, 5, config.captureLines);
+      }
+      if (event === "exited") it.text = await lastText(a, config.captureLines);
+      if (event === "blocked")
+        it.screen = await capture(a.herdr.socket, a.herdr.pane, config.captureLines);
+      if (event === "timeout") {
+        it.status = follows.get(a.id)?.status ?? (await status(a));
+        it.after = duration(w.minutes * 60_000);
+        it.transcript = await transcript(a, config.transcriptMessages, config.captureLines);
+      }
+    } catch {} // a broken session file: the ending goes out with what was read
     if (watches().get(a.id) === w) post(it); // not when agent_stop dropped it meanwhile
   };
   /** Exited: scan the inbox first, so a final message still in flight ends the watch as `message`. */
@@ -618,6 +623,8 @@ export default function (pi: ExtensionAPI) {
       const msg = readJson<Message>(join(dir, `${id}.json`));
       if (!msg) continue;
       queued().add(id);
+      if (typeof msg.text !== "string" || typeof msg.from?.id !== "string") continue; // broken
+      msg.id = id; // the file's name: its .delivered marker and replies use it
       count(msg.from.id, "received");
       const w = watches().get(msg.from.id);
       const ends = !!w && !w.ending;
@@ -684,7 +691,7 @@ export default function (pi: ExtensionAPI) {
       tui as { getFocusedComponent?: () => { getText?: () => string } | null }
     ).getFocusedComponent?.();
     if (typeof focused?.getText !== "function" || focused.getText() !== "") return;
-    void openDashboard();
+    void openDashboard().catch(() => {}); // a shutdown meanwhile
     return { consume: true };
   };
   /** A marker's first line: the agent the popup shows. */
@@ -911,6 +918,7 @@ export default function (pi: ExtensionAPI) {
       // The first read before the page shows (at most 300 ms): otherwise it opens with them all
       // `unknown`, and the counts and statuses change a moment later.
       await Promise.race([poll(), new Promise((r) => setTimeout(r, 300))]);
+      if (!ctx || !me) return; // shut down meanwhile
       await ctx.ui.custom<void>((tui, theme, _kb, done) => {
         dashboard = () => tui.requestRender();
         closeDashboard = done;

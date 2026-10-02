@@ -57,7 +57,9 @@ export async function ensureServer() {
     detached: true,
     stdio: "ignore",
     env,
-  }).unref();
+  })
+    .on("error", () => {}) // herdr not on PATH: the ping loop below reports it
+    .unref();
   for (let t = Date.now(); Date.now() - t < 5000; await new Promise((r) => setTimeout(r, 100)))
     if (await rpc(HIDDEN, "ping").then(Boolean, () => false)) return;
   throw new Error(`herdr session ${SESSION} didn't start within 5 s`);

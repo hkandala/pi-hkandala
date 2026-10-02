@@ -94,7 +94,23 @@ export const writeAtomic = (path: string, name: string, data: unknown) => {
 };
 
 export const agentFile = (id: string) => join(AGENTS, `${id}.json`);
-export const readAgent = (id: string) => readJson<Agent>(agentFile(id));
+/** A record this version can use (not a broken file, or another version's of a different shape). */
+const valid = (a: unknown): a is Agent => {
+  const x = a as Agent | undefined;
+  return (
+    typeof x?.id === "string" &&
+    typeof x.pid === "number" &&
+    typeof x.startedAt === "number" &&
+    typeof x.cwd === "string" &&
+    (x.name == null || typeof x.name === "string") &&
+    typeof x.herdr?.socket === "string" &&
+    typeof x.herdr.pane === "string"
+  );
+};
+export const readAgent = (id: string) => {
+  const a = readJson<Agent>(agentFile(id));
+  return valid(a) ? a : undefined;
+};
 /** Live: its session hasn't ended and its pid runs. */
 export const isLive = (a?: Agent): a is Agent => !!a && !a.ended && alive(a.pid);
 /** Every record, live or ended, newest first. */
@@ -102,7 +118,7 @@ export const allAgents = () =>
   list(AGENTS)
     .filter((f) => f.endsWith(".json") && !f.startsWith("."))
     .map((f) => readJson<Agent>(join(AGENTS, f)))
-    .filter((a): a is Agent => !!a?.id)
+    .filter(valid)
     .sort((a, b) => b.startedAt - a.startedAt);
 /** Live agents, newest first. */
 export const liveAgents = () => allAgents().filter(isLive);
