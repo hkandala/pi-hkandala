@@ -126,7 +126,7 @@ herdr plugin install hkandala/pi-hkandala/herdr/plugin   # for the dashboard's p
 
 Or from a checkout of [pi-hkandala](../../README.md): `pi install <checkout>/extensions/pi-herd`, and `herdr plugin link <checkout>/herdr/plugin`.
 
-Requires herdr 0.9 or newer, with its pi integration installed (`herdr integration status` shows it): all status comes from it. pi-herd starts `pi` from your `PATH`; flags your launcher adds go in `args`. From a checkout, run `npm install --omit=peer` in `extensions/pi-herd` once (without `--omit=peer`, npm also installs pi itself), for its one dependency ([friendly-words](https://github.com/glitchdotcom/friendly-words), pinned to 1.2.1: later versions pull in a web server).
+Requires herdr 0.9 or newer, with its pi integration installed (`herdr integration status` shows it): all status comes from it. pi-herd starts `pi` from your `PATH`, with your launcher's own flags when a launcher started this pi (see `args` below). From a checkout, run `npm install --omit=peer` in `extensions/pi-herd` once (without `--omit=peer`, npm also installs pi itself), for its one dependency ([friendly-words](https://github.com/glitchdotcom/friendly-words), pinned to 1.2.1: later versions pull in a web server).
 
 ## Configuration
 
@@ -149,11 +149,13 @@ Optional: `~/.pi/agent/extensions/pi-herd.json`. Every key has a default, and a 
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `placement`           | default placement for `agent_start`: `hidden` or `tab`                                                                                 |
 | `model`, `thinking`   | defaults for agents you start; `null` inherits yours                                                                                   |
-| `args`                | extra pi flags for agents you start, appended last                                                                                     |
+| `args`                | extra pi flags for agents you start, appended last (a launcher's flags come without it: see below)                                     |
 | `watchTimeoutMinutes` | default watch timeout; `0` means none                                                                                                  |
 | `transcriptMessages`  | entries in a transcript (`agent_read` with `transcript`, and timeout endings)                                                          |
 | `captureLines`        | lines of an agent's screen read: `agent_read` with `screen`, `blocked` endings, and for an agent with no session file (`--no-session`) |
 | `detachKey`           | closes the popup showing this agent, like `/detach`                                                                                    |
+
+**A launcher's flags.** When this pi was started by a launcher named `pi` on your `PATH` (a program that runs the real pi with its own args and doesn't pass its own flags on, such as `pi --dangerously-disable-osx-sandbox`), agents get those flags too: right after `pi`, before pi-herd's flags. pi-herd reads the launcher's command line once (its parent process) and keeps the args this pi didn't get. Without such a launcher, nothing is added. On macOS the command line comes from `ps`, joined with spaces, so a launcher flag's value that contains a space comes out split; then pass the flag in `args` instead.
 
 ## Files
 

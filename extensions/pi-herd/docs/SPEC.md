@@ -328,8 +328,8 @@ the name check.
        parent pi (such as `PI_SESSION_FILE`) leaks into started agents. Each pane's login shell rebuilds
        the user's normal environment.
      - The server otherwise inherits whatever the parent pi process runs under. pi-herd adds no
-       platform- or launcher-specific handling. Any extra flags a launcher needs go in config
-       `args`.
+       platform-specific handling. A launcher's own flags come with the start command (step 2);
+       any other extra flags go in config `args`.
      - After that, every call uses the socket `~/.config/herdr/sessions/pi-herd/herdr.sock`.
    - `tab`: a new tab at the end of the caller's herdr workspace, opened with `--no-focus`.
    - **a pane id** (for example `w1:p3`) in the caller's herdr session: the agent starts in that
@@ -351,13 +351,27 @@ the name check.
    - pi-herd talks to herdr's socket API directly (`pane.send_input` with the text and `enter`,
      which is what `herdr pane run` does), not through the CLI.
    - In a pane pi-herd created:
-     `herdr pane run <pane> "exec pi --session-dir <sessions> [--session f] [--name <name>] [--approve] [--model m] [--thinking t] [args…]"`.
+     `herdr pane run <pane> "exec pi [launcher flags…] --session-dir <sessions> [--session f] [--name <name>] [--approve] [--model m] [--thinking t] [args…]"`.
      `exec` makes pi the pane's process, so the pane closes when pi exits. No shell is left behind,
      and no stray `PI_HERD_PARENT` sits in one.
    - In a given pane: `herdr pane run <pane> "cd <cwd> && PI_HERD_PARENT=<my id> EDITOR=true … pi
 --name <name> …"`, without `exec`. The env applies only to pi, and the shell is still there
      when pi exits. `cd` is added only when `cwd` is passed or a session is resumed.
    - herdr's `agent start` isn't used, because it waits on herdr's screen-based readiness.
+   - **A launcher's flags.** A user may run pi through a launcher named `pi` on `PATH` that runs the
+     real pi with its own args and doesn't pass its own flags on (for example
+     `pi --dangerously-disable-osx-sandbox`, which runs `pi.real` unsandboxed). A plain `pi` would
+     start the agent without them (sandboxed, say). So when this pi's parent process is named `pi`
+     and this pi isn't (`process.execPath`), the parent's args that aren't in this process's argv
+     are the launcher's own flags, with their values. They go right after `pi`, quoted, before
+     pi-herd's flags, in both start commands. No flag names are built in.
+     - The parent's argv is read once: `/proc/<ppid>/cmdline` on Linux (exact), `ps -ww -o args=`
+       elsewhere (joined with spaces, so split on them). This process's args are split on spaces
+       too, so a prompt with spaces isn't taken for flags; a launcher flag's value with a space
+       comes out split (pass that flag in `args` instead). A launcher token that this process also
+       got (say, a flag value equal to one of pi's args) is dropped.
+     - Agents started by an agent inherit them the same way: each one's pi runs under the
+       launcher.
    - **`--session-dir ~/.pi/agent/pi-herd/sessions`** always (pi then keeps every session flat in
      that folder): started agents' sessions, also a `/new` in one, stay out of the user's
      `/resume` and `pi --resume` lists, which read pi's default folder. They are still saved, and
@@ -729,7 +743,7 @@ default applies).
 | --------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `placement`           | `"hidden"`       | the default for `agent_start`'s `placement`: `hidden` (the dedicated herdr session) or `tab`                                        |
 | `model`, `thinking`   | `null`           | defaults for spawned agents. `null` means inherit from the caller.                                                                  |
-| `args`                | `[]`             | extra pi flags for spawned agents, appended last (for example, flags a launcher needs)                                              |
+| `args`                | `[]`             | extra pi flags for spawned agents, appended last (a launcher's own flags come without it: section 7)                                |
 | `watchTimeoutMinutes` | `30`             | the default watch timeout. `0` means none.                                                                                          |
 | `transcriptMessages`  | `20`             | entries in a transcript (`agent_read` with `transcript`, and timeout endings)                                                       |
 | `captureLines`        | `100`            | lines of an agent's screen read: `agent_read` with `screen`, `blocked` endings, and the transcript of an agent with no session file |

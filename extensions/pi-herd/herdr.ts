@@ -3,10 +3,11 @@
  * herdr side of starting an agent, following its status, and showing it in a popup.
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import net from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 export const SESSION = "pi-herd"; // the dedicated herdr session for agents started hidden
 export const HIDDEN = join(homedir(), ".config", "herdr", "sessions", SESSION, "herdr.sock");
@@ -183,8 +184,46 @@ export async function openPane(
 }
 
 /**
+ * A launcher's own flags, when `parent` (its argv) is a program named `pi` that runs the real pi
+ * (`own`: our argv): its args that we didn't get, the ones it consumed. Ours are split on spaces
+ * too, as ps splits the parent's (so a prompt with spaces isn't taken for flags).
+ */
+export const launcherFlags = (parent: string[], own: string[]) => {
+  if (basename(parent[0] ?? "") !== "pi") return [];
+  const ours = new Set(own.flatMap((a) => a.split(/\s+/)));
+  return parent.slice(1).filter((t) => !ours.has(t));
+};
+let launcher: string | undefined;
+/**
+ * The launcher's flags (launcherFlags), quoted for sh, each followed by a space; read once. Not
+ * when this pi is itself named `pi` (then a parent `pi` is another pi, not a launcher). Linux reads
+ * the parent's exact argv; macOS has only ps's, joined with spaces: a launcher flag's value with a
+ * space in it comes out split.
+ */
+const launcherArgs = () =>
+  (launcher ??= (() => {
+    if (basename(process.execPath) === "pi") return "";
+    try {
+      const parent =
+        process.platform === "linux"
+          ? readFileSync(`/proc/${process.ppid}/cmdline`, "utf8").split("\0").filter(Boolean)
+          : execFileSync("ps", ["-ww", "-o", "args=", "-p", String(process.ppid)], {
+              encoding: "utf8",
+            })
+              .trim()
+              .split(/\s+/);
+      return launcherFlags(parent, process.argv)
+        .map((t) => `${q(t)} `)
+        .join("");
+    } catch {
+      return "";
+    }
+  })());
+
+/**
  * The line that starts pi in a placed pane: `exec pi …` in a created one; in a given one the env
- * goes on pi's command (the shell stays), after a `cd` when `cd` is given.
+ * goes on pi's command (the shell stays), after a `cd` when `cd` is given. A launcher's flags (the
+ * `pi` that started this pi, see launcherArgs) come first, so agents start as this pi did.
  */
 export const launchCommand = (
   p: Placed,
@@ -193,10 +232,10 @@ export const launchCommand = (
   cd?: string,
 ) =>
   p.created
-    ? `exec pi ${flags}`
+    ? `exec pi ${launcherArgs()}${flags}`
     : `${cd ? `cd ${q(cd)} && ` : ""}${Object.entries(env)
         .map(([k, v]) => `${k}=${q(v)}`)
-        .join(" ")} pi ${flags}`;
+        .join(" ")} pi ${launcherArgs()}${flags}`;
 
 /** After a failed start: closes a created pane, or ends what runs in a given one (its shell stays). */
 export async function releasePane(p: Placed) {
