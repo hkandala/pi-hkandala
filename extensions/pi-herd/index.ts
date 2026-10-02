@@ -704,8 +704,8 @@ export default function (pi: ExtensionAPI) {
 
   /**
    * A popup shows this agent while a live popup shell's marker, attached/<its pid>, names it (its
-   * first line; then the socket and pane it attaches to, and its name). Dead shells' markers are
-   * removed.
+   * first line; then the socket and pane it attaches to, its name, and the agent that opened the
+   * popup). Dead shells' markers are removed.
    */
   const onAttached = () => {
     if (!me || !ctx) return;
@@ -713,7 +713,7 @@ export default function (pi: ExtensionAPI) {
     for (const f of list(ATTACHED)) {
       const pid = parseInt(f);
       if (!alive(pid)) rm(join(ATTACHED, f));
-      else if (markerAgent(join(ATTACHED, f)) === me.id) popupPid = pid;
+      else if (marker(join(ATTACHED, f))[0] === me.id) popupPid = pid;
     }
     refresh(); // the placeholder
     tui?.requestRender();
@@ -732,12 +732,12 @@ export default function (pi: ExtensionAPI) {
     void openDashboard().catch(() => {}); // a shutdown meanwhile
     return { consume: true };
   };
-  /** A marker's first line: the agent the popup shows. */
-  const markerAgent = (path: string) => {
+  /** A marker's lines (see onAttached); none when it is gone. */
+  const marker = (path: string) => {
     try {
-      return readFileSync(path, "utf8").split("\n")[0];
+      return readFileSync(path, "utf8").split("\n");
     } catch {
-      return undefined;
+      return [];
     }
   };
   /** Ends the popup's attach: the popup then closes, or attaches the agent its marker now names. */
@@ -840,17 +840,22 @@ export default function (pi: ExtensionAPI) {
 
   /**
    * Views an agent: in a popup showing this agent, that popup switches to it (the marker names it,
-   * and ending the current attach makes the popup's loop attach it); otherwise it opens a popup,
+   * and ending the current attach makes the popup's loop attach it), or closes when that agent
+   * opened the popup (its pane is behind the popup: a 5th marker line, kept across switches; an
+   * older runtime's marker has none, and switches as before); otherwise it opens a popup,
    * whichever herdr session the agent is in. Not from the hidden session outside a popup: nobody
    * sees a popup there, and it would take the agent's pane away from wherever it shows.
    */
   const attach = async (a: Agent) => {
     if (!ctx || !me) return;
     if (inPopup()) {
+      const path = join(ATTACHED, String(popupPid));
+      const opener = marker(path)[4] ?? "";
+      if (a.id === opener) return endAttach(); // the marker still names this agent: the popup closes
       try {
         writeFileSync(
-          join(ATTACHED, String(popupPid)),
-          `${a.id}\n${a.herdr.socket}\n${a.herdr.pane}\n${label(a)}\n`,
+          path,
+          `${a.id}\n${a.herdr.socket}\n${a.herdr.pane}\n${label(a)}\n${opener}\n`,
         );
       } catch {
         return ctx.ui.notify("Can't switch the popup to that agent.", "warning");
@@ -863,7 +868,12 @@ export default function (pi: ExtensionAPI) {
         `This agent runs in herdr session ${SESSION}, where a popup wouldn't show: open ${label(a)} from your main herdr session.`,
         "warning",
       );
-    const command = popupCommand(ATTACHED, { ...a.herdr, id: a.id, name: label(a) });
+    const command = popupCommand(ATTACHED, {
+      ...a.herdr,
+      id: a.id,
+      name: label(a),
+      opener: me.id,
+    });
     try {
       await rpc(socket, "plugin.pane.open", {
         plugin_id: PLUGIN,

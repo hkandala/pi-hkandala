@@ -213,19 +213,20 @@ export async function releasePane(p: Placed) {
 }
 
 /**
- * The popup's shell command. It attaches to the agent its marker (`markers`/<its pid>) names, again
- * after a switch (a new agent there); when an attach ends any other way (detach, the agent exits),
- * the popup closes. Before each attach it sizes the agent's pane to the popup (herdr keeps the size
- * after a release) and gives pi 200 ms to redraw, behind an "opening …" line: the attach then shows
- * a settled screen instead of a redraw at the new size. A signal exits through the EXIT trap (dash
- * runs it only so) to remove the marker.
+ * The popup's shell command. Its marker (`markers`/<its pid>) names the agent it shows (id, socket,
+ * pane, name), then the agent that opened it (the loop reads only the first four lines). It
+ * attaches to the agent the marker names, again after a switch (a new agent there); when an attach
+ * ends any other way (detach, the agent exits), the popup closes. Before each attach it sizes the
+ * agent's pane to the popup (herdr keeps the size after a release) and gives pi 200 ms to redraw,
+ * behind an "opening …" line: the attach then shows a settled screen instead of a redraw at the new
+ * size. A signal exits through the EXIT trap (dash runs it only so) to remove the marker.
  */
 export const popupCommand = (
   markers: string,
-  a: { id: string; socket: string; pane: string; name: string },
+  a: { id: string; socket: string; pane: string; name: string; opener: string },
 ) =>
   `M=${q(markers)}/$$; trap 'rm -f "$M"' EXIT; trap 'exit 1' HUP INT TERM; ` +
-  `printf '%s\\n' ${q(a.id)} ${q(a.socket)} ${q(a.pane)} ${q(a.name)} > "$M"; ` +
+  `printf '%s\\n' ${q(a.id)} ${q(a.socket)} ${q(a.pane)} ${q(a.name)} ${q(a.opener)} > "$M"; ` +
   `while { read -r ID; read -r S; read -r P; read -r N; } < "$M" && [ -n "$P" ]; do ` +
   `printf '\\033[2J\\033[H\\n  \\033[2mopening %s…\\033[0m' "$N"; set -- $(stty size); ` +
   `{ sleep 0.2; echo '{"type":"terminal.release"}'; } | HERDR_SOCKET_PATH="$S" ` +

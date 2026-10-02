@@ -42,12 +42,12 @@ follow from it: the folder `~/.pi/agent/pi-herd/`, the env prefix `PI_HERD_`, th
 Everything lives in `~/.pi/agent/pi-herd/`. The folders are created (`mkdir -p`) before they are
 watched.
 
-| File                           | Written by                                                                                                                                  | Contents                                                                  |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `agents/<id>.json`             | the agent, on `session_start` (atomic write: temp file + rename), again when its name or cost changes, and when the session ends (`ended`). | the agent record                                                          |
-| `messages/<toId>/<msgId>.json` | the sender, once. The temp file is `.<msgId>.tmp`, then renamed.                                                                            | one message. It is never moved or changed, so it can always be read back. |
-| `attached/<pid>`               | the attach popup's shell (named by its pid), removed by the same shell when the popup closes (section 11)                                   | the agent the popup shows: its id, socket, pane and name, one per line    |
-| `stopped/<id>`                 | whoever stops the agent (`agent_stop`), or the agent itself when it ends with the agent that started it; removed when it resumes            | the time; lists show the ended agent as `stopped`, not `exited`           |
+| File                           | Written by                                                                                                                                  | Contents                                                                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `agents/<id>.json`             | the agent, on `session_start` (atomic write: temp file + rename), again when its name or cost changes, and when the session ends (`ended`). | the agent record                                                                                      |
+| `messages/<toId>/<msgId>.json` | the sender, once. The temp file is `.<msgId>.tmp`, then renamed.                                                                            | one message. It is never moved or changed, so it can always be read back.                             |
+| `attached/<pid>`               | the attach popup's shell (named by its pid), removed by the same shell when the popup closes (section 11)                                   | the agent the popup shows: its id, socket, pane and name, then the agent that opened it, one per line |
+| `stopped/<id>`                 | whoever stops the agent (`agent_stop`), or the agent itself when it ends with the agent that started it; removed when it resumes            | the time; lists show the ended agent as `stopped`, not `exited`                                       |
 
 **Ids.** `<id>` is the pi session id.
 
@@ -606,7 +606,7 @@ only names what it shows: `pi agent` (herdr requires a non-blank title).
   ```bash
   herdr plugin pane open --plugin pi-hkandala --entrypoint attach \
     --env POPUP_COMMAND='M=~/.pi/agent/pi-herd/attached/$$; trap "rm -f $M" EXIT
-      printf "%s\n" <agent id> <agent socket> <agent pane> <agent name> > "$M"
+      printf "%s\n" <agent id> <agent socket> <agent pane> <agent name> <opener id> > "$M"
       while { read -r ID; read -r S; read -r P; read -r N; } < "$M" && [ -n "$P" ]; do
         printf "\033[2J\033[H\n  \033[2mopening %s…\033[0m" "$N"; set -- $(stty size)
         { sleep 0.2; echo "{\"type\":\"terminal.release\"}"; } | HERDR_SOCKET_PATH="$S" \
@@ -617,7 +617,8 @@ only names what it shows: `pi agent` (herdr requires a non-blank title).
   ```
 
   The marker, `attached/<shell pid>`, names the agent the popup shows (its id, socket, pane and
-  name).
+  name), then the agent that opened the popup (the opener, whose pane is behind it). The loop reads
+  only the first four lines.
   - **No resize flicker:** attaching resizes the agent's pane to the popup, and pi redraws at the
     new size on screen. So before each attach the shell sizes the pane itself with a short
     `terminal session control` (herdr keeps a size after the controller releases, measured on
@@ -626,7 +627,13 @@ only names what it shows: `pi agent` (herdr requires a non-blank title).
   - **Switching:** an agent shown in a popup that views another agent (its dashboard's or
     pi-footer's Enter, say on an agent it started) doesn't open a second popup: it writes that
     agent into the marker and ends the current attach (`pkill -TERM -P <shell pid>`). The loop sees
-    a new agent and attaches it, so the same popup now shows it. Tested with a stub `herdr`.
+    a new agent and attaches it, so the same popup now shows it. The new marker keeps the opener.
+    Tested with a stub `herdr`.
+  - **Viewing the opener closes the popup:** when the agent to view is the popup's opener, it is
+    already on screen behind the popup. So instead of switching, the agent in the popup ends its
+    attach with the marker unchanged, and the popup closes (S → T → view M still closes it). Every
+    way of viewing goes through this (pi-footer's agents tab, say). A marker written by an older
+    pi-herd has no 5th line: it never matches, and viewing switches as before.
   - Any other end of an attach (detach, `/detach`, the agent exits) leaves the marker as it was,
     so the loop ends and the popup closes.
 
