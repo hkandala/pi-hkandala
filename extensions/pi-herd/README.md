@@ -99,7 +99,7 @@ The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent 
     ↑↓ select · e show ended (1) · esc close
 ```
 
-**Popups.** Every agent opens in the repo's herdr plugin popup (below), whichever herdr session it is in. Without the plugin, opening an agent prints the command to attach in a terminal. The popup shows a dim `opening <name>…` for a moment first: it sizes the agent's pane to the popup and lets pi redraw, so the attach shows a settled screen. In a popup, the agent shows `ctrl+b q or /detach to close` as its prompt's placeholder (with pi-footer; without it, in yellow above the prompt); ← does nothing special there and `/agents dashboard` is refused. Opening one of its agents from its footer replaces what the popup shows. The popup closes by itself when the agent ends.
+**Popups.** Every agent opens in the repo's herdr plugin popup (below), whichever herdr session it is in. Without the plugin, opening an agent prints the command to attach in a terminal. The popup shows a dim `opening <name>…` for a moment first: it sizes the agent's pane to the popup and lets pi redraw, so the attach shows a settled screen. In a popup, the agent shows `ctrl+b q or /detach to close` as its prompt's placeholder (with pi-footer; without it, in yellow above the prompt); ← does nothing special there and `/agents dashboard` is refused. Opening one of its agents from its footer replaces what the popup shows. The popup closes by itself when the agent ends. An agent in the `pi-herd` session viewed through a plain `herdr agent attach` (not a popup) can't open popups: nobody would see them there, so it says to open the agent from your main herdr session.
 
 ## Works with
 

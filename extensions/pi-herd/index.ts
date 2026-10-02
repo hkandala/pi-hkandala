@@ -841,7 +841,8 @@ export default function (pi: ExtensionAPI) {
   /**
    * Views an agent: in a popup showing this agent, that popup switches to it (the marker names it,
    * and ending the current attach makes the popup's loop attach it); otherwise it opens a popup,
-   * whichever herdr session the agent is in.
+   * whichever herdr session the agent is in. Not from the hidden session outside a popup: nobody
+   * sees a popup there, and it would take the agent's pane away from wherever it shows.
    */
   const attach = async (a: Agent) => {
     if (!ctx || !me) return;
@@ -857,6 +858,11 @@ export default function (pi: ExtensionAPI) {
       endAttach();
       return;
     }
+    if (socket === HIDDEN)
+      return ctx.ui.notify(
+        `This agent runs in herdr session ${SESSION}, where a popup wouldn't show: open ${label(a)} from your main herdr session.`,
+        "warning",
+      );
     const command = popupCommand(ATTACHED, { ...a.herdr, id: a.id, name: label(a) });
     try {
       await rpc(socket, "plugin.pane.open", {

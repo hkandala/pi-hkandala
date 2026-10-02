@@ -632,6 +632,12 @@ only names what it shows: `pi agent` (herdr requires a non-blank title).
   - The popup opens over the caller's herdr session, even when the agent lives in the dedicated
     session. herdr sets its own `HERDR_*` variables in the popup, which is why the command sets
     `HERDR_SOCKET_PATH`.
+  - An agent in the dedicated session that isn't shown in a popup (a direct `herdr agent attach`
+    in a terminal) refuses to view an agent: "This agent runs in herdr session pi-herd, where a
+    popup wouldn't show: open <name> from your main herdr session." herdr shows a popup only to
+    the session's own clients, never to a direct attach, so the popup would be invisible, its
+    `--takeover` would take the agent's pane from wherever it shows, and it would keep the session
+    `ui_busy` until that agent exits.
   - The popup takes all keyboard input and closes when the attach detaches (`ctrl+b q`).
   - If another popup, Settings or copy mode is up, herdr returns `ui_busy`, and viewing shows that
     error as it is.
