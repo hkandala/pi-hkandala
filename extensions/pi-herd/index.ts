@@ -485,6 +485,12 @@ export default function (pi: ExtensionAPI) {
     else if (w.armed && (s === "idle" || s === "done")) void end(w, "idle");
   };
 
+  /** An agent's status: its follow's, unless that hasn't heard from herdr yet (after /reload). */
+  const statusOf = async (a: Agent) => {
+    const s = follows.get(a.id)?.status;
+    return s && s !== "unknown" ? s : status(a);
+  };
+
   /** Queues a steer item; items within BATCH_MS share one steer. */
   const post = (it: Item) => {
     if (!me) return; // an old runtime's late ending, after /reload
@@ -557,7 +563,7 @@ export default function (pi: ExtensionAPI) {
       if (event === "blocked")
         it.screen = await capture(a.herdr.socket, a.herdr.pane, config.captureLines);
       if (event === "timeout") {
-        it.status = follows.get(a.id)?.status ?? (await status(a));
+        it.status = await statusOf(a);
         it.after = duration(w.minutes * 60_000);
         it.transcript = await transcript(a, config.transcriptMessages, config.captureLines);
       }
@@ -603,7 +609,7 @@ export default function (pi: ExtensionAPI) {
       checkDelivered(a);
       return "working"; // watched (agent_watch reports it so)
     }
-    const s = follows.get(a.id)?.status ?? (await status(a));
+    const s = await statusOf(a);
     if (s === "exited") return s;
     if (!awaiting && s !== "working") return s;
     const w: Watch = { agent: a, minutes, deadline, armed: !awaiting, awaiting, since: Date.now() };
@@ -821,9 +827,10 @@ export default function (pi: ExtensionAPI) {
     // when an attach ends any other way (detach, the agent exits), the popup closes. Before each
     // attach it sizes the agent's pane to the popup (herdr keeps the size after a release) and
     // gives pi 200 ms to redraw, behind an "opening …" line: the attach then shows a settled
-    // screen instead of a redraw at the new size.
+    // screen instead of a redraw at the new size. A signal exits through the EXIT trap (dash runs
+    // it only so) to remove the marker.
     const command =
-      `M=${q(ATTACHED)}/$$; trap 'rm -f "$M"' EXIT; ` +
+      `M=${q(ATTACHED)}/$$; trap 'rm -f "$M"' EXIT; trap 'exit 1' HUP INT TERM; ` +
       `printf '%s\\n' ${q(a.id)} ${q(a.herdr.socket)} ${q(a.herdr.pane)} ${q(label(a))} > "$M"; ` +
       `while { read -r ID; read -r S; read -r P; read -r N; } < "$M" && [ -n "$P" ]; do ` +
       `printf '\\033[2J\\033[H\\n  \\033[2mopening %s…\\033[0m' "$N"; set -- $(stty size); ` +
@@ -880,7 +887,7 @@ export default function (pi: ExtensionAPI) {
   /** An agent's status, and how long it has had it when followed (`working 3m12s`). */
   const statusText = async (a: Agent) => {
     const f = follows.get(a.id);
-    const s = f?.status ?? (await status(a));
+    const s = await statusOf(a);
     return f ? `${s} ${duration(Date.now() - f.since)}` : s;
   };
   /** How this agent relates to `a`: it started it, it watches it. */
@@ -1612,7 +1619,11 @@ export default function (pi: ExtensionAPI) {
     clearTimeout(flushTimer);
     // Messages not yet delivered are taken in again by the next runtime.
     for (const it of [...outbox, ...afterSettle])
-      if (it.kind === "message") queued().delete(it.msg.id);
+      if (it.kind === "message") {
+        queued().delete(it.msg.id);
+        const c = counts().get(it.msg.from.id);
+        if (c) c.received--; // counted again when taken in again
+      }
     outbox = [];
     afterSettle = [];
     clearTimeout(deadlineTimer);

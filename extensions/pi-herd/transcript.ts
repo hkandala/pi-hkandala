@@ -8,8 +8,13 @@ import { list, SESSIONS, type Agent } from "./store.ts";
 
 export const KB = 1024;
 const [TRANSCRIPT_MAX, ENTRY_MAX, LAST_MAX] = [16 * KB, KB, 4 * KB];
-const cap = (s: string, max: number) =>
-  Buffer.byteLength(s) <= max ? s : `${Buffer.from(s).subarray(0, max).toString()}… [cut]`;
+/** `s` cut to `max` bytes; a character cut in two is dropped (the decoder holds its start back). */
+const cap = (s: string, max: number) => {
+  const b = Buffer.from(s);
+  return b.length <= max
+    ? s
+    : `${new TextDecoder().decode(b.subarray(0, max), { stream: true })}… [cut]`;
+};
 
 /** A pane's recent screen, the fallback when an agent has no session file. */
 export const capture = (socket: string, pane: string, n: number) =>

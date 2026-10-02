@@ -142,7 +142,8 @@ export async function cleanup() {
     for (const f of list(dir))
       if (Date.now() - parseInt(f.replace(/^\./, "")) > 7 * DAY) rm(join(dir, f));
     try {
-      if (!live.some((a) => a.id === to)) rmdirSync(dir); // fails unless empty
+      // Fails unless empty. Read again: an agent may have registered since `live` was read.
+      if (!live.some((a) => a.id === to) && !isLive(readAgent(to))) rmdirSync(dir);
     } catch {}
   }
   for (const f of list(ATTACHED)) if (!alive(parseInt(f))) rm(join(ATTACHED, f)); // named by pid
