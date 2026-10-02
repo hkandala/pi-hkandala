@@ -15,7 +15,7 @@
  */
 
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 import { join } from "node:path";
 
 const TYPE = "pi-time-sense";
@@ -40,12 +40,12 @@ function readHeader(file: string): { timestamp?: string; parentSession?: string 
   }
 }
 
-// Start of the oldest ancestor session still on disk. The seen set guards against cycles.
+// Start of the oldest ancestor session still on disk (a missing or bad file ends the walk).
+// The seen set guards against cycles.
 function sessionStart(header: { timestamp?: string; parentSession?: string }): number {
   const seen = new Set<string>();
   while (header.parentSession && !seen.has(header.parentSession)) {
     seen.add(header.parentSession);
-    if (!existsSync(header.parentSession)) break;
     try {
       header = readHeader(header.parentSession);
     } catch {
@@ -114,7 +114,9 @@ export default function (pi: ExtensionAPI) {
     return message ? { message } : undefined;
   });
 
-  pi.on("tool_execution_end", () => {
+  pi.on("tool_execution_end", (event) => {
+    // A terminating tool may end the run, and pi would then make a model call just for the steer.
+    if (event.result?.terminate === true) return;
     const message = due();
     if (message) pi.sendMessage(message);
   });
