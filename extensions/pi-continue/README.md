@@ -1,6 +1,6 @@
 # pi-continue
 
-Press **`ctrl+shift+enter`** to nudge the agent to continue without typing it. Whatever is in the editor stays there. If the agent is still working, the nudge is queued as a follow-up and sent once the agent finishes.
+Press **`ctrl+shift+enter`** to nudge the agent to continue without typing it. Whatever is in the editor stays there. If the agent is still working, the nudge is queued as a follow-up and sent once the agent finishes. During a `/compact`, it waits until the compaction ends. Only one nudge waits at a time: pressing the key again before it is sent shows `Nudge already queued` and queues nothing.
 
 The nudge is not a user message. The model receives a hidden `<continue-nudge>Continue from where you stopped.</continue-nudge>` message, and the transcript shows a dim `Nudged to continue` line in its place.
 
