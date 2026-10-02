@@ -6,6 +6,11 @@
     "pi-package"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hkandala/pi-hkandala.git",
+    "directory": "extensions/pi-content-layout"
+  },
   "files": [
     "*.ts",
     "README.md"
