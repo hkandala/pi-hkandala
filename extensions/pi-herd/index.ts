@@ -908,6 +908,36 @@ export default function (pi: ExtensionAPI) {
   const tags = (a: Agent) =>
     [a.parent === me?.id && "child", g.watches.has(a.id) && "watched"].filter(Boolean) as string[];
 
+  /**
+   * The dashboard's other agents (not listed): the live ones, and the ended ones below them (like
+   * ended agents of yours, shown with e), with how those ended.
+   */
+  const otherAgents = () => {
+    const all = allAgents().filter((a) => a.id !== me?.id && !g.listed.has(a.id));
+    const live = all.filter(isLive);
+    const shown = new Set(live.map((a) => a.id));
+    addBelow(
+      all,
+      (id) => shown.has(id),
+      (a) => shown.add(a.id),
+    );
+    const others = all.filter((a) => shown.has(a.id));
+    const ended = new Map<string, Status | "stopped">();
+    for (const a of others) if (!isLive(a)) ended.set(a.id, isStopped(a.id) ? "stopped" : "exited");
+    return { live, others, ended };
+  };
+  /** This agent's row in the dashboard. */
+  const selfRow = () =>
+    toRow(me!, {
+      state: busy || g.herdr ? "working" : "idle", // as herdr shows it
+      since: 0,
+      live: true,
+      parent: undefined,
+      self: true,
+      sent: 0,
+      received: 0,
+    });
+
   /** The /agents dashboard, over the whole screen until esc. */
   const openDashboard = async () => {
     if (!ctx || ctx.mode !== "tui" || !me || dashboard) return;
@@ -915,31 +945,33 @@ export default function (pi: ExtensionAPI) {
     dashboard = () => {}; // open: a second ← during the first read below does nothing
     // Other sessions' live agents aren't followed: their status is read every 2 s while open.
     const statuses = new Map<string, Status>();
-    // Read with the statuses, not per frame (it reads every agent's file). Other agents: the live
-    // ones, and the ended ones below them (like ended agents of yours, shown with e).
-    let others: Agent[] = [];
-    const ended = new Map<string, Status | "stopped">(); // the ended ones among them
+    // Read with the statuses, not per frame (it reads every agent's file).
+    let view: ReturnType<typeof otherAgents> = { live: [], others: [], ended: new Map() };
     let polling = false;
     const poll = async () => {
       if (polling) return; // a slow herdr: skip, don't pile up
       polling = true;
-      const all = allAgents().filter((a) => a.id !== me?.id && !g.listed.has(a.id));
-      const list = all.filter(isLive);
-      const shown = new Set(list.map((a) => a.id));
-      addBelow(
-        all,
-        (id) => shown.has(id),
-        (a) => shown.add(a.id),
-      );
-      others = all.filter((a) => shown.has(a.id));
-      ended.clear();
-      for (const a of others)
-        if (!isLive(a)) ended.set(a.id, isStopped(a.id) ? "stopped" : "exited");
-      const read = await Promise.all(list.map(status));
-      list.forEach((a, i) => statuses.set(a.id, read[i]!));
+      const { live } = (view = otherAgents());
+      const read = await Promise.all(live.map(status));
+      live.forEach((a, i) => statuses.set(a.id, read[i]!));
       polling = false;
       dashboard?.();
     };
+    const data = () => ({
+      self: selfRow(),
+      agents: rows,
+      // Oldest first, like the agents above (liveAgents() is newest first).
+      others: view.others
+        .filter((a) => !g.listed.has(a.id)) // listed since the last read
+        .reverse()
+        .map((a) =>
+          toRow(a, {
+            state: view.ended.get(a.id) ?? statuses.get(a.id) ?? "unknown",
+            since: 0, // only your agents show a time
+            live: !view.ended.has(a.id),
+          }),
+        ),
+    });
     const timer = setInterval(poll, 2000);
     try {
       // The first read before the page shows (at most 300 ms): otherwise it opens with them all
@@ -949,35 +981,7 @@ export default function (pi: ExtensionAPI) {
       await ctx.ui.custom<void>((tui, theme, _kb, done) => {
         dashboard = () => tui.requestRender();
         closeDashboard = done;
-        return new AgentsDashboard(
-          tui,
-          theme,
-          () => ({
-            self: toRow(me!, {
-              state: busy || g.herdr ? "working" : "idle", // as herdr shows it
-              since: 0,
-              live: true,
-              parent: undefined,
-              self: true,
-              sent: 0,
-              received: 0,
-            }),
-            agents: rows,
-            // Oldest first, like the agents above (liveAgents() is newest first).
-            others: others
-              .filter((a) => !g.listed.has(a.id)) // listed since the last read
-              .reverse()
-              .map((a) =>
-                toRow(a, {
-                  state: ended.get(a.id) ?? statuses.get(a.id) ?? "unknown",
-                  since: 0, // only your agents show a time
-                  live: !ended.has(a.id),
-                }),
-              ),
-          }),
-          { attach: attachId, stop: stopId },
-          done,
-        );
+        return new AgentsDashboard(tui, theme, data, { attach: attachId, stop: stopId }, done);
       }, FULL_SCREEN);
     } finally {
       clearInterval(timer);
