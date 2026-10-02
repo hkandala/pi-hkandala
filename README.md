@@ -58,6 +58,8 @@ pi install ~/code/pi-hkandala/extensions/pi-header   # or just one
 }
 ```
 
+From a checkout or git, pi does not install an extension's own dependencies. Only pi-herd has one: run `npm install --omit=peer` in `extensions/pi-herd` once, or pi-herd fails to load.
+
 Remove with `pi remove <source>`, or toggle single extensions with `pi config`.
 
 ## Layout
