@@ -332,15 +332,14 @@ export default function (pi: ExtensionAPI) {
   };
   if (g.herdr) emitHerdr(true); // /reload: before herdr's new runtime publishes its first state
 
-  /** Tells herdr, pi-footer and pi-working; starts and stops follows. */
-  const refresh = () => {
-    if (!me) return;
-    // The agents this one started and the ones it has watched, and below them the agents they
-    // started (any depth). Listed ones that are gone stay listed, as stopped or exited (like
-    // finished jobs).
-    const all = allAgents();
+  /**
+   * Lists the agents this one started and the ones it has watched, and below them the agents they
+   * started (any depth). Listed ones that are gone stay listed, as stopped or exited (like
+   * finished jobs). Returns the live ones (to follow), and every agent started below this one
+   * (any depth), live or ended: their costs add to this one's.
+   */
+  const updateListed = (all: Agent[]) => {
     const agents = all.filter(isLive);
-    // Every agent started below this one (any depth), live or ended: their costs add to this one's.
     const byId = new Map(all.map((a) => [a.id, a]));
     const subs = all.filter((a) => below(a, byId));
     const live = new Map(
@@ -369,26 +368,33 @@ export default function (pi: ExtensionAPI) {
         const at = byId.get(id)?.ended ?? Date.now();
         g.ended.set(id, { at, stopped: isStopped(id) });
       }
+    return { live, subs };
+  };
+  /** Follows the live listed agents, and only them. */
+  const syncFollows = (live: Map<string, Agent>) => {
     for (const [id, f] of follows)
       if (!live.has(id)) {
         f.stop();
         follows.delete(id);
       }
     for (const a of live.values()) if (!follows.has(a.id)) follow(a);
-    const n = [...g.watches.values()].filter((w) => !w.ending).length;
-    // In first-listed order for the dashboard; herd:update sends them grouped (pi-footer's order).
-    rows = [...g.listed.values()].map((a) => {
-      const f = follows.get(a.id);
-      const e = g.ended.get(a.id);
-      return toRow(a, {
-        // herdr's status while it is live; once it ended, stopped or exited.
-        state: e ? (e.stopped ? "stopped" : "exited") : (f?.status ?? "unknown"),
-        since: e?.at ?? f?.since ?? a.startedAt,
-        live: !e,
-        mine: below(a, g.listed), // started by this agent, at any depth
-        watched: g.watches.has(a.id),
-      });
+  };
+  /** A listed agent's row. */
+  const listedRow = (a: Agent) => {
+    const f = follows.get(a.id);
+    const e = g.ended.get(a.id);
+    return toRow(a, {
+      // herdr's status while it is live; once it ended, stopped or exited.
+      state: e ? (e.stopped ? "stopped" : "exited") : (f?.status ?? "unknown"),
+      since: e?.at ?? f?.since ?? a.startedAt,
+      live: !e,
+      mine: below(a, g.listed), // started by this agent, at any depth
+      watched: g.watches.has(a.id),
     });
+  };
+  /** Sends herd:update (pi-footer, pi-working) when it changed. subs: the agents below this one. */
+  const publish = (subs: Agent[]) => {
+    const n = [...g.watches.values()].filter((w) => !w.ending).length;
     const update = {
       agents: byGroup(rows),
       watching: n,
@@ -404,13 +410,28 @@ export default function (pi: ExtensionAPI) {
     const json = JSON.stringify(update);
     if (json !== lastUpdate) pi.events.emit("herd:update", update);
     lastUpdate = json;
-    dashboard?.();
-    // Working while watches run, also during the turn (herdr publishes idle when the turn settles,
-    // before this could say otherwise), and while a message or an ending waits for its steer (an
-    // ending's watch stays in g.watches until then): an agent watching this one would take any
-    // idle as finished.
+  };
+  /**
+   * Working while watches run, also during the turn (herdr publishes idle when the turn settles,
+   * before this could say otherwise), and while a message or an ending waits for its steer (an
+   * ending's watch stays in g.watches until then): an agent watching this one would take any idle
+   * as finished.
+   */
+  const syncHerdr = () => {
     const active = g.watches.size > 0 || !!waking || afterSettle.length > 0 || outbox.length > 0;
     if (active !== g.herdr) emitHerdr(active);
+  };
+
+  /** Tells herdr, pi-footer and pi-working; starts and stops follows. */
+  const refresh = () => {
+    if (!me) return;
+    const { live, subs } = updateListed(allAgents());
+    syncFollows(live);
+    // In first-listed order for the dashboard; herd:update sends them grouped (pi-footer's order).
+    rows = [...g.listed.values()].map(listedRow);
+    publish(subs);
+    dashboard?.();
+    syncHerdr();
   };
 
   /** Follows an agent's herdr status: one events.subscribe connection, reconnecting until stopped. */
