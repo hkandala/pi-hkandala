@@ -1069,17 +1069,25 @@ export default function (pi: ExtensionAPI) {
     const inner = (box: Proto, width: number): string[] =>
       Container.prototype.render.call(box, Math.max(1, width - 6));
 
-    // User messages: take the text out of pi's background box and draw a rounded border instead.
-    // Done at render time so messages created before the extension loaded are covered too.
+    // User messages: take the text out of pi's background and padding and draw a rounded border
+    // instead. Done at render time so messages created before the extension loaded are covered too.
     patch(
       UserMessageComponent.prototype as unknown as Proto,
       "render",
       () =>
         function (this: Proto, width: number) {
           const [box] = this.children;
+          // pi < 1.0 wraps the Markdown in a background Box.
           if (box instanceof Box) {
             this.clear();
             for (const child of box.children) this.addChild(child);
+          }
+          // pi 1.0 pads and colors the Markdown itself.
+          const md = box as Proto;
+          if (md instanceof Markdown && md.defaultTextStyle?.bgColor) {
+            md.defaultTextStyle = { ...md.defaultTextStyle, bgColor: undefined };
+            md.paddingX = md.paddingY = 0;
+            md.invalidate();
           }
           const stamp = pairedStamp(this);
           const lines = [...frame(this, inner(this, width), width, theme(), undefined, stamp)];
