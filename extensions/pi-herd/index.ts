@@ -196,13 +196,8 @@ async function status(a: Agent): Promise<Status> {
   }
 }
 
-export default function (pi: ExtensionAPI) {
-  // herdr only: inert without a herdr pane (spec: "herdr only").
-  const socket = process.env.HERDR_SOCKET_PATH;
-  const pane = process.env.HERDR_PANE_ID;
-  if (process.env.HERDR_ENV !== "1" || !pane || !socket) return;
-  const parentId = process.env.PI_HERD_PARENT || undefined;
-
+/** pi-herd.json's settings over the defaults. */
+const loadConfig = () => {
   const config = {
     placement: "hidden",
     model: null as string | null,
@@ -227,6 +222,17 @@ export default function (pi: ExtensionAPI) {
     )
       Object.assign(config, { [k]: v });
   }
+  return config;
+};
+
+export default function (pi: ExtensionAPI) {
+  // herdr only: inert without a herdr pane (spec: "herdr only").
+  const socket = process.env.HERDR_SOCKET_PATH;
+  const pane = process.env.HERDR_PANE_ID;
+  if (process.env.HERDR_ENV !== "1" || !pane || !socket) return;
+  const parentId = process.env.PI_HERD_PARENT || undefined;
+
+  const config = loadConfig();
 
   let ctx: ExtensionContext | undefined;
   let me: Agent | undefined; // this agent's record, while registered
