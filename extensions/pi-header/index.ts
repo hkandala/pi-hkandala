@@ -46,7 +46,7 @@ const BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]; // left-al
 const SPACING = 1.5; // logo pixels left/right of the logo
 // Blank rows above/below, in whole rows closest to SPACING: 2 (1-row pixels), 1 compact (half-row).
 const rowsFor = (compact: boolean) => (compact ? 1 : 2);
-// Without quietStartup pi adds a blank row above the header itself.
+// Unless quietStartup is true, pi adds a blank row above the header and one below it.
 const topRows = (compact: boolean, quiet: boolean) => rowsFor(compact) - (quiet ? 0 : 1);
 const SECTIONS = ["context", "skills", "prompts", "extensions", "themes"] as const;
 type Resources = Record<(typeof SECTIONS)[number], { name: string; path: string }[]>;
@@ -157,10 +157,9 @@ function render(
   const title = theme.bold("pi") + gray(` v${VERSION}`);
   const info = compact ? [title + dot + hints, counts] : [title, hints, "", counts];
   const rows = rowsFor(compact);
-  // Without quietStartup pi also adds two blank rows below (after the header, and before
-  // [Context]). Blank lines the content below already starts with count toward the gap.
+  // Blank lines the content below already starts with count toward the gap.
   const top = Array<string>(topRows(compact, quiet)).fill("");
-  const bottom = Array<string>(Math.max(0, (quiet ? rows : rows - 2) - blanksBelow)).fill("");
+  const bottom = Array<string>(Math.max(0, topRows(compact, quiet) - blanksBelow)).fill("");
   const out = [...top, ...logo.lines.map((line, i) => line + info[i])];
   if (!expanded) return [...out, ...bottom];
 
@@ -346,7 +345,8 @@ export default function (pi: ExtensionAPI) {
     const settingsManager = SettingsManager.create(ctx.cwd, getAgentDir(), {
       projectTrusted: ctx.isProjectTrusted(),
     });
-    const quiet = !process.argv.includes("--verbose") && settingsManager.getQuietStartup();
+    // pi 1.0's quietStartup "header" still shows the header (and its blank rows).
+    const quiet = !process.argv.includes("--verbose") && settingsManager.getQuietStartup() === true;
     res = readResources(pi, ctx, []);
     let expanded = false;
     let piExpanded: boolean | undefined; // pi's ctrl+o state, which a click doesn't change
