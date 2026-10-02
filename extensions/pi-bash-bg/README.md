@@ -2,6 +2,8 @@
 
 Background bash for pi. Any bash call can move to the background, from the start or while it runs, without restarting it. When a background job ends, the agent gets a message with its result and picks up from there.
 
+With [pi-content-layout](../pi-content-layout/README.md), an end message looks like this:
+
 ```
    └ bash  npm run dev
  ● Started the dev server (pid 48213).
@@ -10,40 +12,41 @@ Background bash for pi. Any bash call can move to the background, from the start
  ╰┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╯
 ```
 
-| How a call moves to the background              |                                       |
-| ----------------------------------------------- | ------------------------------------- |
-| The agent passes `background: true`             | for servers, watchers and long builds |
-| You press **ctrl+shift+b** or run `/background` | moves the running bash calls          |
-| It runs for more than **120 s**                 | automatic                             |
+| How a call moves to the background          |                                       |
+| ------------------------------------------- | ------------------------------------- |
+| The agent passes `background: true`         | for servers, watchers and long builds |
+| You press ctrl+shift+b or run `/background` | moves the running bash calls          |
+| It runs for more than 120 s                 | automatic                             |
 
-- The call returns right away with the pid and the log path, and the agent is told how it got there (it asked, you moved it, or it ran too long) and not to wait on it.
-- Jobs keep running across `/reload`, session switches and quitting pi. On quit, pi-bash-bg prints a line with the pids that are still running, next to pi's resume hint.
-- When a job ends, however it ends (exit, `kill`, timeout), the session that started or watches it gets a steer message shaped like a bash result: the output tail, the log path, and the exit code. An idle agent wakes up. After a resume or restart the agent isn't messaged about jobs that ended meanwhile; it can check with `bash_list`.
-- **Esc** kills the running foreground command, as in pi. It never touches background jobs.
-- Running jobs show through the extensions below. On its own, pi-bash-bg adds nothing to pi's footer; `/background list` shows the jobs, and end messages use pi's default message box.
+- The call returns right away with the pid and the log path. The agent learns how the call moved: it asked, you moved it, or it ran too long. It is also told not to wait on it.
+- Jobs keep running across `/reload`, session switches and quitting pi. When you quit the TUI, pi-bash-bg prints a line next to pi's resume hint. The line lists this session's jobs that still run (or that it killed, with `keepOnExit: false`).
+- When a job ends, the session that started or watches it gets a steer message. This happens for every kind of end: an exit, a `kill`, or a timeout. The message looks like a bash result: the end of the output and the exit code, and the log path when the output was cut. An idle agent wakes up.
+- The agent gets no message for a job that ended while its session was closed (after a resume or a restart). It can find such a job with `bash_list`.
+- Esc kills the running foreground command, as in pi. It never touches background jobs.
+- Running jobs show only through the extensions below. On its own, pi-bash-bg adds nothing to pi's footer. `/background list` shows the jobs, and end messages use pi's default message box.
 
 ## Agent tools
 
-| Tool         | Does                                                                                                                                      |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `bash`       | pi's bash tool plus `background: true`                                                                                                    |
-| `bash_list`  | Lists background jobs: this session's (`jobs: "watching"`, default) or all (`"all"`), filtered by `status` (`running`, `finished`, `any`) |
-| `bash_watch` | Gets the end message of a job another session started                                                                                     |
+| Tool         | Does                                                                                                                                                  |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bash`       | pi's bash tool plus `background: true`                                                                                                                |
+| `bash_list`  | Lists background jobs: this session's (`jobs: "watching"`, default) or all (`"all"`). `status` filters them: `running`, `finished` or `any` (default) |
+| `bash_watch` | Gets the end message of a job another session started                                                                                                 |
 
 The agent stops a job with `kill <pid>`. Output always goes to a log file under `~/.pi/agent/bash-bg/`, which the agent can `tail` or `grep`.
 
 ## Commands
 
-| Command                            | Does                                                                                                                              |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `/background`                      | Moves the running bash calls to the background                                                                                    |
-| `/background list [jobs] [status]` | Prints jobs, with `bash_list`'s two params in order: `watching` (default) or `all`, then `running` (default), `finished` or `any` |
-| `/background logs [pid]`           | Opens a log viewer that follows the output (↑↓, PgUp PgDn or the wheel scroll, End follows, `x` twice kills, Esc closes)          |
-| `/background kill <pid\|all>`      | Kills one job, or all of this session's                                                                                           |
+| Command                            | Does                                                                                                                                                                                              |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/background`                      | Moves the running bash calls to the background                                                                                                                                                    |
+| `/background list [jobs] [status]` | Prints jobs, with `bash_list`'s two params in order: `watching` (default) or `all`, then `running` (default), `finished` or `any`                                                                 |
+| `/background logs [pid]`           | Opens a log viewer that follows the output. With no pid, you pick a job first. ↑↓, PgUp PgDn or the wheel scroll, Home goes to the top, End follows, `x` twice kills, Esc or `q` closes. TUI only |
+| `/background kill <pid\|all>`      | Kills one job, or all of this session's                                                                                                                                                           |
 
 ## Works with
 
-Optional; install any of them for the extra:
+Each of these is optional. Install one to get its extra:
 
 - [pi-footer](../pi-footer/README.md): the job count in the footer line, and a jobs tab in the dashboard (↓ opens it while jobs run) to browse the running jobs (`e` shows finished ones), open their logs, and kill them.
 - [pi-working](../pi-working/README.md): `Waiting on 2 background jobs (1m 12s)` in the prompt's border while the agent waits.
@@ -75,9 +78,11 @@ Run `/reload` after editing.
 
 ## Notes
 
-- It replaces pi's `bash` tool with pi's own tool, run through a small wrapper, so pi's rendering, truncation and error messages stay the same. `shellPath` and `shellCommandPrefix` from pi's settings apply.
-- Each call costs about 7 ms more than pi's bash (a subshell and a log file).
-- `kill -9 <pid>` can't be caught, so it doesn't stop the job's child processes; `kill -9 -- -<pid>` does.
-- Job files are deleted 7 days after the job ends.
+- It replaces pi's `bash` tool with pi's own tool, run through a small wrapper. So pi's rendering, truncation and error messages stay the same. The `shellPath` and `shellCommandPrefix` settings of pi apply (project settings only in a trusted project, as in pi).
+- macOS and Linux only: it stops jobs through process groups.
+- In `pi -p` and `--mode json`, pi waits for this session's running background jobs before it exits, and then the agent continues with their results. A server started in the background keeps pi running until the server stops.
+- Each call costs about 7 ms more than pi's bash (a subshell and two small files: the log and the exit code).
+- A process cannot catch `kill -9 <pid>`, so that command does not stop the job's child processes. Use `kill -9 -- -<pid>` to stop them too.
+- When pi starts, it deletes the files of jobs that ended more than 7 days ago. It also deletes the files that a crash left behind, one day after their last write.
 - In tmux, ctrl+shift+b needs `set -g extended-keys on`.
 - Design and details: [docs/SPEC.md](docs/SPEC.md).
