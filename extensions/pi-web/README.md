@@ -1,10 +1,10 @@
 # pi-web
 
-`web_search` and `web_fetch` tools for pi, backed by [TinyFish](https://docs.tinyfish.ai/)'s Search and Fetch APIs, which are free at any balance.
+`web_search` and `web_fetch` tools for pi, backed by [TinyFish](https://docs.tinyfish.ai/)'s Search and Fetch APIs, which are free at any balance. Search also needs Search API access on the account. Without it, `web_search` fails with HTTP 402.
 
 - **`web_search`** returns about 10 results per page (title, URL, date, snippet) inline. With `includeContent`, it also fetches every result page to files (as `web_fetch` does with several URLs) and lists their paths, so the agent can search once and then grep and read.
-- **`web_fetch`** fetches pages live as clean markdown (JavaScript rendered, PDF text extracted) and saves each one to a file under `$TMPDIR/pi-web/`. The file holds the full text, then `## Links` and `## Images` sections listing every link and image URL on the page. TinyFish's markdown drops links and images, so the lists are the only place to find them. The agent greps them, or downloads an image with `curl` and reads it.
-  - **One URL:** a preview of the page (first 1000 lines or 25KB) plus the file path.
+- **`web_fetch`** fetches pages live as clean markdown (JavaScript rendered, PDF text extracted) and saves each one to a file. Each call gets a new private folder, `$TMPDIR/pi-web-<time>-<random>/` (`/tmp` when `$TMPDIR` is not set). pi-web never deletes these files; the operating system cleans its temp folder. The file holds the full text, then `## Links` and `## Images` sections listing every link and image URL on the page. TinyFish's markdown drops links and images, so the lists are the only place to find them. The agent greps them, or downloads an image with `curl` and reads it. `web_fetch` cannot fetch an image URL itself.
+  - **One URL:** a preview of the page (by default the first 1000 lines or 25KB) plus the file path.
   - **Several URLs:** only the file paths with titles and sizes, so fetching many pages to grep or script over costs almost no context.
 
 ## Install

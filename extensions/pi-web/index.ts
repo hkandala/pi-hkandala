@@ -14,8 +14,7 @@ import {
   getAgentDir,
   truncateHead,
 } from "@earendil-works/pi-coding-agent";
-import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,7 +23,7 @@ const FETCH_URL = "https://api.fetch.tinyfish.ai";
 const RECENCY_MINUTES = { day: 1440, week: 10080, month: 43200, year: 525600 };
 const HTTP_ERRORS: Record<number, string> = {
   401: "invalid TinyFish API key",
-  402: "this TinyFish account has no Search API access",
+  402: "this TinyFish account has no access to this API",
   429: "TinyFish rate limit exceeded (search 30/min, fetch 150 URLs/min). Until it resets, fall back to curl (e.g. curl -sL <url>)",
 };
 
@@ -34,12 +33,14 @@ type Page = {
   date?: string;
   text: string;
   path: string;
+  bodyLine: number; // line of the saved file where the text starts
   stats: string;
 };
 
 function readJson(path: string): Record<string, any> {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    return value && typeof value === "object" ? value : {};
   } catch {
     return {};
   }
@@ -80,14 +81,14 @@ async function tinyfish(
 }
 
 export default function (pi: ExtensionAPI) {
-  const {
-    maxPreviewLines = 1000,
-    maxPreviewBytes = 25 * 1024,
-    timeoutSeconds = 30,
-  } = readJson(join(getAgentDir(), "extensions", "pi-web.json"));
-  const timeoutMs = timeoutSeconds * 1000;
+  const config = readJson(join(getAgentDir(), "extensions", "pi-web.json"));
+  const num = (value: unknown, fallback: number) =>
+    typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+  const maxPreviewLines = num(config.maxPreviewLines, 1000);
+  const maxPreviewBytes = num(config.maxPreviewBytes, 25 * 1024);
+  const timeoutMs = Math.round(num(config.timeoutSeconds, 30) * 1000);
 
-  // Fetches up to 10 URLs live and saves each page to its own file in a fresh temp directory.
+  // Fetches up to 10 URLs live and saves each page to its own file in a fresh private temp directory.
   async function fetchPages(urls: string[], signal: AbortSignal | undefined) {
     const body = {
       urls,
@@ -105,8 +106,7 @@ export default function (pi: ExtensionAPI) {
     );
 
     const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
-    const dir = join(tmpdir(), "pi-web", `${stamp}-${randomBytes(3).toString("hex")}`);
-    mkdirSync(dir, { recursive: true });
+    const dir = mkdtempSync(join(tmpdir(), `pi-web-${stamp}-`));
 
     const pages: Page[] = (data.results ?? []).map((r: any, i: number) => {
       const url: string = r.final_url || r.url;
@@ -114,11 +114,14 @@ export default function (pi: ExtensionAPI) {
       const text: string = (r.text ?? "").trim();
       const links: string[] = r.links ?? [];
       const images: string[] = r.image_links ?? [];
-      const file = [
+      const header = [
         `# ${title}`,
         `URL: ${url}`,
         ...(r.published_date ? [`Published: ${r.published_date}`] : []),
         "",
+      ];
+      const file = [
+        ...header,
         text,
         ...(links.length ? ["", "## Links", "", ...links.map((l) => `- ${l}`)] : []),
         ...(images.length ? ["", "## Images", "", ...images.map((l) => `- ${l}`)] : []),
@@ -133,7 +136,8 @@ export default function (pi: ExtensionAPI) {
       writeFileSync(path, file);
       const lines = file.split("\n").length - 1;
       const stats = `${formatSize(Buffer.byteLength(file))}, ${lines} lines, ${links.length} links, ${images.length} images`;
-      return { url, title, date: r.published_date, text, path, stats };
+      const bodyLine = header.length + 1;
+      return { url, title, date: r.published_date, text, path, bodyLine, stats };
     });
     const errors: string[] = (data.errors ?? []).map(
       (e: any) => `- ${e.url}: ${e.error}${e.status ? ` (${e.status})` : ""}`,
@@ -216,7 +220,10 @@ export default function (pi: ExtensionAPI) {
         // A failed fetch shouldn't lose the search results.
         const fetched = await fetchPages(urls, signal).then(
           (f) => f.listing,
-          (err) => `Fetching the result pages failed: ${err.message}`,
+          (err) => {
+            if (signal?.aborted) throw err;
+            return `Fetching the result pages failed: ${err.message}`;
+          },
         );
         text += `\n\n${fetched}`;
       }
@@ -245,8 +252,7 @@ export default function (pi: ExtensionAPI) {
 
       const p = pages[0];
       const t = truncateHead(p.text, { maxLines: maxPreviewLines, maxBytes: maxPreviewBytes });
-      // The file starts with "# title", "URL:", maybe "Published:", and a blank line before the text.
-      const offset = (p.date ? 4 : 3) + t.outputLines + 1;
+      const offset = p.bodyLine + t.outputLines;
       let text = `# ${p.title}\n${[p.url, p.date].filter(Boolean).join(" · ")}\n\n${t.content}\n\nSaved: ${p.path} (${p.stats})`;
       if (t.truncated)
         text += `\n[Preview truncated at ${t.outputLines} of ${t.totalLines} lines (limit ${maxPreviewLines} lines or ${formatSize(maxPreviewBytes)}). Continue with read offset ${offset}, or grep the file.]`;
