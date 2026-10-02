@@ -7,13 +7,17 @@ Optional pieces for [herdr](https://herdr.dev), shared by the extensions in this
 | [`patch/`](patch)   | A patch to herdr's pi integration: keeps a pane `working` while work that will wake the agent is still pending | [pi-bash-bg](../extensions/pi-bash-bg/README.md) (background jobs), [pi-herd](../extensions/pi-herd/README.md) (waits on other agents) |
 | [`plugin/`](plugin) | A herdr plugin with popups: attach to another pane's terminal in a floating window                             | [pi-herd](../extensions/pi-herd/README.md) (`/agents dashboard`, pi-footer's agents tab)                                               |
 
-Each extension works without them. They only make herdr's display right and add the popups.
+Each extension works without them. The patch makes herdr's state right, and pi-herd's watches
+depend on that state. The plugin adds the popups.
 
 ## Patch
 
 herdr shows each pane's agent state. Its pi integration reports `idle` as soon as the agent's turn
 ends, even when something will wake the agent again: a background job still running, or another
-agent it is waiting on. herdr then plays its "done" sound and shows its toast.
+agent it is waiting on. herdr then marks the pane done at once, and an agent that watches this one
+(pi-herd, `herdr agent wait`) takes that as finished. If the pane stays done for
+`ui.toast.delay_seconds` (1 s by default), herdr also plays its "done" sound and shows its toast,
+when those are on.
 
 The patch keeps the pane at `working` while any extension says it has such pending work. The pane
 goes idle/done only when the turn has ended and nothing is pending.
@@ -21,29 +25,31 @@ goes idle/done only when the turn has ended and nothing is pending.
 ### What it changes
 
 herdr installs its pi integration at `~/.pi/agent/extensions/herdr-agent-state.ts`. The patch
-changes about 30 lines there:
+makes three changes there:
 
 - It listens for a `herdr:working` event on `pi.events`, shaped
   `{ source: string, active: boolean }`, and keeps a set of the sources that are active.
 - It reports `working` while the agent runs **or** that set is not empty. `blocked` still takes
   priority.
-- After `session_compact` and `session_compact_failed`, it reports idle if pi is idle by then. An
-  `agent_settled` that arrives while compaction still runs is skipped by the integration, which
-  would otherwise leave the pane `working` until the next run (known issue 4 below).
+- It fixes a turn end that the integration skips (known issue 4 below). The integration ignores an
+  `agent_settled` that arrives while pi still compacts or summarizes a branch, so the pane stays
+  `working` until the next run. The patch then checks again every 100 ms, for up to 5 minutes.
+  Once pi is idle, it marks the run as ended and reports the state again. A new run or the end of
+  the session stops the checks.
 
 Details:
 
 - The set makes repeated events harmless, and lets more than one extension use the event. Current
   sources are `pi-bash-bg` and `pi-herd`.
 - The flag is stored even before the session starts, so an event that arrives early still counts.
-- Without an extension sending the event, the integration behaves exactly as before.
+- Without an extension sending the event, only the turn-end fix changes what the integration
+  reports.
 
 ### Rules for an extension that emits `herdr:working`
 
 `active` is true while something pending will wake the agent, whether it is idle or still running.
-herdr plays "done" on every working → idle change, with no debounce, and an agent that watches this
-one takes any idle as finished, so an extension must never let herdr see even a brief idle while it
-is still waiting:
+An agent that watches this one takes any idle as finished, even a brief one. So an extension must
+never let herdr see an idle while it is still waiting:
 
 - **Every change.** Emit every change of `active`, and the current value at every `session_start`.
 - **`/reload`:** extension load order isn't guaranteed. If herdr's integration loads first, it
@@ -51,42 +57,51 @@ is still waiting:
   `true` from the extension's factory when the value cached on `globalThis` is true. The patched
   integration stores the flag even before its session starts.
 - **Waking an idle agent:** when pending work ends and wakes the agent, keep `active` true until the
-  woken run's `agent_start` (or 2 s if no run starts). Otherwise herdr would see idle between the end
-  and the run's start.
+  woken run has started (or 2 s if no run starts). Otherwise herdr would see idle between the end
+  and the run's start. End it one macrotask after `agent_start` (`setTimeout(..., 0)`), so herdr's
+  integration has handled `agent_start` too, whichever extension loaded first.
 - **While the agent runs:** keep `active` true while work is pending. The integration publishes idle
   when the turn settles, before an extension's `agent_settled` handler can say otherwise.
 - **Until the wake-up is sent:** when pending work ends, count it as pending until the steer that
-  reports it is sent (pi-herd batches endings for 250 ms).
+  reports it is sent. pi-bash-bg counts a job that ended until its end message is sent. pi-herd
+  batches messages and endings for 250 ms and counts them until the batch is sent.
 - **Never from `session_shutdown`:** the next `session_start` sends the right value.
 
 ### Apply
 
-Pick the folder for your herdr version (`herdr --version`). Each folder also lists the pi
-integration version it was made for. That is the `HERDR_INTEGRATION_VERSION=` line at the top of the
-file; `herdr integration status` shows it as `pi: current (v9)`.
+Pick the folder for your herdr version (`herdr --version`) in the Versions table below. The table
+also gives the pi integration version that each patch was made for. That is the
+`HERDR_INTEGRATION_VERSION=` line at the top of `herdr-agent-state.ts`. `herdr integration status`
+shows it as `pi: current (v9)`.
+
+From the repo root:
 
 ```bash
-patch ~/.pi/agent/extensions/herdr-agent-state.ts < patch/v0.9.1/herdr-agent-state.patch
+patch ~/.pi/agent/extensions/herdr-agent-state.ts < herdr/patch/v0.9.1/herdr-agent-state.patch
 ```
 
 Then run `/reload` in pi.
 
-herdr overwrites the file whenever the integration is reinstalled or updated, so apply the patch
-again after that. If there is no folder for your herdr version yet, the latest folder's patch may
-still apply; `patch --dry-run` shows whether it does.
+herdr overwrites the file whenever the integration is reinstalled or updated. Apply the patch again
+after that. To replace an older version of the patch, first run `herdr integration install pi` to
+get the unpatched file back. If there is no folder for your herdr version yet, the latest folder's patch can still
+apply. `patch --dry-run` shows whether it does.
 
 ### Test
 
-`patch/test.mts` applies a patch to a temporary copy of your integration file. It then replays pi
-events against a fake herdr socket and checks the states that get reported: turn end, pending work
-waking the agent, reload order, blocked, repeated events, and a turn settling during compaction.
+`patch/test.mts` gets a fresh, unpatched integration file from `herdr integration install pi` in a
+temporary HOME, and applies a patch to it. It then replays pi events against a fake herdr socket and
+checks the states that get reported: turn end, pending work waking the agent, reload order,
+blocked, repeated events, a turn settling while pi still compacts, and compaction during a run.
+
+From the repo root:
 
 ```bash
 node --experimental-strip-types herdr/patch/test.mts v0.9.1
 ```
 
-It needs the unpatched file. Once the patch is applied, pass a fresh copy as a second argument (for
-example, a backup taken before patching). Run it before adding a folder for a new herdr version.
+To test against another integration file, pass it as a second argument. It must be unpatched.
+Run the test before adding a folder for a new herdr version.
 
 ### Versions
 
@@ -94,9 +109,9 @@ example, a backup taken before patching). Run it before adding a folder for a ne
 | --------------- | ------------ | -------------- |
 | `patch/v0.9.1/` | 0.9.1, 0.9.3 | v9             |
 
-### Known issues in herdr's pi integration (herdr 0.9.1, integration v9)
+### Known issues in herdr's pi integration (herdr 0.9.1 and 0.9.3, integration v9)
 
-The patch doesn't fix these; they are worth reporting to herdr.
+The patch fixes only issue 4. The others are worth reporting to herdr.
 
 1. **A state report can be lost to a session report.**
    - herdr keeps one sequence counter per source, shared by `pane.report_agent_session` and
@@ -110,30 +125,34 @@ The patch doesn't fix these; they are worth reporting to herdr.
 2. **Failed sends are never retried.** The last state is recorded when it is queued, not when it is
    delivered. If both attempts fail (herdr busy or restarting), the same state is never sent again,
    and herdr stays stale until the next state change.
-3. **pi's own UI prompts don't show as blocked.** The integration only counts `herdr:blocked` events
+3. **Extension dialogs don't show as blocked.** The integration only counts `herdr:blocked` events
    from other extensions. It ignores pi's native `ui_prompt_start` / `ui_prompt_end` events, which
    fire for blocking extension dialogs (confirm, select, input, editor). So a pending dialog shows as
    `working` or `idle` instead of `blocked`.
 4. **An `agent_settled` during compaction is skipped.** The handler ignores `agent_settled` unless
-   `isIdle()` is true. If compaction is still running at that moment, idle is never reported, and
-   the pane stays `working` until the next run. **The patch fixes this** by publishing again after
-   compaction ends.
+   `isIdle()` is true. `isIdle()` is false while pi compacts or summarizes a branch. A run can
+   settle then: pi-bash-bg and pi-herd wake an idle agent with `triggerTurn`, which starts a run
+   even during `/compact`. Idle is then never reported, and the pane stays `working` until the next
+   run. **The patch fixes this** (see What it changes).
 5. **No release on exit.** herdr's docs say an integration should release its lifecycle authority
-   when the agent exits, and this one doesn't. herdr's process-exit detection appears to cover it.
+   when the agent exits, and this one doesn't. herdr's docs also describe the fallback: herdr clears
+   the agent once the pane is back at its shell prompt.
 
-Issue 3 is left alone: pi-herd reads herdr's status as it is, and a pending dialog ends a watch
-only by its timeout.
+The patch leaves issue 3 alone. pi-herd uses herdr's status as herdr reports it. While a run waits
+on a dialog, the pane shows `working`, not `blocked`. So a watch on that agent doesn't end as
+blocked: it ends only at its timeout.
 
 ## Plugin
 
-herdr opens a floating window (a **popup**) only from a plugin pane. A pane's command and its border
-title are fixed in the manifest. So `plugin/` holds a manifest with no code, and each pane runs
-whatever shell command the caller passes in `POPUP_COMMAND`. There is one popup per herdr session at
-a time anyway.
+A program can open a floating window (a **popup**) in herdr only through a plugin pane. A pane's
+command and its border title are fixed in the manifest. So `plugin/` holds a manifest with no code,
+and each pane runs whatever shell command the caller passes in `POPUP_COMMAND`. herdr shows one
+popup per session at a time, so one pane per kind of popup is enough.
 
-herdr's popup has no close button, and clicks outside it are ignored. The caller shows how to close
-it: the agent pi-herd shows in it shows `ctrl+b q or /detach to close` in its prompt (as the placeholder, or above it without pi-footer) while a popup shows it.
-herdr requires a non-blank title, so a pane's title only names what it shows:
+herdr's popup has no close button, and herdr ignores clicks outside it. So the caller shows how to
+close it. An agent that pi-herd shows in a popup shows `ctrl+b q or /detach to close` as its
+prompt's placeholder. Without pi-footer, the hint shows above the prompt. A pane's title only names
+what the popup shows. herdr requires a title that is not blank.
 
 | Pane     | Title      | For                                                                                      |
 | -------- | ---------- | ---------------------------------------------------------------------------------------- |
@@ -185,6 +204,7 @@ closes, and the attached agent keeps running.
 
 - pi-bash-bg: open a background job's log in a popup (`POPUP_COMMAND='tail -f <log>'`) from
   `/background logs` and pi-footer's jobs tab, as an alternative to its in-pi log viewer. It needs a
-  `logs` pane titled `ctrl+c to close`.
+  `logs` pane. `tail -f` can't show a close hint, so this pane is the exception: its title says how
+  to close it (`ctrl+c to close`).
 - Ask herdr upstream for a way to close a popup with the mouse (a close mark in the border, or a
   click outside), and for a per-open title, which would allow one generic pane.

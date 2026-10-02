@@ -4,14 +4,14 @@
    let lastState: AgentState | undefined;
    let lastMessage: string | undefined;
    let rootSession = false;
-+  const backgroundWork = new Set(); // patch: sources with work that will wake the agent
++  const pending = new Set(); // patch: sources with pending work that will wake the agent
  
    function desiredState() {
      if (blockedCount > 0) {
        return { state: "blocked" as const, message: blockedMessage };
      }
 -    if (agentActive) {
-+    if (agentActive || backgroundWork.size > 0) {
++    if (agentActive || pending.size > 0) {
        return { state: "working" as const, message: undefined };
      }
      return { state: "idle" as const, message: undefined };
@@ -19,30 +19,43 @@
      publishState();
    });
  
-+  // patch: stay working while background work (e.g. pi-bash-bg jobs) will wake the agent.
++  // patch: stay working while an extension has pending work (pi-bash-bg jobs, pi-herd waits).
 +  pi.events.on("herdr:working", (data) => {
-+    if (data?.active) backgroundWork.add(data.source);
-+    else backgroundWork.delete(data?.source);
++    if (data?.active) pending.add(data.source);
++    else pending.delete(data?.source);
 +    if (rootSession) publishState();
 +  });
 +
    pi.on("session_start", async (event, ctx) => {
      // TUI only: RPC/JSON/print modes are headless (no PTY herdr can display),
      // and RPC still reports hasUI=true, so mode is the reliable gate.
-@@ -258,4 +266,16 @@
+@@ -257,5 +265,29 @@
+ 
      agentActive = false;
      publishState();
-   });
++  });
 +
-+  // patch: an agent_settled that arrives while compaction still runs is skipped above; publish
-+  // again once compaction has ended (pi clears its compacting flag right after these events).
-+  const afterCompact = (_event, ctx) => {
-+    setTimeout(() => {
-+      if (!rootSession || ctx?.isIdle?.() !== true) return;
-+      agentActive = false;
-+      publishState();
-+    }, 0);
-+  };
-+  pi.on("session_compact", afterCompact);
-+  pi.on("session_compact_failed", afterCompact);
++  // patch: the handler above skips an agent_settled while pi still compacts or summarizes a
++  // branch (isIdle() is false). Check again every 100 ms until pi is idle, for up to 5 minutes.
++  let recheck;
++  const stopRecheck = () => clearTimeout(recheck);
++  pi.on("agent_settled", (_event, ctx) => {
++    stopRecheck();
++    const until = Date.now() + 300_000;
++    const check = () => {
++      let idle;
++      try {
++        idle = ctx.isIdle();
++      } catch {
++        return; // a stale ctx after a reload or session switch
++      }
++      if (idle) {
++        agentActive = false;
++        publishState();
++      } else if (Date.now() < until) recheck = setTimeout(check, 100);
++    };
++    if (agentActive) check();
+   });
++  pi.on("agent_start", stopRecheck);
++  pi.on("session_shutdown", stopRecheck);
  }
