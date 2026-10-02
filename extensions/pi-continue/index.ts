@@ -28,13 +28,14 @@ export default function (pi: ExtensionAPI) {
   /**
    * During a compaction with no run (a manual /compact), pi would start a run beside it for a custom
    * message, and refuses a prompt. Then `send` waits until it ends (checked every 100 ms) and this
-   * returns true; one waits at a time.
+   * returns true; one waits at a time. The same test also matches pi's gaps between attempts (a retry
+   * countdown, compaction after a run), where waiting is harmless.
    */
   function afterCompaction(ctx: ExtensionContext, send: () => void): boolean {
     const compacting = () => !ctx.isIdle() && !ctx.signal;
     if (!compacting()) return false;
     stopPending();
-    ctx.ui.notify("Queued until compaction ends", "info");
+    ctx.ui.notify("Queued until pi is ready", "info");
     pending = setInterval(() => {
       try {
         if (compacting()) return;
