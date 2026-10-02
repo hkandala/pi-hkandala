@@ -33,7 +33,7 @@ The extension has no config of its own. Retries use pi's `retry` settings in `~/
 | `retry.baseDelayMs`     | `2000`  | First delay; doubles on each attempt    |
 | `retry.maxAgentDelayMs` | `60000` | Cap on a single delay                   |
 
-Pi's default of 3 retries covers only ~14s of outage (2s, 4s, 8s). For long sessions, something like Claude Code's 10:
+Pi's default of 3 retries covers only ~14s of outage (2s, 4s, 8s). For long sessions, use 10 retries, as Claude Code does:
 
 ```json
 { "retry": { "maxRetries": 10 } }
@@ -45,5 +45,8 @@ Leave `retry.provider.maxRetries` at its default `0`: provider-level retries run
 
 ## Notes
 
-- Auth errors are detected from the error text, since pi doesn't expose HTTP status to extensions. An unrecognized auth error is retried like any other; press esc to stop it.
+- Auth errors are detected from the error text, because pi does not give extensions the HTTP status. An unrecognized auth error is retried like any other. Press esc to stop it.
+- Quota and billing errors are recognized by pi's own text patterns. An unrecognized one is retried. Press esc to stop it.
+- Errors that fail the same way every time, such as a bad request, also go through the full retry schedule before the turn fails.
+- Each failed message gets a `[pi-retry] provider returned error` line. This line is what makes pi retry it, so you see it in the final error. Pi does not show its `/bug` hint for these errors.
 - Relies on pi treating `provider returned error` as retryable, which is one of its built-in patterns.
