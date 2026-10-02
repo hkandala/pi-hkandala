@@ -362,7 +362,8 @@ the name check.
      real pi with its own args and doesn't pass its own flags on (for example
      `pi --dangerously-disable-osx-sandbox`, which runs `pi.real` unsandboxed). A plain `pi` would
      start the agent without them (sandboxed, say). So when this pi's parent process is named `pi`
-     and this pi isn't (`process.execPath`), the parent's args that aren't in this process's argv
+     and runs another program than this pi (`ps -o comm=`; `process.execPath` can't tell, a
+     compiled pi reports the launcher's path), the parent's args that aren't in this process's argv
      are the launcher's own flags, with their values. They go right after `pi`, quoted, before
      pi-herd's flags, in both start commands. No flag names are built in.
      - The parent's argv is read once: `/proc/<ppid>/cmdline` on Linux (exact), `ps -ww -o args=`

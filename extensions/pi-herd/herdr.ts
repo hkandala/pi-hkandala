@@ -196,14 +196,17 @@ export const launcherFlags = (parent: string[], own: string[]) => {
 let launcher: string | undefined;
 /**
  * The launcher's flags (launcherFlags), quoted for sh, each followed by a space; read once. Not
- * when this pi is itself named `pi` (then a parent `pi` is another pi, not a launcher). Linux reads
- * the parent's exact argv; macOS has only ps's, joined with spaces: a launcher flag's value with a
+ * when the parent runs the same program as this pi (then it is another pi, not a launcher;
+ * process.execPath can't tell: a compiled pi reports the launcher's path). Linux reads the
+ * parent's exact argv; macOS has only ps's, joined with spaces: a launcher flag's value with a
  * space in it comes out split.
  */
+const program = (pid: number) =>
+  execFileSync("ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" }).trim();
 const launcherArgs = () =>
   (launcher ??= (() => {
-    if (basename(process.execPath) === "pi") return "";
     try {
+      if (program(process.pid) === program(process.ppid)) return "";
       const parent =
         process.platform === "linux"
           ? readFileSync(`/proc/${process.ppid}/cmdline`, "utf8").split("\0").filter(Boolean)
