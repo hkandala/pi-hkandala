@@ -18,6 +18,7 @@ import {
   getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
+  type Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
   isKeyRelease,
@@ -1426,6 +1427,54 @@ export default function (pi: ExtensionAPI) {
       subagents: { cost: 0, count: 0 },
     });
   };
+  /** Writes this agent's record (old: the record it had); live again if it was stopped. */
+  const register = (c: ExtensionContext, id: string, old?: Agent) => {
+    mkdirSync(AGENTS, { recursive: true });
+    mkdirSync(STOPPED, { recursive: true });
+    unmarkStopped(id); // live again (resumed)
+    me = {
+      id,
+      name: pi.getSessionName(),
+      pid: process.pid,
+      cwd: c.cwd,
+      startedAt: old?.pid === process.pid && !old.ended ? old.startedAt : Date.now(),
+      parent: parentId,
+      herdr: { socket, pane },
+      session: c.sessionManager.getSessionFile(),
+      cost: ownCost(c),
+    };
+    writeAgent(me);
+  };
+  /**
+   * The widget: right-aligned above the prompt while a popup shows this agent. It also hands over
+   * pi's TUI (taken once per session: after pi's TUI-mode switch in /settings, /reload brings ←
+   * back).
+   */
+  const popupHint = (t: TUI, theme: Theme) => {
+    tui = t;
+    return {
+      invalidate() {},
+      render: (width: number) => {
+        if (!inPopup() || boxed) return []; // pi-footer's box shows it as the placeholder
+        const hint = theme.fg("warning", CLOSE_HINT);
+        return [" ".repeat(Math.max(0, width - visibleWidth(hint) - 3)) + hint];
+      },
+    };
+  };
+  /** Watches the inbox, the agents and the popups, ← on the prompt, and the parent. */
+  const listen = (c: ExtensionContext, id: string) => {
+    watchDir(join(MESSAGES, id), () => scan(), BATCH_MS);
+    watchDir(AGENTS, onAgents);
+    watchDir(ATTACHED, onAttached);
+    c.ui.setWidget("pi-herd", popupHint);
+    // After the other extensions' listeners (pi-footer's tabs use ← while they have the keys).
+    // That holds while they register synchronously in session_start, as pi-footer does.
+    setTimeout(() => {
+      if (me?.id === id) stopInput = c.ui.onTerminalInput(onKey);
+    });
+    // A crashed parent leaves its record, and fs.watch can't see a process die.
+    if (parentId) parentTimer = setInterval(() => parentAlive() || die(), 2000);
+  };
   pi.on("session_start", (event, c) => {
     ctx = c;
     if (c.mode !== "tui") return off();
@@ -1447,47 +1496,11 @@ export default function (pi: ExtensionAPI) {
     // Endings queued when the old runtime stopped weren't sent: let them fire again.
     for (const w of g.watches.values()) w.ending = false;
     g.me = id;
-    mkdirSync(AGENTS, { recursive: true });
-    mkdirSync(STOPPED, { recursive: true });
-    unmarkStopped(id); // live again (resumed)
-    me = {
-      id,
-      name: pi.getSessionName(),
-      pid: process.pid,
-      cwd: c.cwd,
-      startedAt: old?.pid === process.pid && !old.ended ? old.startedAt : Date.now(),
-      parent: parentId,
-      herdr: { socket, pane },
-      session: c.sessionManager.getSessionFile(),
-      cost: ownCost(c),
-    };
-    writeAgent(me);
+    register(c, id, old);
     busy = !c.isIdle();
     g.herdr = undefined; // refresh() emits the current value
     lastUpdate = "";
-    watchDir(join(MESSAGES, id), () => scan(), BATCH_MS);
-    watchDir(AGENTS, onAgents);
-    watchDir(ATTACHED, onAttached);
-    // Right-aligned above the prompt while a popup shows this agent; it also hands over pi's TUI
-    // (taken once per session: after pi's TUI-mode switch in /settings, /reload brings ← back).
-    c.ui.setWidget("pi-herd", (t, theme) => {
-      tui = t;
-      return {
-        invalidate() {},
-        render: (width: number) => {
-          if (!inPopup() || boxed) return []; // pi-footer's box shows it as the placeholder
-          const hint = theme.fg("warning", CLOSE_HINT);
-          return [" ".repeat(Math.max(0, width - visibleWidth(hint) - 3)) + hint];
-        },
-      };
-    });
-    // After the other extensions' listeners (pi-footer's tabs use ← while they have the keys).
-    // That holds while they register synchronously in session_start, as pi-footer does.
-    setTimeout(() => {
-      if (me?.id === id) stopInput = c.ui.onTerminalInput(onKey);
-    });
-    // A crashed parent leaves its record, and fs.watch can't see a process die.
-    if (parentId) parentTimer = setInterval(() => parentAlive() || die(), 2000);
+    listen(c, id);
     scan();
     onAgents();
     onAttached();
@@ -1533,6 +1546,17 @@ export default function (pi: ExtensionAPI) {
         } catch {}
   });
 
+  /** Drops the messages not yet delivered: the next runtime takes them in again. */
+  const requeue = () => {
+    for (const it of [...outbox, ...afterSettle])
+      if (it.kind === "message") {
+        g.queued.delete(it.msg.id);
+        const c = g.counts.get(it.msg.from.id);
+        if (c) c.received--; // counted again when taken in again
+      }
+    outbox = [];
+    afterSettle = [];
+  };
   pi.on("session_shutdown", (event, c) => {
     closeDashboard?.();
     stopInput?.();
@@ -1543,15 +1567,7 @@ export default function (pi: ExtensionAPI) {
     follows.clear();
     waiters.clear();
     clearTimeout(flushTimer);
-    // Messages not yet delivered are taken in again by the next runtime.
-    for (const it of [...outbox, ...afterSettle])
-      if (it.kind === "message") {
-        g.queued.delete(it.msg.id);
-        const c = g.counts.get(it.msg.from.id);
-        if (c) c.received--; // counted again when taken in again
-      }
-    outbox = [];
-    afterSettle = [];
+    requeue();
     clearTimeout(deadlineTimer);
     clearTimeout(waking);
     clearInterval(parentTimer);
