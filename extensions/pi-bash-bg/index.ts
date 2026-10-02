@@ -392,9 +392,19 @@ export default function (pi: ExtensionAPI) {
         throw err;
       }
       const durationMs = Date.now() - started;
-      return moved
-        ? { content: [{ type: "text", text: moved }], details: { durationMs } }
-        : { ...result, details: { ...result.details, durationMs } };
+      if (!moved) return { ...result, details: { ...result.details, durationMs } };
+      // structuredContent fits bash's outputSchema, so codemode scripts get an object too.
+      const structuredContent = {
+        output: moved,
+        truncated: false,
+        exit_code: 0,
+        wall_time_seconds: Math.round(durationMs / 100) / 10,
+      };
+      return {
+        content: [{ type: "text", text: moved }],
+        details: { durationMs },
+        structuredContent,
+      };
     },
   });
   // pi turns a thrown error into a result with empty details: the duration goes there.
@@ -653,7 +663,7 @@ export default function (pi: ExtensionAPI) {
 
   // Print and json modes end when the agent settles: wait for watched jobs, then continue with
   // their end messages so `pi -p` ends with the results.
-  pi.on("agent_before_settle", async (_event, c) => {
+  pi.on("agent_before_settle", async (event, c) => {
     const waiting = () => running(jobs([...seen()])).length > 0;
     if (c.mode === "tui" || c.mode === "rpc" || !waiting()) return;
     settling = [];
@@ -661,7 +671,7 @@ export default function (pi: ExtensionAPI) {
     check();
     const entries = settling;
     settling = undefined;
-    return { entries, continue: true };
+    return { entries: [...event.entries, ...entries], continue: true };
   });
 
   pi.on("session_shutdown", (event, c) => {
