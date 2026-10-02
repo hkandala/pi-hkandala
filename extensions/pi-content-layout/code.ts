@@ -6,6 +6,7 @@
  */
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { highlightCode } from "@earendil-works/pi-coding-agent";
+import { backgroundAnsi, mixColors } from "@earendil-works/pi-tui";
 
 export const untab = (s: string) => s.replace(/\t/g, "   ");
 
@@ -30,18 +31,14 @@ export function numbered(lines: string[], first: number, theme: Theme): string[]
   return lines.map((l, i) => ` ${theme.fg("dim", String(first + i).padStart(width))} ${l}`);
 }
 
-/** A color code's RGB, when it's a truecolor one. */
-export const rgbOf = (ansi: string) => /8;2;(\d+);(\d+);(\d+)/.exec(ansi)?.slice(1).map(Number);
-/** The RGB `t` of the way from `a` to `b`, as "r;g;b". */
-export const between = (a: number[], b: number[], t: number) =>
-  a.map((v, i) => Math.round(v + (b[i]! - v) * t)).join(";");
-
 /** Background codes for added and removed lines, and a stronger one for their changed words. */
 function tints(theme: Theme) {
   const tint = (bg: "toolSuccessBg" | "toolErrorBg", fg: "toolDiffAdded" | "toolDiffRemoved") => {
     const line = theme.getBgAnsi(bg);
-    const [from, to] = [rgbOf(line), rgbOf(theme.getFgAnsi(fg))];
-    return { line, word: from && to ? `\x1b[48;2;${between(from, to, 0.25)}m` : line };
+    // No line tint (the terminal's own background): no word tint either.
+    if (line === "\x1b[49m") return { line, word: line };
+    const word = mixColors(theme.colors[bg], theme.colors[fg], 0.25, "srgb");
+    return { line, word: backgroundAnsi(word, theme.getColorMode()) };
   };
   return {
     "+": tint("toolSuccessBg", "toolDiffAdded"),

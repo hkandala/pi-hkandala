@@ -30,6 +30,7 @@ import {
   Loader,
   Markdown,
   Text,
+  mixColors,
   sliceByColumn,
   truncateToWidth,
   visibleWidth,
@@ -37,7 +38,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { between, diffOf, highlighted, numbered, rgbOf, untab } from "./code.ts";
+import { diffOf, highlighted, numbered, untab } from "./code.ts";
 import { copied } from "./copy.ts";
 import {
   HERD_MESSAGE,
@@ -529,10 +530,12 @@ function capped(lines: string[], theme: Theme, full?: boolean): [string[], strin
  * of the way to the other and back, every 1.6s.
  */
 function pulse(theme: Theme, s: string, open: boolean): string {
-  const [muted, text] = [rgbOf(theme.getFgAnsi("muted")), rgbOf(theme.getFgAnsi("text"))];
-  if (!fullscreen() || !muted || !text) return theme.fg(open ? "text" : "muted", s);
+  if (!fullscreen()) return theme.fg(open ? "text" : "muted", s);
+  const { muted, text } = theme.colors;
   const t = (0.4 * (1 - Math.cos((Date.now() / 1600) * 2 * Math.PI))) / 2;
-  return `\x1b[38;2;${open ? between(text, muted, t) : between(muted, text, t)}m${s}\x1b[39m`;
+  return theme.style(s, {
+    fg: open ? mixColors(text, muted, t, "srgb") : mixColors(muted, text, t, "srgb"),
+  });
 }
 
 /** The member that opens the group `list[i]` belongs to (it keeps the group's collapsed state). */
@@ -1000,11 +1003,18 @@ export default function (pi: ExtensionAPI) {
       });
     // Queued steering and follow-up lines (pi pads them 1 column) sit at column 3, inside the
     // prompt box's edges, with the same 3 columns free on the right. pi cuts long ones with a
-    // plain "..." after a reset; they're dim, so the … is too.
+    // plain "..." after a reset; they're dim, so the … is too. A !cmd run while the agent works
+    // waits here too, placed as in the chat.
     if (pending)
-      override(pending, (orig, width) =>
-        orig(Math.max(1, width - 4)).map((l) =>
-          blank(l) ? l : indent(l.replace("\x1b[0m...\x1b[0m", "…\x1b[0m  "), "  "),
+      override(pending, (_, width) =>
+        pending!.children.flatMap((c: Proto) =>
+          c instanceof BashExecutionComponent
+            ? c.render(width)
+            : c
+                .render(Math.max(1, width - 4))
+                .map((l: string) =>
+                  blank(l) ? l : indent(l.replace("\x1b[0m...\x1b[0m", "…\x1b[0m  "), "  "),
+                ),
         ),
       );
 
@@ -1174,7 +1184,8 @@ export default function (pi: ExtensionAPI) {
           // false: not in the chat (cached too: the search walks the whole chat).
           if (this.clParent === undefined && chat) this.clParent = parentOf(chat, this) ?? false;
           const parent: Proto | false | undefined = this.clParent;
-          if (!parent) return orig.call(this, width);
+          // A !cmd's own rules: its render leaves them out, but pi's mouse handling renders them.
+          if (!parent || parent instanceof BashExecutionComponent) return orig.call(this, width);
           const list: Proto[] = parent.children;
           const i = list.indexOf(this);
           // Whether it opens a panel (an even count of rules before it): the chat grows at the end.
