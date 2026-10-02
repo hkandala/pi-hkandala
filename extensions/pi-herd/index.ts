@@ -3,8 +3,8 @@
  * watch, and start and stop agents of its own (and theirs).
  *
  * Files: store.ts (the shared folder), herdr.ts (its socket API), transcript.ts, text.ts (what
- * agents read, and its renderer), dashboard.ts (/agents dashboard). Status comes only from herdr (its pi integration, plus the repo's patch
- * in herdr/). A message is a steer that wakes an idle agent; a watch wakes the watcher when the
+ * agents read, and its renderer), dashboard.ts (/agents dashboard). Status comes only from herdr
+ * (its pi integration, plus the repo's patch in herdr/). A message is a steer that wakes an idle agent; a watch wakes the watcher when the
  * target stops working. Tools: agent_start, agent_stop, agent_send, agent_watch, agent_read,
  * agent_list. Commands: /agents, /detach.
  * An agent without a name gets a two-word one derived from its session id (frog-thunder).
@@ -315,8 +315,9 @@ export default function (pi: ExtensionAPI) {
     writeAgent(me);
   };
 
-  // herdr (optional patch, see herdr/README.md): working while watches run. herdr plays "done" on
-  // every working → idle change, so it must never see a gap.
+  // herdr (optional patch, see herdr/README.md): working while watches run. On every working →
+  // idle change herdr's pane goes idle at once, and an agent watching this one takes that as
+  // finished: herdr must never see a gap.
   const emitHerdr = (active: boolean) => {
     g.herdr = active;
     pi.events.emit("herdr:working", { source: "pi-herd", active });
@@ -327,7 +328,7 @@ export default function (pi: ExtensionAPI) {
   const refresh = () => {
     if (!me) return;
     // The agents this one started and the ones it has watched, and below them the agents they
-    // started (any depth). Listed ones that are gone stay listed, as stopped or done (like
+    // started (any depth). Listed ones that are gone stay listed, as stopped or exited (like
     // finished jobs).
     const all = allAgents();
     const agents = all.filter(isLive);
@@ -703,7 +704,8 @@ export default function (pi: ExtensionAPI) {
 
   /**
    * A popup shows this agent while a live popup shell's marker, attached/<its pid>, names it (its
-   * first line; then the socket and pane it attaches to). Dead shells' markers are removed.
+   * first line; then the socket and pane it attaches to, and its name). Dead shells' markers are
+   * removed.
    */
   const onAttached = () => {
     if (!me || !ctx) return;
@@ -761,7 +763,7 @@ export default function (pi: ExtensionAPI) {
     }
   };
 
-  /** Resolves ids, 8-char suffixes or names to live agents; any miss fails the whole call. */
+  /** Resolves ids, id suffixes (4+ characters) or names to live agents; any miss fails the call. */
   const resolveAll = (refs: string[], pool = liveAgents()) =>
     refs.map((ref) => {
       const found = pool.filter(
@@ -816,8 +818,8 @@ export default function (pi: ExtensionAPI) {
   };
 
   /**
-   * Stops a child: SIGTERM, then SIGKILL after 5 s (a created pane closes with its pi). Its watch
-   * is dropped first: an `exited` ending would only wake us for what we just did.
+   * Stops an agent below this one: SIGTERM, then SIGKILL after 5 s (a created pane closes with its
+   * pi). Its watch is dropped first: an `exited` ending would only wake us for what we just did.
    */
   const stop = (a: Agent) => {
     markStopped(a.id); // so every list shows it as stopped
@@ -881,6 +883,7 @@ export default function (pi: ExtensionAPI) {
       if (e.code !== "plugin_not_found") return ctx.ui.notify(`herdr: ${e.message}`, "error");
       ctx.ui.notify(
         `The herdr plugin ${PLUGIN} isn't installed. Install it with:\n  herdr plugin install hkandala/pi-hkandala/herdr/plugin\n` +
+          `Or, from a checkout of pi-hkandala:\n  herdr plugin link <checkout>/herdr/plugin\n` +
           `Or attach in a terminal:\n  HERDR_SOCKET_PATH=${q(a.herdr.socket)} herdr agent attach ${a.herdr.pane}`,
         "warning",
       );
@@ -1038,7 +1041,7 @@ export default function (pi: ExtensionAPI) {
     name: "agent_start",
     label: "agent start",
     description:
-      "Start a pi agent in its own herdr pane and send it a message, or resume a stopped one by its session id. Returns at once; you are woken when it replies or stops working.",
+      "Start a pi agent in its own herdr pane and send it a message, or resume a stopped one by its session id. Returns once it runs; with a message that asks for a reply, you are woken when it replies or stops working.",
     promptSnippet: "Start or resume a pi agent",
     executionMode: "sequential",
     parameters: Type.Object({
@@ -1311,7 +1314,7 @@ export default function (pi: ExtensionAPI) {
     name: "agent_read",
     label: "agent read",
     description:
-      "Read what an agent has been doing: its recent transcript (default), or what its pane shows now (screen), plus its status, parent, cwd and pane.",
+      "Read what an agent has been doing: its recent transcript (default) or its last text, plus its status, parent, cwd and pane; screen adds what its pane shows now.",
     promptSnippet: "Read what pi agents are doing",
     parameters: Type.Object({
       ids: ToList,

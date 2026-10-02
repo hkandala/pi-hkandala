@@ -1,9 +1,9 @@
 /**
  * The files every agent shares in ~/.pi/agent/pi-herd/: agents/<id>.json (every agent, live or
- * ended),
- * messages/<toId>/<msgId>.json (one file per message), attached/<pid> (a popup shell and the agent
- * it shows), stopped/<id> (it was stopped, or ended with the agent that started it), sessions/ (the
- * pi sessions of the agents agent_start starts: out of the user's /resume list).
+ * ended), messages/<toId>/<msgId>.json (one file per message), attached/<pid> (a popup shell and
+ * the agent it shows), stopped/<id> (it was stopped, or ended with the agent that started it),
+ * sessions/ (the pi sessions of the agents agent_start starts: out of the user's /resume list),
+ * .cleanup (when the daily cleanup last ran).
  */
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -143,8 +143,8 @@ export const allAgents = () => {
 export const liveAgents = () => allAgents().filter(isLive);
 
 /**
- * Daily: deletes dead records (an ended session's after 7 days), old messages, stale popup markers, and stop markers of dead agents
- * older than 7 days; closes orphaned panes.
+ * Daily: deletes dead records (an ended session's after 7 days), old messages, stale popup markers,
+ * and stop markers of dead agents older than 7 days; closes orphaned panes.
  */
 export async function cleanup() {
   for (const f of list(AGENTS)) {

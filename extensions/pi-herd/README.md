@@ -3,17 +3,25 @@
 pi agents in [herdr](https://herdr.dev). Every pi session running in a herdr pane becomes an **agent**. An agent can list the others, message them, and watch them until they stop working. It can also start agents of its own in herdr panes, send them work, stop them, and resume them later; those agents can start their own.
 
 ```
- ● I started reviewer with the review request. I'll be woken when it replies.
+ ● I started auth-reviewer with the review request. I'll be woken when it replies.
  ╭┄┄ agent message ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╮
- ┆ 󱉰 reviewer replied · Found 3 issues: 1. The token check in      ┆
+ ┆ 󱉰 auth-reviewer replied · Found 3 issues: 1. The token check in ┆
  ┆ src/auth.ts skips expired tokens. 2. Th… (ctrl+o to expand)     ┆
  ╰┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╯
 ```
 
 - **Messages** are files. By default a message arrives as a steer: an idle agent wakes up, and a working agent gets it at its next tool call. It can also wait for the current turn to end (`followUp`), or abort it (`immediate`), for stopping an agent that's doing something wrong.
-- **Replies are asked for.** A message with `needsReply` tells the recipient to answer, and watches it: the sender is woken when it replies, stops working (with its last text, or the error its turn failed with), is blocked (with its screen), exits, or the watch times out (30 min by default, with a transcript of what it was doing). A message without it expects no answer. Starting an agent asks for a reply by default, so the agent never has to poll.
-- **Status comes from herdr**: `working`, `blocked`, `idle`, and `done` (herdr's word for an idle agent you haven't looked at yet). An agent that ended reads `stopped` or `exited`. pi-herd adds no status logic of its own.
-- **Agents stop with the agent that started them**, whether it quits or crashes, and so do the agents they started. A stopped agent can be resumed from its session id.
+- **Replies are asked for.** A message with `needsReply` tells the recipient to answer, and the sender watches it. The sender is woken when the recipient:
+  - replies,
+  - stops working (with its last text, or the error its turn failed with),
+  - is blocked (with its screen),
+  - exits,
+  - or when the watch times out (30 min by default, with a transcript of what it was doing).
+
+  A message without `needsReply` expects no answer. Starting an agent asks for a reply by default, so the agent never has to poll.
+
+- **Status comes from herdr** (its pi integration): `working`, `blocked`, `idle`, and `done` (herdr's word for an idle agent you haven't looked at yet). An agent reads `unknown` until herdr first reports it. An agent that ended reads `stopped` or `exited`. pi-herd adds no status logic of its own.
+- **Agents stop when the session that started them ends** (it quits, crashes, or switches with `/new`, `/resume` or `/fork`), and so do the agents they started. A stopped agent can be resumed from its session id.
 - **Every agent has a name.** One without a `--name` or `/name` gets two words derived from its session id, like `frog-thunder`: always the same for that session, and never stored.
 - The agent learns the workflow from a short brief in its system prompt.
 
@@ -28,7 +36,7 @@ pi-herd does nothing outside herdr, and nothing in print, JSON or RPC mode.
 | `agent_send`  | Sends a `message` (`to`, `replyTo`) to one or more live agents                                                                                                          |
 | `agent_watch` | Watches agents that are working (`to`, `timeout` in minutes)                                                                                                            |
 | `agent_read`  | What an agent has been doing: its transcript (default), or its last text (`transcript: false`); `screen: true` adds what its pane shows now                             |
-| `agent_list`  | Lists live agents: the ones you started (default), agents in this folder (`cwd`), or `all` (also other sessions'; rarely needed)                                        |
+| `agent_list`  | Lists live agents: the ones you started (default), agents in this folder or below (`cwd`), or `all` (also other sessions'; rarely needed)                               |
 
 `message` is `{ text, needsReply?, delivery? }`:
 
@@ -37,7 +45,7 @@ pi-herd does nothing outside herdr, and nothing in print, JSON or RPC mode.
 
 `agent_start` also takes `model`, `thinking`, `cwd` and `placement`. Without `session`, `name` and `message` are required.
 
-Agents are addressed by id, the last 8 characters of it, or name. Every agent gets every tool and the same rules, so agents can start agents to any depth.
+Agents are addressed by id, the end of it (the last 8 characters the tools print, or any 4 or more), or name. Every agent gets every tool and the same rules, so agents can start agents to any depth.
 
 **Where a started agent runs** (`placement`, default from config):
 
@@ -51,12 +59,12 @@ A new agent gets your model and thinking level unless config or the call names o
 
 ## Commands
 
-| Command                                        | Does                                                                                                                                               |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/agents`, `/agents list [children\|cwd\|all]` | Prints agents: the ones you started (default), in this folder, or all                                                                              |
-| `/agents stop <id\|name …\|all>`               | Stops agents you started (or that they started), like `agent_stop`                                                                                 |
-| `/agents dashboard`                            | Opens the agent dashboard (below); ← on an empty prompt does the same                                                                              |
-| `/detach`                                      | In an agent shown in a popup: closes the popup, and the agent keeps running. `ctrl+shift+q` does the same. `ctrl+b q` inside the popup also works. |
+| Command                                        | Does                                                                                                                                          |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/agents`, `/agents list [children\|cwd\|all]` | Prints agents: the ones you started (default), in this folder, or all                                                                         |
+| `/agents stop <id\|name …\|all>`               | Stops agents you started (or that they started), like `agent_stop`                                                                            |
+| `/agents dashboard`                            | Opens the agent dashboard (below); ← on an empty prompt does the same                                                                         |
+| `/detach`                                      | In an agent shown in a popup: closes the popup, and the agent keeps running. `detachKey` (default `ctrl+shift+q`) and `ctrl+b q` do the same. |
 
 **The dashboard** opens with ← on an empty prompt (or `/agents dashboard`): a full-screen page with a margin all round, a title, a line of counts by status (`2 working · 1 idle · 1 stopped`, ended agents counted even while hidden), a rule, and three sections:
 
@@ -64,7 +72,9 @@ A new agent gets your model and thinking level unless config or the call names o
 - **your agents**: the agents you started or watched.
 - **other agents**: every other live agent, from any session.
 
-Both lists are trees: each agent with the agents it started under it (`├ └ │`), to any depth, and the ended ones once `e` shows them (in both lists alike, also after the session was resumed: an agent's record stays once it ends). Columns: name, status, folder, messages, and time last: how long it has had its status (`2m`, for every status), on your agents only. Their widths come from every row `e` can show, so toggling it doesn't move them.
+Both lists are trees: each agent has the agents it started under it (`├ └ │`), to any depth. `e` shows the ended ones in both lists. They show also after the session was resumed, because an agent's record stays once it ends.
+
+The columns are name, status, folder, messages, and time. The time column comes last. It shows how long the agent has had its status (`2m`, for every status), on your agents only. The column widths come from every row `e` can show, so toggling it doesn't move them.
 
 Rows stay in the order the agents came (started or watched; other agents by when they started), with ended ones last at every level of the tree: only an agent ending moves a row. pi-footer's agents tab orders by status instead: working first.
 
@@ -79,8 +89,8 @@ The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent 
     ◆ main             working  ~/code/app
 
     your agents
-    ◇ reviewer 󰅐       working  ~/code/app  󱉱 1 󱉰 0  2m
-    ◇ └ tests          working  ~/code/app             40s
+    ◇ auth-reviewer 󰅐  working  ~/code/app  󱉱 1 󱉰 0  2m
+    ◇ └ auth-tests     working  ~/code/app             40s
 
     other agents
     ◇ frog-thunder     idle     ~/code/lib
@@ -95,11 +105,16 @@ The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent 
 
 Optional; install any of them for the extra:
 
-- [pi-footer](../pi-footer/README.md): `󰫣 3` in the footer line while this session watches agents, the cost of the agents you started (any depth, ended ones too) in the usage tab's total, an agents tab (↓ opens it while watches run): the live agents you started and the ones you watched (ended ones on `e`), working ones first, with how many live agents run below each (`reviewer +2`), on the tab how many it waits on (`agents 2`), messages sent and received, `󱖡` on agents you didn't start and `󰅐` on the ones you wait on. Enter opens an agent in a popup, `x` twice stops one of yours. And the session's name on the prompt box's border.
+- [pi-footer](../pi-footer/README.md):
+  - `󰫣 3` in the footer line while this session watches agents.
+  - The cost of the agents you started (any depth, ended ones too) in the usage tab's total.
+  - An agents tab (↓ opens it while watches run). It lists the live agents you started and the ones you watched; `e` shows the ended ones. Working ones come first. Each row shows how many live agents run below it (`auth-reviewer +2`) and the messages sent and received. `󱖡` marks agents you didn't start and `󰅐` the ones you wait on. The tab's label shows how many agents this session waits on (`agents 2`).
+  - In the tab, Enter opens an agent in a popup, and `x` twice stops one of yours.
+  - In a popup, the close hint as the prompt box's placeholder.
 - [pi-working](../pi-working/README.md): `Waiting on 3 agents and 2 background jobs (1m 12s)` in the prompt's border while the agent waits.
 - [pi-content-layout](../pi-content-layout/README.md): agent messages and watch endings in its dashed frames (`agent message`, `agent watcher`; click to expand, markdown highlighted), messages in open tool calls as highlighted markdown, and tool groups that read `Started 2 agents, talked to 3 agents, stopped 2 agents`.
 - [herdr/](../../herdr/README.md) in this repo:
-  - **the patch** keeps a pane `working` while it waits on agents or background jobs, so a watch doesn't end while its target still waits, and herdr doesn't play "done" too early.
+  - **the patch** keeps a pane `working` while it waits on agents or background jobs, so a watch doesn't end while its target still waits, and herdr doesn't play "done" too early. It also ends a turn that settles during compaction: without it, a watch on that agent ends only at its timeout.
   - **the plugin** has the popup the dashboard attaches in.
 
 ## Install
@@ -111,11 +126,11 @@ herdr plugin install hkandala/pi-hkandala/herdr/plugin   # for the dashboard's p
 
 Or from a checkout of [pi-hkandala](../../README.md): `pi install <checkout>/extensions/pi-herd`, and `herdr plugin link <checkout>/herdr/plugin`.
 
-Requires herdr 0.9 or newer. pi-herd starts `pi` from your `PATH`; flags your launcher adds go in `args`. From a checkout, run `npm install --omit=peer` in `extensions/pi-herd` once (without `--omit=peer`, npm also installs pi itself), for its one dependency ([friendly-words](https://github.com/glitchdotcom/friendly-words), pinned to 1.2.1: later versions pull in a web server).
+Requires herdr 0.9 or newer, with its pi integration installed (`herdr integration status` shows it): all status comes from it. pi-herd starts `pi` from your `PATH`; flags your launcher adds go in `args`. From a checkout, run `npm install --omit=peer` in `extensions/pi-herd` once (without `--omit=peer`, npm also installs pi itself), for its one dependency ([friendly-words](https://github.com/glitchdotcom/friendly-words), pinned to 1.2.1: later versions pull in a web server).
 
 ## Configuration
 
-Optional: `~/.pi/agent/extensions/pi-herd.json`. Every key has a default.
+Optional: `~/.pi/agent/extensions/pi-herd.json`. Every key has a default, and a value of the wrong type is ignored.
 
 ```json
 {
@@ -130,18 +145,18 @@ Optional: `~/.pi/agent/extensions/pi-herd.json`. Every key has a default.
 }
 ```
 
-| Key                   | Meaning                                                                           |
-| --------------------- | --------------------------------------------------------------------------------- |
-| `placement`           | default placement for `agent_start`: `hidden` or `tab`                            |
-| `model`, `thinking`   | defaults for agents you start; `null` inherits yours                              |
-| `args`                | extra pi flags for agents you start, appended last                                |
-| `watchTimeoutMinutes` | default watch timeout; `0` means none                                             |
-| `transcriptMessages`  | entries in a transcript (`agent_read` with `transcript`, and timeout endings)     |
-| `captureLines`        | screen lines read instead, for an agent that has no session file (`--no-session`) |
-| `detachKey`           | closes the popup showing this agent, like `/detach`                               |
+| Key                   | Meaning                                                                                                                                |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `placement`           | default placement for `agent_start`: `hidden` or `tab`                                                                                 |
+| `model`, `thinking`   | defaults for agents you start; `null` inherits yours                                                                                   |
+| `args`                | extra pi flags for agents you start, appended last                                                                                     |
+| `watchTimeoutMinutes` | default watch timeout; `0` means none                                                                                                  |
+| `transcriptMessages`  | entries in a transcript (`agent_read` with `transcript`, and timeout endings)                                                          |
+| `captureLines`        | lines of an agent's screen read: `agent_read` with `screen`, `blocked` endings, and for an agent with no session file (`--no-session`) |
+| `detachKey`           | closes the popup showing this agent, like `/detach`                                                                                    |
 
 ## Files
 
-Everything lives in `~/.pi/agent/pi-herd/`: `agents/<id>.json` (one per agent; once it ends, it stays with its end time and cost, for the lists and costs of the agents above it), `messages/<to>/<id>.json` (one per message, and a `.delivered` marker once it reaches the model), `attached/<pid>` (a popup's shell, naming the agent it shows), `stopped/<id>` (it was stopped, or ended with the agent that started it), and `sessions/` (the pi sessions of started agents). Once a day, the first session to start deletes records of dead agents (of ended ones after 7 days), messages older than 7 days, stale popup markers, and stop markers of dead agents older than 7 days, and closes orphaned panes in the `pi-herd` herdr session.
+Everything lives in `~/.pi/agent/pi-herd/`: `agents/<id>.json` (one per agent; once it ends, it stays with its end time and cost, for the lists and costs of the agents above it), `messages/<to>/<id>.json` (one per message, and a `.delivered` marker once it reaches the model), `attached/<pid>` (a popup's shell, naming the agent it shows), `stopped/<id>` (it was stopped, or ended with the agent that started it), `sessions/` (the pi sessions of started agents), and `.cleanup` (when the daily cleanup last ran). Once a day, the first session to start deletes records of dead agents (of ended ones after 7 days), messages older than 7 days, stale popup markers, and stop markers of dead agents older than 7 days, and closes orphaned panes in the `pi-herd` herdr session.
 
 See [docs/SPEC.md](docs/SPEC.md) for the design.

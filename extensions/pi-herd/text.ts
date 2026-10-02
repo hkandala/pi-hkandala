@@ -46,7 +46,8 @@ export const tilde = (p: string) =>
 /**
  * The workflow brief, the same for every agent: one of agent_send's prompt guidelines. Those are
  * part of pi's base prompt, so they reach every turn, also the ones a steer starts
- * (before_agent_start doesn't run for those). One guideline, so its groups can have blank lines.
+ * (before_agent_start doesn't run for those). One guideline, so it can be one heading with
+ * nested bullets.
  */
 export const brief = (timeout: number) =>
   `Agents (agent_* tools):
