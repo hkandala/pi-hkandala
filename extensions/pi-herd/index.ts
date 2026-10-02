@@ -13,19 +13,15 @@
 
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import {
-  DynamicBorder,
   getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
-  Container,
   isKeyRelease,
   Key,
   type KeyId,
   matchesKey,
-  Spacer,
-  Text,
   type TUI,
   visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -72,6 +68,7 @@ import {
 import {
   brief,
   itemText,
+  listRenderer,
   renderer,
   tilde,
   TYPE,
@@ -79,6 +76,7 @@ import {
   type Delivery,
   type End,
   type Item,
+  type ListData,
   type Message,
 } from "./text.ts";
 import { capture, findSession, KB, lastError, lastText, transcript } from "./transcript.ts";
@@ -1377,28 +1375,7 @@ export default function (pi: ExtensionAPI) {
 
   // ---- Commands ----
 
-  // /agents list prints agents like /background list does jobs: a framed entry, not sent to the model.
-  const loadedAt = Date.now();
-  pi.registerEntryRenderer<{ title: string; rows: string[][] }>(
-    "pi-herd-list",
-    (entry, _o, theme) => {
-      if (Date.parse(entry.timestamp) < loadedAt) return undefined;
-      const dim = (s: string) => theme.fg("dim", s);
-      const { title, rows: list = [] } = entry.data!;
-      const lines = list.map(
-        ([name, id, state, cwd, tags]) =>
-          `${dim("•")} ${theme.fg("accent", name!)} ${dim(id!)} ${theme.fg("text", `· ${state} · ${cwd}`)}` +
-          (tags ? ` ${theme.fg("accent", `· ${tags}`)}` : ""),
-      );
-      const box = new Container();
-      box.addChild(new DynamicBorder());
-      box.addChild(new Text(theme.bold(theme.fg("accent", title)), 1, 0));
-      box.addChild(new Spacer(1));
-      box.addChild(new Text(lines.join("\n") || dim("No matching agents."), 1, 0));
-      box.addChild(new DynamicBorder());
-      return box;
-    },
-  );
+  pi.registerEntryRenderer<ListData>("pi-herd-list", listRenderer(Date.now()));
 
   const SCOPES = ["children", "cwd", "all"];
   const USAGE = "Usage: /agents [list [children|cwd|all] | stop <id|name ...|all> | dashboard]";

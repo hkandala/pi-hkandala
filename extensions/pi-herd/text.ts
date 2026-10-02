@@ -1,12 +1,21 @@
 /** What agents read (the brief, steer items) and what the transcript shows of them. */
 
 import {
+  DynamicBorder,
   highlightCode,
   keyText,
   type MessageRenderer,
   type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Box, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import {
+  Box,
+  Container,
+  Spacer,
+  Text,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { label, short } from "./store.ts";
 
@@ -206,3 +215,29 @@ export const renderer: MessageRenderer<{ items: Item[] }> = (message, { expanded
   });
   return box;
 };
+
+/** An /agents list entry: its title, and a row per agent (name, id, state, cwd, tags). */
+export type ListData = { title: string; rows: string[][] };
+/**
+ * /agents list prints agents like /background list does jobs: a framed entry, not sent to the
+ * model. Only entries from this runtime (loadedAt: when it loaded) show.
+ */
+export const listRenderer =
+  (loadedAt: number) =>
+  (entry: { timestamp: string; data?: ListData }, _o: unknown, theme: Theme) => {
+    if (Date.parse(entry.timestamp) < loadedAt) return undefined;
+    const dim = (s: string) => theme.fg("dim", s);
+    const { title, rows: list = [] } = entry.data!;
+    const lines = list.map(
+      ([name, id, state, cwd, tags]) =>
+        `${dim("•")} ${theme.fg("accent", name!)} ${dim(id!)} ${theme.fg("text", `· ${state} · ${cwd}`)}` +
+        (tags ? ` ${theme.fg("accent", `· ${tags}`)}` : ""),
+    );
+    const box = new Container();
+    box.addChild(new DynamicBorder());
+    box.addChild(new Text(theme.bold(theme.fg("accent", title)), 1, 0));
+    box.addChild(new Spacer(1));
+    box.addChild(new Text(lines.join("\n") || dim("No matching agents."), 1, 0));
+    box.addChild(new DynamicBorder());
+    return box;
+  };
