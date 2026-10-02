@@ -22,9 +22,13 @@ import {
   VERSION,
 } from "@earendil-works/pi-coding-agent";
 import {
+  backgroundAnsi,
   Container,
+  foregroundAnsi,
   getCellDimensions,
   Markdown,
+  mixColors,
+  rgbColor,
   Spacer,
   Text,
   truncateToWidth,
@@ -47,16 +51,17 @@ const topRows = (compact: boolean, quiet: boolean) => rowsFor(compact) - (quiet 
 const SECTIONS = ["context", "skills", "prompts", "extensions", "themes"] as const;
 type Resources = Record<(typeof SECTIONS)[number], { name: string; path: string }[]>;
 
-const fg = (c: RGB) => `\x1b[38;2;${c.join(";")}m`;
-const bg = (c: RGB) => `\x1b[48;2;${c.join(";")}m`;
+type Mode = ReturnType<Theme["getColorMode"]>;
+const fg = (c: RGB, mode: Mode) => foregroundAnsi(rgbColor(...c), mode);
+const bg = (c: RGB, mode: Mode) => backgroundAnsi(rgbColor(...c), mode);
 
 /**
  * Each logo pixel is one row tall and exactly one cell-height wide (measured via
  * pi-tui's cell size), with edges placed in 1/8 cells. SPACING logo pixels of space
  * on each side. Returns lines padded to the text column.
  */
-function renderLogo(white: boolean, compact: boolean) {
-  if (compact) return renderCompactLogo(white);
+function renderLogo(white: boolean, compact: boolean, mode: Mode) {
+  if (compact) return renderCompactLogo(white, mode);
   const { widthPx, heightPx } = getCellDimensions();
   const px = (8 * heightPx) / widthPx;
   const column = Math.round(((LOGO.length + 2 * SPACING) * px) / 8);
@@ -77,10 +82,10 @@ function renderLogo(white: boolean, compact: boolean) {
       const r = split === undefined ? l : colorAt(row, split);
       const glyph = split === undefined ? "" : BLOCKS[split - start];
       if (!l && !r) line += " ";
-      else if (l === r) line += `${fg(l!)}█\x1b[39m`;
-      else if (!r) line += `${fg(l!)}${glyph}\x1b[39m`;
-      else if (!l) line += `\x1b[7m${fg(r)}${glyph}\x1b[27;39m`; // reverse: glyph takes the terminal background
-      else line += `${fg(l)}${bg(r)}${glyph}\x1b[39;49m`;
+      else if (l === r) line += `${fg(l!, mode)}█\x1b[39m`;
+      else if (!r) line += `${fg(l!, mode)}${glyph}\x1b[39m`;
+      else if (!l) line += `\x1b[7m${fg(r, mode)}${glyph}\x1b[27;39m`; // reverse: glyph takes the terminal background
+      else line += `${fg(l, mode)}${bg(r, mode)}${glyph}\x1b[39;49m`;
     }
     return line;
   });
@@ -88,7 +93,7 @@ function renderLogo(white: boolean, compact: boolean) {
 }
 
 /** Compact: each pixel is half a row tall (▀/▄ half blocks) and as wide as that in whole cells. */
-function renderCompactLogo(white: boolean) {
+function renderCompactLogo(white: boolean, mode: Mode) {
   const { widthPx, heightPx } = getCellDimensions();
   const w = Math.max(1, Math.round(heightPx / 2 / widthPx)); // cells per pixel
   const pad = Math.round(SPACING * w);
@@ -100,10 +105,10 @@ function renderCompactLogo(white: boolean) {
       const t = colorAt(LOGO[y][x]);
       const b = colorAt(LOGO[y + 1]?.[x]);
       if (!t && !b) line += " ".repeat(w);
-      else if (t === b) line += `${fg(t!)}${"█".repeat(w)}\x1b[39m`;
-      else if (!b) line += `${fg(t!)}${"▀".repeat(w)}\x1b[39m`;
-      else if (!t) line += `${fg(b)}${"▄".repeat(w)}\x1b[39m`;
-      else line += `${fg(t)}${bg(b)}${"▀".repeat(w)}\x1b[39;49m`;
+      else if (t === b) line += `${fg(t!, mode)}${"█".repeat(w)}\x1b[39m`;
+      else if (!b) line += `${fg(t!, mode)}${"▀".repeat(w)}\x1b[39m`;
+      else if (!t) line += `${fg(b, mode)}${"▄".repeat(w)}\x1b[39m`;
+      else line += `${fg(t, mode)}${bg(b, mode)}${"▀".repeat(w)}\x1b[39;49m`;
     }
     lines.push(line + " ".repeat(pad));
   }
@@ -117,14 +122,10 @@ function cut(text: string, width: number): string {
   return width < 1 ? "" : `${truncateToWidth(text, width - 1, "").slice(0, -4)}…\x1b[0m`;
 }
 
-/** Text halfway between the theme's muted and text colors (muted when they aren't 24-bit). */
+/** Text halfway between the theme's muted and text colors. */
 function soft(theme: Theme): (s: string) => string {
-  const rgb = (color: "muted" | "text") =>
-    /38;2;(\d+);(\d+);(\d+)/.exec(theme.getFgAnsi(color))?.slice(1).map(Number);
-  const [from, to] = [rgb("muted"), rgb("text")];
-  if (!from || !to) return (s) => theme.fg("muted", s);
-  const mix = from.map((v, i) => Math.round((v + to[i]!) / 2)).join(";");
-  return (s) => `\x1b[38;2;${mix}m${s}\x1b[39m`;
+  const color = mixColors(theme.colors.muted, theme.colors.text, 0.5, "srgb");
+  return (s) => theme.style(s, { fg: color });
 }
 
 function render(
@@ -152,7 +153,7 @@ function render(
     .map((s) => gray(`${res[s].length} ${res[s].length === 1 ? s.replace(/s$/, "") : s}`))
     .join(dot);
 
-  const logo = renderLogo(white, compact);
+  const logo = renderLogo(white, compact, theme.getColorMode());
   const title = theme.bold("pi") + gray(` v${VERSION}`);
   const info = compact ? [title + dot + hints, counts] : [title, hints, "", counts];
   const rows = rowsFor(compact);
@@ -369,7 +370,7 @@ export default function (pi: ExtensionAPI) {
         handleMouse(event: { type: string; button: string; x: number; y: number }) {
           if (event.type !== "click" || event.button !== "left") return undefined;
           const top = topRows(compact, quiet);
-          const logo = renderLogo(white, compact);
+          const logo = renderLogo(white, compact, ctx.ui.theme.getColorMode());
           const onLogo = event.y >= top && event.y < top + logo.lines.length;
           if (onLogo && event.x < logo.column) {
             white = !white;
