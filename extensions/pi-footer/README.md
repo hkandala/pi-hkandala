@@ -27,7 +27,7 @@ The box is pi's own editor, with the same keys, spinner, and autocomplete. The f
 | `󰫣 3`             | with [pi-herd](../pi-herd/README.md): the agents this session waits on                                                                                                                      |
 | `󰦖 2`             | with [pi-bash-bg](../pi-bash-bg/README.md): the background jobs that run in this session                                                                                                    |
 | `󰪟 47k/200k`      | the context used and the context window, hidden at 0. The pie fills in eighths. It is yellow above 75% and red above 90%. `~` marks an estimate after a compaction, until the next response |
-| `opus-5.5 · high` | the model and the thinking level                                                                                                                                                            |
+| `opus-5.5 · high` | the model and the thinking level. With a virtual model, the model that answered last follows, as in pi's footer: `auto · high → gpt-x · medium`                                             |
 
 The icons use the icon color (see `iconColor`). Yellow and red are the theme's `warning` and `error` colors. The dashboard's `usage` tab shows the tokens, the cost, and the cache timing.
 
@@ -47,6 +47,8 @@ A click on the rest of the line does nothing.
 `cold` shows in yellow when the prompt cache expired, when you switched models, or when the session was compacted. The next message then bills the full context again. `(~$0.46)` estimates what that message costs more than with a warm cache. It shows only when the model has pricing and the amount is $0.01 or more.
 
 The cache lifetime comes from the model's `promptCache` (`PI_CACHE_RETENTION=long` picks the long lifetime). If the model has no `promptCache`, the footer assumes 5 minutes. pi itself tracks no lifetime for such a model. Refreshes from pi's `cacheWarming` setting extend the lifetime.
+
+With a virtual model, the lifetime, the pricing, and the model switch check use the model that answered last.
 
 ## Dashboard
 
@@ -96,6 +98,7 @@ The tabs work like Claude Code's dialogs. The active tab is bold, with a backgro
 The `usage` tab shows the cost like this: `$4.10 total · $1.24 session · $2.86 subagents (5) · $0.31 last turn`.
 
 - The total adds this session's cost to the cost of every agent that it started. That includes agents at any depth and agents that ended. It does not include agents that this session only watched.
+- The session's cost includes the requests that write compaction and branch summaries, as in pi's footer.
 - If the session started no agents, the line shows only the total and the turn.
 - A turn starts at a user message, or at a message from an agent or a job that woke the idle agent.
 

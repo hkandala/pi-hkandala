@@ -6,7 +6,7 @@
 
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, matchesKey, parseColor, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -26,6 +26,7 @@ import {
   contextUsage,
   noteFirstToken,
   perLeaf,
+  routedModel,
   sessionStats,
   type Stats,
 } from "./stats.ts";
@@ -52,7 +53,6 @@ const PIE = [
   ...Array.from({ length: 8 }, (_, i) => String.fromCodePoint(0xf0a9e + i)),
 ];
 const MARGIN = 3; // the dashboard's and statuses' right margin, like the box's and the transcript's
-const CUBE = [0, 95, 135, 175, 215, 255]; // the xterm 256-color cube's levels
 // Tools that never change the work tree: no git refresh after them.
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 
@@ -175,19 +175,10 @@ function render(
   const white = config.style === "white";
   const paint: Paint = (color, s) => theme.fg(white ? "text" : color, s);
   const iconColor = config.iconColor ?? "accent";
+  // A hex color goes through the theme like its own colors: 24-bit, or the nearest 256-color one.
+  const iconHex = /^#[0-9a-f]{6}$/i.test(iconColor) && !white ? parseColor(iconColor) : undefined;
   const icon = (s: string) => {
-    if (/^#[0-9a-f]{6}$/i.test(iconColor) && !white) {
-      const rgb = [1, 3, 5].map((i) => parseInt(iconColor.slice(i, i + 2), 16));
-      // Like pi's theme colors: 24-bit, or the nearest 256-color cube entry.
-      const nearest = (v: number) =>
-        CUBE.reduce((best, c, i) => (Math.abs(v - c) < Math.abs(v - CUBE[best]!) ? i : best), 0);
-      const [r, gr, b] = rgb.map(nearest) as [number, number, number];
-      const code =
-        theme.getColorMode?.() !== "256color"
-          ? `38;2;${rgb.join(";")}`
-          : `38;5;${16 + 36 * r + 6 * gr + b}`;
-      return `\x1b[${code}m${s}\x1b[39m`;
-    }
+    if (iconHex) return theme.style(s, { fg: iconHex });
     try {
       return paint(iconColor as Color, s);
     } catch {
@@ -220,7 +211,8 @@ function render(
       (diff ? dot + diff : "");
   }
   const model = ctx.model;
-  const cacheModel = (model ?? {}) as CacheModel;
+  const routed = routedModel(ctx);
+  const cacheModel = (routed?.model ?? model ?? {}) as CacheModel;
   const ctxUsage = contextUsage(ctx);
   const approx = ctxUsage?.estimated ? "~" : "";
   // Only a cold cache shows: "cold (~$0.46)", what the next message costs over a warm cache.
@@ -243,13 +235,22 @@ function render(
       )
     : undefined;
   const level = pi.getThinkingLevel();
-  const levelColor: Color =
-    config.disableEffortColors === false
-      ? (`thinking${level[0].toUpperCase()}${level.slice(1)}` as Color)
-      : "text";
+  const levelPiece = (l: string) =>
+    paint(
+      config.disableEffortColors === false
+        ? (`thinking${l[0].toUpperCase()}${l.slice(1)}` as Color)
+        : "text",
+      l,
+    );
+  // A virtual model: `auto · high → gpt-x · medium`, the routed model and level, as pi shows them.
   const modelPiece =
     (model ? paint("text", shortModel(model.id)) : dim("no model")) +
-    (model?.reasoning ? dot + paint(levelColor, level) : "");
+    (model?.reasoning ? dot + levelPiece(level) : "") +
+    (routed
+      ? dim(" → ") +
+        paint("text", shortModel(routed.model.id)) +
+        (routed.thinkingLevel ? dot + levelPiece(routed.thinkingLevel) : "")
+      : "");
 
   const agentsPiece = herd?.watching
     ? `${icon(ICON.agents)} ${paint("text", String(herd.watching))}`
@@ -394,15 +395,21 @@ function tabData(
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
   const model = ctx.model;
-  const cacheModel = (model ?? {}) as CacheModel;
+  const routed = routedModel(ctx);
+  const cacheModel = (routed?.model ?? model ?? {}) as CacheModel;
   const ctxUsage = contextUsage(ctx);
   const level = pi.getThinkingLevel();
   const context =
     ctxUsage?.tokens &&
     `${ctxUsage.estimated ? "~" : ""}${fmt(ctxUsage.tokens)} / ${fmt(ctxUsage.contextWindow ?? 0)}` +
       (ctxUsage.percent != null ? ` (${Math.round(ctxUsage.percent)}%)` : "");
-  const modelName = model && `${model.provider}/${model.id}`;
-  const thinking = model?.reasoning && `thinking ${level}`;
+  // A virtual model: `router/auto → openai/gpt-x · thinking high → medium`.
+  const modelName =
+    model &&
+    `${model.provider}/${model.id}` +
+      (routed ? ` → ${routed.model.provider}/${routed.model.id}` : "");
+  const levels = [model?.reasoning && level, routed?.thinkingLevel].filter(Boolean);
+  const thinking = levels.length > 0 && `thinking ${levels.join(" → ")}`;
   const { cold, expired, ttlMs, cacheAge } = cacheState(ctx, s);
   const cache = s.lastCached
     ? [

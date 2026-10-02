@@ -24,6 +24,7 @@ type Entry = {
     content?: unknown;
     provider?: string;
     model?: string;
+    thinkingLevel?: string;
     stopReason?: string;
   };
 };
@@ -112,8 +113,9 @@ export const sessionStats = perLeaf((ctx) => {
       s.compactions++;
       s.compactedSince = true;
     }
+    // Compaction and branch summaries bill their summary request, as in pi's footer.
     const usage =
-      e.type === "usage"
+      e.type === "usage" || e.type === "compaction" || e.type === "branch_summary"
         ? e.usage
         : e.type === "message" && e.message?.role !== "user"
           ? e.message?.usage
@@ -171,11 +173,30 @@ export const contextUsage = perLeaf((ctx) => {
 });
 
 /**
+ * With a virtual model (api "pi-virtual"), the physical model and thinking level of the branch's
+ * latest response, like pi's own footer: the virtual model has no cost or cache lifetime.
+ */
+export const routedModel = perLeaf((ctx) => {
+  if (ctx.model?.api !== "pi-virtual") return undefined;
+  const branch = ctx.sessionManager.getBranch() as Entry[];
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const m = branch[i]!.message;
+    if (branch[i]!.type !== "message" || m?.role !== "assistant") continue;
+    if (m.stopReason === "error" || m.stopReason === "aborted") continue;
+    const model = ctx.modelRegistry.find(m.provider ?? "", m.model ?? "");
+    return model && model.api !== "pi-virtual"
+      ? { model, thinkingLevel: m.thinkingLevel }
+      : undefined;
+  }
+  return undefined;
+});
+
+/**
  * Prompt cache: alive for its lifetime after the last cached response (or warm refresh); cold
  * once that passes, the model changed, or the history was compacted: the next message re-bills.
  */
 export function cacheState(ctx: ExtensionContext, s: Stats) {
-  const model = ctx.model;
+  const model = routedModel(ctx)?.model ?? ctx.model;
   const ttlMs =
     ((model as CacheModel | undefined)?.promptCache?.[
       process.env.PI_CACHE_RETENTION === "long" ? "long" : "short"
