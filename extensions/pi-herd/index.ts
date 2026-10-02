@@ -917,6 +917,7 @@ export default function (pi: ExtensionAPI) {
     // Read with the statuses, not per frame (it reads every agent's file). Other agents: the live
     // ones, and the ended ones below them (like ended agents of yours, shown with e).
     let others: Agent[] = [];
+    const ended = new Map<string, Status | "stopped">(); // the ended ones among them
     let polling = false;
     const poll = async () => {
       if (polling) return; // a slow herdr: skip, don't pile up
@@ -933,6 +934,9 @@ export default function (pi: ExtensionAPI) {
           }
       }
       others = all.filter((a) => shown.has(a.id));
+      ended.clear();
+      for (const a of others)
+        if (!isLive(a)) ended.set(a.id, existsSync(join(STOPPED, a.id)) ? "stopped" : "exited");
       const read = await Promise.all(list.map(status));
       list.forEach((a, i) => statuses.set(a.id, read[i]!));
       polling = false;
@@ -972,13 +976,9 @@ export default function (pi: ExtensionAPI) {
               .map((a) => ({
                 id: a.id,
                 name: label(a),
-                state: isLive(a)
-                  ? (statuses.get(a.id) ?? "unknown")
-                  : existsSync(join(STOPPED, a.id))
-                    ? "stopped"
-                    : "exited",
+                state: ended.get(a.id) ?? statuses.get(a.id) ?? "unknown",
                 since: 0, // only your agents show a time
-                live: isLive(a),
+                live: !ended.has(a.id),
                 cwd: a.cwd,
                 parent: a.parent,
                 mine: false,

@@ -113,13 +113,32 @@ export const readAgent = (id: string) => {
 };
 /** Live: its session hasn't ended and its pid runs. */
 export const isLive = (a?: Agent): a is Agent => !!a && !a.ended && alive(a.pid);
+/** A record or message file's name (a write's temp file starts with a dot). */
+export const isJson = (f: string) => f.endsWith(".json") && !f.startsWith(".");
+// Each record file as last read, by name: re-read only once its stat changes (every write is a
+// rename, a new inode). allAgents runs on every change in agents/, by any agent.
+const parsed = new Map<string, { key: string; a: Agent | undefined }>();
 /** Every record, live or ended, newest first. */
-export const allAgents = () =>
-  list(AGENTS)
-    .filter((f) => f.endsWith(".json") && !f.startsWith("."))
-    .map((f) => readJson<Agent>(join(AGENTS, f)))
-    .filter(valid)
-    .sort((a, b) => b.startedAt - a.startedAt);
+export const allAgents = () => {
+  const names = list(AGENTS).filter(isJson);
+  const kept = new Set(names);
+  for (const f of parsed.keys()) if (!kept.has(f)) parsed.delete(f);
+  const out: Agent[] = [];
+  for (const f of names) {
+    const path = join(AGENTS, f);
+    let key: string;
+    try {
+      const st = statSync(path);
+      key = `${st.ino}:${st.mtimeMs}:${st.size}`;
+    } catch {
+      continue; // just removed
+    }
+    let e = parsed.get(f);
+    if (e?.key !== key) parsed.set(f, (e = { key, a: readJson<Agent>(path) }));
+    if (valid(e.a)) out.push(e.a);
+  }
+  return out.sort((a, b) => b.startedAt - a.startedAt);
+};
 /** Live agents, newest first. */
 export const liveAgents = () => allAgents().filter(isLive);
 

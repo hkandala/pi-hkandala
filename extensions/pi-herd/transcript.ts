@@ -23,20 +23,28 @@ export const capture = (socket: string, pane: string, n: number) =>
     .catch(() => "");
 
 type Entry = { type: string; id: string; parentId: string | null; [k: string]: any };
+// The last branch read, until the next macrotask: a watch ending reads the same file 2 or 3 times.
+let memo: { file: string; key: string; entries: Entry[] } | undefined;
 /**
  * The session's active branch, newest first: from the last entry, following parentId. Reads the
  * file's last 4 MB only; entries further back are skipped.
  */
 function branch(file: string): Entry[] {
   let text = "";
+  let key = "";
   try {
     const fd = openSync(file, "r");
-    const size = fstatSync(fd).size;
-    const start = Math.max(0, size - 4 * KB * KB);
-    const buf = Buffer.alloc(size - start);
-    readSync(fd, buf, 0, buf.length, start);
-    closeSync(fd);
-    text = buf.toString("utf8");
+    try {
+      const { size, mtimeMs } = fstatSync(fd);
+      key = `${size}:${mtimeMs}`;
+      if (memo?.file === file && memo.key === key) return memo.entries;
+      const start = Math.max(0, size - 4 * KB * KB);
+      const buf = Buffer.alloc(size - start);
+      readSync(fd, buf, 0, buf.length, start);
+      text = buf.toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return [];
   }
@@ -49,7 +57,11 @@ function branch(file: string): Entry[] {
     } catch {} // the cut first line, or a line still being written
   }
   const out: Entry[] = [];
-  for (let e = last; e; e = e.parentId ? byId.get(e.parentId) : undefined) out.push(e);
+  // At most every entry once: a broken file's parentId loop ends there.
+  for (let e = last; e && out.length < byId.size; e = e.parentId ? byId.get(e.parentId) : undefined)
+    out.push(e);
+  memo = { file, key, entries: out };
+  setTimeout(() => (memo = undefined));
   return out;
 }
 const textOf = (content: unknown): string =>
