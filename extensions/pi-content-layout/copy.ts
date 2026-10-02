@@ -28,8 +28,9 @@ export function copied(text: string, start: number, width: number, reserve: numb
     const t = line.trim();
     const tree = line[3] === "│" || line[5] === "└";
     if (/^[╭╰]/.test(t) || /^[─┄]+.*[╮╯]$/.test(t)) continue; // a box's top or bottom edge
-    // A timestamp ends 3 columns from the right, after its dotted leader.
-    if (visibleWidth(line) === width - 3) line = line.replace(/ +·(?: ·)* +[^·]*$/, "");
+    // A timestamp ends 3 columns from the right, after its dotted leader (only while they show:
+    // a row cut with … ends there too).
+    if (reserve && visibleWidth(line) === width - 3) line = line.replace(/ +·(?: ·)* +[^·]*$/, "");
     line = line
       .replace(/\s+[│┆]$/, "") // a box's right side
       .replace(/^[\s│┆├└●]+/, (m) => " ".repeat(m.length)); // box sides, tree, bullets

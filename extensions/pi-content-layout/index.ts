@@ -1,35 +1,7 @@
 /**
- * pi-content-layout: a compact, minimal transcript.
- * - Tool calls and thinking between two pieces of assistant text form one group: a summary line
- *   ("Read 3 files, ran 2 commands") with a ├ └ tree of one-row calls under it, each its target and
- *   the other params passed ("grep  TODO in src · glob *.ts").
- *   Running calls show a live timer (and pulse, full screen), edits show their diff,
- *   the last bash call running 30s+ shows pi-bash-bg's "ctrl+shift+b to run in background" hint,
- *   failures are red. Code is colored by pi's own highlighter; diffs tint changed lines and mark
- *   the changed words.
- *   Click a row (fullscreen TUI mode) to open or close its content, which hangs off a └ under it,
- *   and its full input, each cut to 10 lines until their "↓ N more lines" line is clicked;
- *   ctrl+o opens or closes all tool rows, clicked ones too.
- * - Thinking is a tree row: "thinking…" while it streams, then "thought for Xs" (click or ctrl+t
- *   to open).
- * - User messages sit in a rounded border like pi-footer's prompt box; compaction and branch
- *   summaries, skills, and extension messages (pi's box or an extension's) in a dashed one,
- *   labeled in its top edge; click an extension's box (fullscreen) to open or close it.
- * - User bash (!cmd) and info panels (pi's or extensions') read like assistant text, without rules.
- * - Each piece of assistant text starts with a ● bullet (click it to copy the reply as markdown);
- *   summary lines align with its text, and so do status lines, notices, warnings, and errors,
- *   pi's or extensions' (without a bullet).
- * - ctrl+shift+o collapses or expands all groups to their summary line (saved); click a summary
- *   line for its own group.
- * - ctrl+shift+w wraps long lines of open tool content, or cuts them off with … (saved).
- * - ctrl+shift+t cycles timestamps (off, relative, absolute; saved): when messages, groups, and
- *   user bash happened, and how long tool calls took, in a column on the right.
- * - Copying a selection (full screen) leaves out the layout's decoration and rejoins wrapped text.
- *
- * Config (optional): ~/.pi/agent/extensions/pi-content-layout.json
- *   { "autoExpandedTools": ["edit", "write"], "maxExpandedLines": 10, "enableWordWrap": false,
- *     "collapseGroups": false,
- *     "timestamps": "off" | "relative" | "absolute", "timestampFormat": "24h" | "12h" }
+ * pi-content-layout: a compact, minimal transcript. Tool calls and thinking form summarized
+ * groups with a tree of one-row calls; user and special messages sit in rounded boxes. See
+ * README.md for the features, shortcuts, and config.
  *
  * pi has no public API for restyling its own tool rows or messages, so this patches
  * methods of pi's exported components (restored on shutdown, and falling back to pi's own on any
@@ -102,9 +74,11 @@ type Saved = { role: string; content?: string | Block[]; command?: string; times
 type Entry = { type: string; timestamp: string; message?: Saved };
 type Session = { getEntries(): Entry[]; getBranch(): Entry[]; getLeafId(): string | null };
 type Mouse = { type: string; button: string; x: number; y: number; width: number; height: number };
-/** The parts of pi's full-screen TUI this uses. */
+/** The parts of pi's TUI this uses (through pi's proxy to the current renderer). */
 type FullScreen = {
   mode?: string;
+  /** Marks the renderer whose copySelection this wraps (plain values pass through the proxy). */
+  clCopy?: object;
   terminal?: { columns: number };
   copySelection?: (text: string) => unknown;
   getSelectionBounds?: () => { start: { col: number } } | undefined;
@@ -142,6 +116,14 @@ const WORDING: Record<string, Wording> = {
   agent_list: CHECKED,
   agent_stop: ["stopped", "agent"],
 };
+const HERD_TOOLS = new Set([
+  "agent_start",
+  "agent_send",
+  "agent_watch",
+  "agent_read",
+  "agent_list",
+  "agent_stop",
+]);
 /** Agents a pi-herd call names: its to/ids list, or (agent_stop "all") how many it stopped. */
 const agentsIn = (t: Tool) => {
   const v = t.args?.to ?? t.args?.ids;
@@ -172,14 +154,20 @@ const same = (a: unknown, b: unknown) =>
   a === b ||
   (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]));
 /**
- * compute(), cached on `node` under `key` while `deps` hold (the theme among them, for colors).
+ * Bumped when pi invalidates the chat (a theme change, its syntax languages loaded): pi's theme is
+ * a proxy whose identity never changes, so colors cached by memo go stale with it.
+ */
+let generation = 0;
+/**
+ * compute(), cached on `node` under `key` while `deps` hold (and the generation, for colors).
  * pi renders every component each frame, and open content can run to thousands of lines.
  */
 function memo<T>(node: Proto, key: string, deps: unknown[], compute: () => T): T {
   const cache = node[key];
-  if (cache && deps.every((d, i) => same(d, cache.deps[i]))) return cache.value;
+  if (cache?.generation === generation && deps.every((d, i) => same(d, cache.deps[i])))
+    return cache.value;
   const value = compute();
-  node[key] = { deps, value };
+  node[key] = { deps, value, generation };
   return value;
 }
 
@@ -198,11 +186,19 @@ const blank = (l: string) => !visibleWidth(l.replaceAll(" ", ""));
 const tidy = (lines: string[]) => lines.filter((l, i) => !blank(l) || !i || !blank(lines[i - 1]!));
 
 const configPath = () => join(getAgentDir(), "extensions", "pi-content-layout.json");
-function readConfig(): Config {
+/** The config file's keys ({} with no file); undefined when it isn't a JSON object. */
+function readConfig(): Config | undefined {
+  let text: string;
   try {
-    return JSON.parse(readFileSync(configPath(), "utf8"));
+    text = readFileSync(configPath(), "utf8");
   } catch {
     return {};
+  }
+  try {
+    const config = JSON.parse(text);
+    return config && typeof config === "object" && !Array.isArray(config) ? config : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -223,11 +219,13 @@ const runningBash = new Set<Proto>();
 /** Columns text gives up for the time column: its widest time + 1 ("11mo ago", "Sep 24 12:02 pm"). */
 const reserve = () => (stamps === "off" ? 0 : stamps === "relative" ? 9 : twelveHour ? 16 : 13);
 
-/** Saves toggles into the config file, keeping any other keys. */
+/** Saves toggles into the config file, keeping any other keys (and a broken file as it is). */
 function saveConfig(change: Config) {
+  const config = readConfig();
+  if (!config) return; // the toggle still applies to this session
   try {
     mkdirSync(dirname(configPath()), { recursive: true });
-    writeFileSync(configPath(), `${JSON.stringify({ ...readConfig(), ...change }, null, 2)}\n`);
+    writeFileSync(configPath(), `${JSON.stringify({ ...config, ...change }, null, 2)}\n`);
   } catch {} // unwritable config: the toggle still applies to this session
 }
 
@@ -239,11 +237,11 @@ const UNITS: [string, number][] = [
   ["h", 3600],
   ["m", 60],
 ];
+const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
 /**
  * "12m ago", or the shortest clear clock time: "14:02:31" today, "Sep 24 14:02", "Sep 24 2025"
  * ("2:02:31 pm", "Sep 24 2:02 pm" in 12-hour format).
  */
-const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
 function clock(ms: number | undefined): string {
   if (!ms || stamps === "off") return "";
   const now = new Date();
@@ -377,7 +375,12 @@ function timeOf(node: Proto): number | undefined {
       (n, m) => textOf(m).includes(skill(n) ? `<skill name="${n.skillBlock.name}"` : n.text),
       (n) => skill(n) && !!n.skillBlock.userMessage,
     );
-    pair(saved("bashExecution"), shown(BashExecutionComponent), (n, m) => m.command === n.command);
+    // pi saves a run once it finishes: a running one would pair with an earlier run's.
+    pair(
+      saved("bashExecution"),
+      shown(BashExecutionComponent),
+      (n, m) => n.status !== "running" && m.command === n.command,
+    );
   }
   return node.clTime;
 }
@@ -399,10 +402,17 @@ function cached<T>(compute: (r: Result) => T) {
     return cache.get(r)!;
   };
 }
+/**
+ * Escapes (OSC, CSI) and control characters but tab and newline, which pi's own renderers strip
+ * from output too: a read file or a fetched page can hold any.
+ */
+const UNSAFE =
+  // oxlint-disable-next-line no-control-regex
+  /\x1b\][\s\S]*?(?:\x07|\x1b\\|\x9c)|[\x1b\x9b][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]|[\x00-\x08\x0b-\x1f\ufff9-\ufffb]/g;
 const outputOf = cached((r) =>
   r.content
     .filter((c) => c.type === "text")
-    .map((c) => c.text ?? "")
+    .map((c) => (c.text ?? "").replace(UNSAFE, ""))
     .join("\n")
     .trimEnd(),
 );
@@ -514,33 +524,36 @@ function describe(t: Tool): [target: string, result: string] {
   }
 }
 
+/** Tools whose rows start open (autoExpandedTools). */
+let autoExpanded = ["edit", "write"];
 /** Whether a row shows its content: autoExpandedTools open; ctrl+o sets all; a click, its own. */
-const isOpen = (t: Tool & Proto, config: Config): boolean =>
-  t.clOpen ?? (t.expanded || config.autoExpandedTools!.includes(t.toolName));
+const isOpen = (t: Tool & Proto): boolean =>
+  t.clOpen ?? (t.expanded || autoExpanded.includes(t.toolName));
 
 /** Lines shown under an open row: the diff, written content, or output (red for failures). */
-function body(t: Tool & Proto, theme: Theme, config: Config): string[] {
-  const open = isOpen(t, config);
-  return memo(
-    t,
-    "clBody",
-    [open, t.result, t.isPartial, t.args?.content, t.args?.message, theme],
-    () => bodyLines(t, open, theme),
-  );
+function body(t: Tool & Proto, theme: Theme): string[] {
+  const open = isOpen(t);
+  const deps = [open, t.result, t.isPartial, t.args?.content, t.args?.message, t.clFullBody, theme];
+  return memo(t, "clBody", deps, () => bodyLines(t, open, theme));
 }
 function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
+  if (!open) return [];
   const lang = getLanguageFromPath(str(t.args?.path ?? t.args?.file_path));
-  if (open && t.toolName === "write")
-    return numbered(highlighted(untab(str(t.args?.content).trimEnd()), lang, theme), 1, theme);
+  if (t.toolName === "write") {
+    const code = untab(str(t.args?.content).trimEnd()).split("\n");
+    // While the content streams in (it changes every frame), only the lines shown are colored.
+    const n = t.result || t.clFullBody || !maxLines ? code.length : maxLines;
+    const colored = highlighted(code.slice(0, n).join("\n"), lang, theme);
+    return numbered([...colored, ...code.slice(n).map((l) => theme.fg("text", l))], 1, theme);
+  }
   const text = HERD_MESSAGE.has(t.toolName) && str((t.args?.message as { text?: unknown })?.text);
-  if (open && text) {
+  if (text) {
     const out = t.result ? linesOf(t.result).map((l) => theme.fg("muted", l)) : [];
     return [
       ...highlighted(untab(text.trimEnd()), "markdown", theme),
       ...(out.length ? ["", ...out] : []),
     ];
   }
-  if (!open) return [];
   if (!t.result) return [theme.fg("dim", "(no output yet)")];
   if (t.toolName === "edit" && t.result.details?.diff)
     return diffOf(t.result.details.diff, lang, theme);
@@ -592,7 +605,10 @@ const dimHint = (line: string, theme: Theme) =>
 function boxed(lines: string[], width: number, theme: Theme, title?: string, stamp = "") {
   const inner = Math.max(1, width - 4);
   const [h, v] = title ? ["┄", "┆"] : ["─", "│"];
-  const head = title ? `${h}${h} ${title} ` : "";
+  let head = title ? `${h}${h} ${title} ` : "";
+  // Too narrow for both: the stamp goes first, then the title is cut.
+  if (visibleWidth(head) > width - 5 - visibleWidth(stamp)) stamp = "";
+  head = sliceByColumn(head, 0, Math.max(0, width - 2));
   const bar = (lead: string, room = width - 2) =>
     lead + h.repeat(Math.max(0, room - visibleWidth(lead)));
   const side = theme.fg("muted", v);
@@ -622,6 +638,10 @@ type Kind = "item" | "closes" | "skip" | "boundary";
 const visible = (c: Block) =>
   !!(c.type === "text" ? c.text : c.type === "thinking" ? c.thinking : "")?.trim();
 
+/** A message's text blocks with visible text. */
+const textBlocks = (message?: Message) =>
+  (message?.content ?? []).filter((c) => c.type === "text" && c.text?.trim());
+
 /** Whether a message opens with thinking (which then becomes a tree row). */
 const leadsWithThinking = (message?: Message) =>
   message?.content.find(visible)?.type === "thinking";
@@ -647,7 +667,7 @@ function kindOf(node: unknown): Kind {
   // pi also prints a note for truncated responses, and for failed ones without tool calls.
   const stop = message?.stopReason ?? "";
   const text =
-    !!message?.content.some((c) => c.type === "text" && c.text?.trim()) ||
+    textBlocks(message).length > 0 ||
     stop === "length" ||
     (!a.hasToolCalls && (stop === "error" || stop === "aborted"));
   if (leadsWithThinking(message)) return text ? "closes" : "item";
@@ -659,6 +679,7 @@ function kindOf(node: unknown): Kind {
  * first child of the TUI root.
  */
 let chat: Proto | undefined;
+/** The node (`depth` levels down at most) whose children include `target`. */
 function parentOf(node: Node, target: Node, depth = 4): Node | undefined {
   if (!node.children || depth < 0) return undefined;
   if (node.children.includes(target)) return node;
@@ -675,8 +696,10 @@ let collapseGroups = false;
 let maxLines = 10;
 /** Whether open content wraps long lines, or cuts them off with … (the default; ctrl+shift+w). */
 let wordWrap = false;
+/** pi's TUI, through its proxy to the current renderer (/settings can switch the TUI mode). */
+let tui: FullScreen | undefined;
 /** Whether pi runs full screen, where the whole transcript redraws and can animate. */
-let fullscreen = false;
+const fullscreen = () => tui?.mode === "fullscreen";
 /** Whether the agent is working (from agent_start to agent_end). */
 let working = false;
 
@@ -694,7 +717,7 @@ function capped(lines: string[], theme: Theme, full?: boolean): [string[], strin
  */
 function pulse(theme: Theme, s: string, open: boolean): string {
   const [muted, text] = [rgbOf(theme.getFgAnsi("muted")), rgbOf(theme.getFgAnsi("text"))];
-  if (!fullscreen || !muted || !text) return theme.fg(open ? "text" : "muted", s);
+  if (!fullscreen() || !muted || !text) return theme.fg(open ? "text" : "muted", s);
   const t = (0.4 * (1 - Math.cos((Date.now() / 1600) * 2 * Math.PI))) / 2;
   return `\x1b[38;2;${open ? between(text, muted, t) : between(muted, text, t)}m${s}\x1b[39m`;
 }
@@ -779,7 +802,7 @@ function summary(members: unknown[], theme: Theme, collapsed: boolean, live: boo
     if (stateOf(t) === "error") failed++;
     const wording = (WORDING[t.toolName] ??= [`ran ${t.toolName}`, "time"]); // one entry per tool
     const urls = t.toolName === "web_fetch" && t.args?.urls;
-    const n = Array.isArray(urls) ? urls.length : t.toolName.startsWith("agent_") ? agentsIn(t) : 1;
+    const n = Array.isArray(urls) ? urls.length : HERD_TOOLS.has(t.toolName) ? agentsIn(t) : 1;
     counts.set(wording, (counts.get(wording) ?? 0) + n);
   }
   const text =
@@ -837,34 +860,25 @@ function groupLines(
   node.clHeadY = head ? 1 : undefined;
   node.clGroupCollapsed = collapsed;
   const rowY = (node.clRowY = collapsed ? Infinity : alone ? 1 : head ? 2 : 0);
-  const deps = [row, rowBody, width, theme, last, alone, head, started, stamp, collapsed];
-  deps.push(node.clFullBody, wordWrap); // a click showed all of the content; ctrl+shift+w wrapped it
+  // Open content hangs off a └ under the row's name (column 5), one space before it like the
+  // rows. Fit to 3 columns in, 2 of rail, 2 for the └, 3 after. A pi-herd message is prose: it
+  // always wraps. Its own memo: a running row changes every frame, its content less often.
+  const fit = Math.max(1, width - (alone ? 8 : 10));
+  const wrap = wordWrap || HERD_MESSAGE.has((node as unknown as Tool).toolName);
+  const [wrapped, toggle] = collapsed
+    ? [[], false]
+    : memo(node, "clFit", [rowBody, fit, wrap, node.clFullBody, theme], () =>
+        fitted(rowBody, fit, wrap, theme, node.clFullBody),
+      );
+  const deps = [row, wrapped, width, theme, last, alone, head, started, stamp, collapsed];
   return memo(node, "clGroup", deps, () => {
     node.clMoreY = undefined;
-    if (collapsed) return head ? ["", stamped(`   ${head}`, started, width, theme)] : [];
-    // Open content hangs off a └ under the row's name (column 5), one space before it like the
-    // rows, and a blank line follows it unless the group ends (a spacer follows then).
-    // Fit to 3 columns in, 2 of rail, 2 for the └, 3 after: long lines wrap, or end in …. A diff
-    // line's tint (a background it opens with) spans the whole row.
-    const fit = Math.max(1, width - (alone ? 8 : 10));
-    // A pi-herd message is prose: it always wraps.
-    const wrap = wordWrap || HERD_MESSAGE.has((node as unknown as Tool).toolName);
-    let wrapped = rowBody.flatMap((l) => {
-      // oxlint-disable-next-line no-control-regex
-      const tint = /^\x1b\[48;[\d;]*m/.exec(l)?.[0] ?? "";
-      const cut = tint + theme.fg("muted", "…");
-      const parts = !wrap
-        ? [truncateToWidth(l, fit, cut)]
-        : visibleWidth(l) > fit
-          ? hanging(l, fit)
-          : [l];
-      if (!tint) return parts;
-      return parts.map(
-        (p) => `${tint}${p}${tint}${" ".repeat(Math.max(0, fit - visibleWidth(p)))}\x1b[49m`,
-      );
-    });
-    const [shown, toggle] = capped(wrapped, theme, node.clFullBody);
-    wrapped = toggle ? [...shown, toggle] : shown;
+    if (collapsed) {
+      if (!head) return [];
+      const line = truncateToWidth(`   ${head}`, Math.max(1, width - 3), theme.fg("muted", "…"));
+      return ["", stamped(line, started, width, theme)];
+    }
+    // A blank line follows the content unless the group ends (a spacer follows then).
     const hung = wrapped.map((l, j) => (j ? "  " : `${theme.fg("dim", "└")} `) + l);
     if (hung.length && !last) hung.push("");
     let lines: string[];
@@ -893,6 +907,39 @@ function groupLines(
   });
 }
 
+/**
+ * Open content fit to `fit` columns: long lines wrap, or end in …; a diff line's tint (a
+ * background it opens with) spans the whole row. Cut to maxLines (`full`: all) with its toggle
+ * line last, and whether it has one.
+ */
+function fitted(
+  lines: string[],
+  fit: number,
+  wrap: boolean,
+  theme: Theme,
+  full?: boolean,
+): [string[], boolean] {
+  const fitLine = (l: string) => {
+    // oxlint-disable-next-line no-control-regex
+    const tint = /^\x1b\[48;[\d;]*m/.exec(l)?.[0] ?? "";
+    const cut = tint + theme.fg("muted", "…");
+    const parts = !wrap
+      ? [truncateToWidth(l, fit, cut)]
+      : visibleWidth(l) > fit
+        ? hanging(l, fit)
+        : [l];
+    if (!tint) return parts;
+    return parts.map(
+      (p) => `${tint}${p}${tint}${" ".repeat(Math.max(0, fit - visibleWidth(p)))}\x1b[49m`,
+    );
+  };
+  // A cut keeps one line per line: only the lines shown need it.
+  const [, more] = capped(lines, theme, full);
+  if (more && !wrap && !full) return [[...lines.slice(0, maxLines).flatMap(fitLine), more], true];
+  const [shown, toggle] = capped(lines.flatMap(fitLine), theme, full);
+  return toggle ? [[...shown, toggle], true] : [shown, false];
+}
+
 /** A long line wrapped to `fit`; numbered code (a diff, a read, a write) continues under its code. */
 function hanging(line: string, fit: number): string[] {
   // oxlint-disable-next-line no-control-regex
@@ -902,7 +949,8 @@ function hanging(line: string, fit: number): string[] {
   return [sliceByColumn(line, 0, hang) + first, ...rest.map((p) => " ".repeat(hang) + p)];
 }
 
-function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config): string[] {
+function renderTool(t: Tool & Proto, width: number, theme: Theme): string[] {
+  t.clDrawn = true; // ctrl+o sets it from now on (see setExpanded)
   const state = stateOf(t);
   if (t.executionStarted) t.clStart ??= Date.now();
   if (state !== "running" && t.clStart) t.clEnd ??= Date.now();
@@ -922,7 +970,7 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
   const result = state === "error" ? detail : [detail, time].filter(Boolean).join(" · ");
   // Open, a row reads as bright as its content; closed, it stays muted. While running, a closed
   // row pulses whole, an open one just its name.
-  const open = isOpen(t, config);
+  const open = isOpen(t);
   const color = state === "error" ? "error" : open ? "text" : "muted";
   const pulsing = state === "running" && !open;
   const paint = (s: string) => (pulsing ? pulse(theme, s, false) : theme.fg(color, s));
@@ -994,8 +1042,9 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme, config: Config
     state === "running"
       ? buildRow()
       : memo(t, "clRow", [state, result, open, width, room, t.args, t.clFullRow, theme], buildRow);
-  let content = body(t, theme, config);
-  if (t.toolName === "bash" && state === "running") runningBash.add(t);
+  let content = body(t, theme);
+  // Only calls run in this session: one from history without a result never ran to an end.
+  if (t.toolName === "bash" && state === "running" && t.clStart) runningBash.add(t);
   else runningBash.delete(t);
   if (backgroundKey && seconds >= HINT_AFTER_S && [...runningBash].at(-1) === t)
     content = [...content, theme.fg("dim", `${backgroundKey} to run in background`)];
@@ -1023,35 +1072,34 @@ export default function (pi: ExtensionAPI) {
   });
 
   let requestRender = () => {};
-  pi.registerShortcut(Key.ctrlShift("t"), {
-    description: "Cycle timestamps: off, relative, absolute",
-    handler: async (ctx) => {
-      stamps = STAMPS[(STAMPS.indexOf(stamps) + 1) % STAMPS.length]!;
-      saveConfig({ timestamps: stamps });
-      ctx.ui.notify(`Timestamps: ${stamps}`, "info");
-      requestRender();
-    },
+  /** A shortcut that changes a setting (`change`: what to save, and what to say), saved. */
+  const setting = (
+    key: Parameters<typeof pi.registerShortcut>[0],
+    description: string,
+    change: () => [Config, string],
+  ) =>
+    pi.registerShortcut(key, {
+      description,
+      handler: async (ctx) => {
+        const [saved, said] = change();
+        saveConfig(saved);
+        ctx.ui.notify(said, "info");
+        requestRender();
+      },
+    });
+  setting(Key.ctrlShift("t"), "Cycle timestamps: off, relative, absolute", () => {
+    stamps = STAMPS[(STAMPS.indexOf(stamps) + 1) % STAMPS.length]!;
+    return [{ timestamps: stamps }, `Timestamps: ${stamps}`];
   });
-
   // Like ctrl+o for rows, it sets every group, clicked ones too.
-  pi.registerShortcut(Key.ctrlShift("o"), {
-    description: "Collapse or expand tool groups",
-    handler: async (ctx) => {
-      collapseGroups = !collapseGroups;
-      saveConfig({ collapseGroups });
-      for (const c of chat?.children ?? []) delete c.clCollapsed;
-      ctx.ui.notify(`Tool groups: ${collapseGroups ? "collapsed" : "expanded"}`, "info");
-      requestRender();
-    },
+  setting(Key.ctrlShift("o"), "Collapse or expand tool groups", () => {
+    collapseGroups = !collapseGroups;
+    for (const c of chat?.children ?? []) delete c.clCollapsed;
+    return [{ collapseGroups }, `Tool groups: ${collapseGroups ? "collapsed" : "expanded"}`];
   });
-  pi.registerShortcut(Key.ctrlShift("w"), {
-    description: "Toggle word wrap for open tool content",
-    handler: async (ctx) => {
-      wordWrap = !wordWrap;
-      saveConfig({ enableWordWrap: wordWrap });
-      ctx.ui.notify(`Word wrap: ${wordWrap ? "on" : "off"}`, "info");
-      requestRender();
-    },
+  setting(Key.ctrlShift("w"), "Toggle word wrap for open tool content", () => {
+    wordWrap = !wordWrap;
+    return [{ enableWordWrap: wordWrap }, `Word wrap: ${wordWrap ? "on" : "off"}`];
   });
   /** A click on a group's summary line (on the member that opens it) collapses or expands it. */
   const toggleGroup = (lead: Proto) => {
@@ -1069,12 +1117,14 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui" || restores.length) return;
-    const config = readConfig();
+    const config = readConfig() ?? {};
     collapseGroups = config.collapseGroups === true;
     const max = Number(config.maxExpandedLines ?? 10);
     maxLines = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 10;
     wordWrap = config.enableWordWrap === true;
-    if (!Array.isArray(config.autoExpandedTools)) config.autoExpandedTools = ["edit", "write"];
+    autoExpanded = Array.isArray(config.autoExpandedTools)
+      ? config.autoExpandedTools
+      : ["edit", "write"];
     stamps = STAMPS.includes(config.timestamps!) ? config.timestamps! : "off";
     twelveHour = config.timestampFormat === "12h";
     session = ctx.sessionManager as unknown as Session;
@@ -1085,28 +1135,51 @@ export default function (pi: ExtensionAPI) {
       chat = (root as unknown as Node).children?.[0]?.children?.[2];
       pending = (root as unknown as Node).children?.[1];
       requestRender = () => (root as unknown as Tool["ui"]).requestRender();
-      const tui = root as unknown as FullScreen;
-      fullscreen = tui.mode === "fullscreen";
-      // pi hands a selection's text to copySelection; the layout's decoration comes off first.
-      const copy = tui.copySelection;
-      if (copy) {
-        tui.copySelection = (text) => {
-          const start = tui.getSelectionBounds?.()?.start.col ?? 0;
-          return copy(copied(text, start, tui.terminal?.columns ?? 80, reserve()));
-        };
-        restores.push(() => (tui.copySelection = copy));
-      }
+      tui = root as unknown as FullScreen;
       return { render: () => [], invalidate() {} };
     });
+    // pi hands a selection's text to copySelection; the layout's decoration comes off first. `tui`
+    // is pi's proxy to the current renderer, and a TUI mode switch makes a new one: each gets the
+    // wrapper once (the marker says which), and only the one that has it is restored.
+    const hookCopy = () => {
+      const t = tui;
+      const copy = t && !t.clCopy && t.copySelection;
+      if (!t || !copy) return;
+      const marker = {};
+      t.clCopy = marker;
+      t.copySelection = (text) => {
+        let plain = text;
+        try {
+          const start = t.getSelectionBounds?.()?.start.col ?? 0;
+          plain = copied(text, start, t.terminal?.columns ?? 80, reserve());
+        } catch {} // copy it as drawn
+        return copy(plain);
+      };
+      restores.push(() => {
+        if (t.clCopy !== marker) return;
+        t.copySelection = copy;
+        t.clCopy = undefined;
+      });
+    };
     // Relative times ("12m ago") age without anything else to redraw them.
     const timer = setInterval(() => stamps === "relative" && requestRender(), 30_000);
     restores.push(() => clearInterval(timer));
     ctx.ui.setWidget("pi-content-layout", undefined);
+    // pi invalidates the chat when colors change (see generation).
+    if (chat) {
+      const [container, invalidate] = [chat, chat.invalidate];
+      container.invalidate = function (this: Proto) {
+        generation++;
+        return invalidate.call(this);
+      };
+      restores.push(() => delete container.invalidate);
+    }
     // Whatever ends the chat gets one more blank line before the prompt (pi adds a spacer of its
     // own), so the gap is the same after text, a group, or a message. Inside the chat, so it
     // scrolls with the content.
     if (chat)
       override(chat, (orig, width) => {
+        hookCopy();
         indentNotices(chat!.children);
         const lines = orig(width);
         return lines.length && !blank(lines.at(-1)!) ? [...lines, ""] : lines;
@@ -1128,17 +1201,19 @@ export default function (pi: ExtensionAPI) {
       (orig) =>
         function (this: Tool, width: number) {
           return kindOf(this) === "item"
-            ? renderTool(this, width, theme(), config)
+            ? renderTool(this, width, theme())
             : orig.call(this, width);
         },
     );
-    // ctrl+o sets every row, clicked ones too, like the header.
+    // ctrl+o sets every row, clicked ones and autoExpandedTools too, like the header. pi also sets
+    // it once on a new row, before it draws: that leaves autoExpandedTools open.
     patch(
       tool,
       "setExpanded",
       (orig) =>
         function (this: Tool & Proto, expanded: boolean) {
-          this.clOpen = this.clFullRow = this.clFullBody = undefined;
+          this.clOpen = this.clDrawn ? expanded : undefined;
+          this.clFullRow = this.clFullBody = undefined;
           return orig.call(this, expanded);
         },
     );
@@ -1160,7 +1235,7 @@ export default function (pi: ExtensionAPI) {
                 ? "clFullBody"
                 : undefined;
           if (part) this[part] = !this[part];
-          else this.clOpen = !isOpen(this, config);
+          else this.clOpen = !isOpen(this);
           this.ui.requestRender();
           return { handled: true };
         },
@@ -1333,7 +1408,8 @@ export default function (pi: ExtensionAPI) {
             // Thinking ends when the answer text or a tool call starts, or the message ends.
             const done =
               !(streaming ?? this.isStreaming) ||
-              blocks.some((c) => c.type === "toolCall" || (c.type === "text" && c.text?.trim()));
+              blocks.some((c) => c.type === "toolCall") ||
+              textBlocks(message).length > 0;
             const now = Date.now();
             this.clUntimed ??= history;
             this.clThinkStart ??= message.timestamp ?? now;
@@ -1391,12 +1467,12 @@ export default function (pi: ExtensionAPI) {
             let thinking: string[] = [];
             if (this.clThinkOpen) {
               const source = thinkingOf(this.lastMessage);
-              if (this.clThinking?.source !== source) {
+              // A new one for new colors too: it caches its lines.
+              const md = memo(this, "clThinking", [source], () => {
                 const style = { color: (s: string) => theme().fg("text", s), italic: true };
-                const md = new Markdown(source, 0, 0, this.markdownTheme, style);
-                this.clThinking = { source, md };
-              }
-              thinking = this.clThinking.md.render(Math.max(1, width - 10)); // 7 in, 3 margin
+                return new Markdown(source, 0, 0, this.markdownTheme, style);
+              });
+              thinking = md.render(Math.max(1, width - 10)); // 7 in, 3 margin
             }
             group = [...groupLines(this, [row], thinking, width, th, solo)];
             text = rest;
@@ -1410,9 +1486,7 @@ export default function (pi: ExtensionAPI) {
           // The ● copies the reply (see handleMouse), and shows ✓ for a moment after. It marks
           // text only: pi's note for an aborted, failed, or cut-off message goes without, like
           // other status lines.
-          const replied = (this.lastMessage as Message | undefined)?.content.some(
-            (c) => c.type === "text" && c.text?.trim(),
-          );
+          const replied = textBlocks(this.lastMessage).length > 0;
           const justCopied = Date.now() - (this.clCopied ?? 0) < 1200;
           const bullet = !replied ? "" : justCopied ? th.fg("success", "✓") : th.fg("text", "●");
           let bulletY: number;
@@ -1440,8 +1514,7 @@ export default function (pi: ExtensionAPI) {
           const click = event.type === "click" && event.button === "left";
           // A click on the ● copies the reply's text as written (markdown).
           if (click && event.y === this.clBulletY && event.x <= 2) {
-            const source = (this.lastMessage as Message).content
-              .filter((c) => c.type === "text" && c.text?.trim())
+            const source = textBlocks(this.lastMessage)
               .map((c) => c.text!.trim())
               .join("\n\n");
             if (source) {
@@ -1491,7 +1564,7 @@ export default function (pi: ExtensionAPI) {
     for (const restore of restores.splice(0).reverse()) restore();
     for (const undo of overridden.values()) undo();
     overridden.clear();
-    chat = undefined;
+    chat = tui = undefined;
     session = undefined;
     calls.clear();
     indexed = 0;
