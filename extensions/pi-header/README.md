@@ -12,10 +12,12 @@ A minimal startup header for pi with the official pi logo.
 - **Collapsed** (default): shows resource counts.
 - **`ctrl+o`**: expands to list context files, skills, prompts, extensions, and themes by name.
 - **Click the logo**: toggles between color and white. The choice is saved to the config file below, so it carries over to future sessions. Requires pi's fullscreen TUI mode (`"tuiMode": "fullscreen"`); in regular mode the terminal owns the mouse.
-- **Click the text**: expands or collapses the header, like ctrl+o (fullscreen mode too).
-- **`/loaded`**: prints every loaded resource with its full path into the transcript (like `/hotkeys`). Never sent to the model, and gone after a restart or `/reload`, like `/hotkeys`.
+- **Click the text**: expands or collapses the header. Unlike ctrl+o, it does not change tool output. This also needs fullscreen mode.
+- **`/loaded`**: prints every loaded resource with its full path into the transcript, like `/hotkeys`. pi never sends it to the model. The entry stays in the session file, but it does not show again after a restart or `/reload`.
 
-Status lines pi would post under the header before your first message (e.g. `Thinking level: xhigh`, `TUI mode: fullscreen`, `Tool output: expanded`) are hidden, so nothing sits between the header and the chat. Errors and warnings still show.
+The counts and lists leave out pi's built-in `dark` and `light` themes.
+
+Until you send your first message, pi-header hides the info lines that pi would post under the header, so nothing sits between the header and the chat. These are pi's status lines, at startup and from shortcuts and commands (for example `Thinking level: xhigh`, `TUI mode: fullscreen`, `Tool output: expanded`), and the info notices of other extensions. Errors and warnings still show.
 
 The logo is rendered pixel-accurately: each pixel is one row tall and exactly one cell-height wide, measured from the terminal's reported cell size. Edges are placed with 1/8-cell block characters, so pixels stay square in any font.
 
@@ -49,7 +51,7 @@ Optional file: `~/.pi/agent/extensions/pi-header.json`
 | `logo`    | `"color"`, `"white"` | `"color"` |
 | `compact` | `true`, `false`      | `false`   |
 
-Clicking the logo updates `logo` for you; other keys are preserved.
+Clicking the logo updates `logo` for you and keeps the other keys. If the file is not valid JSON, the click does not change it.
 
 Recommended: hide pi's built-in resource listing so it isn't shown twice, in `~/.pi/agent/settings.json`:
 

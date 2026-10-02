@@ -3,7 +3,8 @@
  * Collapsed shows resource counts; ctrl+o expands the lists; /loaded prints full paths.
  * Clicking the logo (fullscreen TUI mode) toggles color/white and saves the choice; clicking the
  * text expands or collapses the header, like ctrl+o.
- * Status lines pi posts before the first message are hidden so nothing sits under the header.
+ * Info lines posted before the first message (pi's status lines, other extensions' info notices)
+ * are hidden so nothing sits under the header.
  *
  * Config (optional): ~/.pi/agent/extensions/pi-header.json
  *   →  { "logo": "color" | "white", "compact": false }  (compact: 2-row half-block logo)
@@ -41,6 +42,8 @@ const BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]; // left-al
 const SPACING = 1.5; // logo pixels left/right of the logo
 // Blank rows above/below, in whole rows closest to SPACING: 2 (1-row pixels), 1 compact (half-row).
 const rowsFor = (compact: boolean) => (compact ? 1 : 2);
+// Without quietStartup pi adds a blank row above the header itself.
+const topRows = (compact: boolean, quiet: boolean) => rowsFor(compact) - (quiet ? 0 : 1);
 const SECTIONS = ["context", "skills", "prompts", "extensions", "themes"] as const;
 type Resources = Record<(typeof SECTIONS)[number], { name: string; path: string }[]>;
 
@@ -153,9 +156,9 @@ function render(
   const title = theme.bold("pi") + gray(` v${VERSION}`);
   const info = compact ? [title + dot + hints, counts] : [title, hints, "", counts];
   const rows = rowsFor(compact);
-  // Without quietStartup pi adds a blank row above the header and two below (after it, and before
+  // Without quietStartup pi also adds two blank rows below (after the header, and before
   // [Context]). Blank lines the content below already starts with count toward the gap.
-  const top = Array<string>(quiet ? rows : rows - 1).fill("");
+  const top = Array<string>(topRows(compact, quiet)).fill("");
   const bottom = Array<string>(Math.max(0, (quiet ? rows : rows - 2) - blanksBelow)).fill("");
   const out = [...top, ...logo.lines.map((line, i) => line + info[i])];
   if (!expanded) return [...out, ...bottom];
@@ -230,18 +233,19 @@ function readResources(pi: ExtensionAPI, ctx: ExtensionContext, extensions: stri
 }
 
 /** Pi doesn't expose loaded extensions, so resolve them like pi does: CLI -e paths + settings/packages/auto-discovery. */
-async function resolveExtensions(ctx: ExtensionContext): Promise<string[]> {
+async function resolveExtensions(
+  ctx: ExtensionContext,
+  settingsManager: SettingsManager,
+): Promise<string[]> {
   const argv = process.argv;
   const paths = argv.flatMap((a, i) =>
     (a === "-e" || a === "--extension") && argv[i + 1] ? [resolve(ctx.cwd, argv[i + 1])] : [],
   );
-  const agentDir = getAgentDir();
-  const settingsManager = SettingsManager.create(ctx.cwd, agentDir, {
-    projectTrusted: ctx.isProjectTrusted(),
-  });
+  // --no-extensions: pi loads only the -e paths.
+  if (argv.includes("--no-extensions") || argv.includes("-ne")) return [...new Set(paths)];
   const resolved = await new DefaultPackageManager({
     cwd: ctx.cwd,
-    agentDir,
+    agentDir: getAgentDir(),
     settingsManager,
   }).resolve(async () => "skip");
   paths.push(...resolved.extensions.filter((e) => e.enabled).map((e) => e.path));
@@ -298,19 +302,31 @@ function leadingBlanks(below: Node[], width: number, rows: number): number {
 
 const configPath = () => join(getAgentDir(), "extensions", "pi-header.json");
 
-function readConfig(): { logo?: string; compact?: boolean } {
+/** The parsed config file: {} when missing, undefined when it isn't a JSON object. */
+function parseConfig(): { logo?: string; compact?: boolean } | undefined {
+  let text: string;
   try {
-    return JSON.parse(readFileSync(configPath(), "utf8"));
+    text = readFileSync(configPath(), "utf8");
   } catch {
     return {};
   }
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
+
+const readConfig = () => parseConfig() ?? {};
 
 /** Persist the logo toggle into the config file, keeping any other keys. */
 function saveLogo(white: boolean) {
   try {
+    const current = parseConfig();
+    if (!current) return; // broken config: don't overwrite it, the toggle applies to this session
     mkdirSync(dirname(configPath()), { recursive: true });
-    const config = { ...readConfig(), logo: white ? "white" : "color" };
+    const config = { ...current, logo: white ? "white" : "color" };
     writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`);
   } catch {} // unwritable config: the toggle still applies to this session
 }
@@ -323,13 +339,13 @@ export default function (pi: ExtensionAPI) {
     const config = readConfig();
     let white = config.logo === "white";
     const compact = config.compact === true;
-    const quiet =
-      !process.argv.includes("--verbose") &&
-      SettingsManager.create(ctx.cwd, getAgentDir(), {
-        projectTrusted: ctx.isProjectTrusted(),
-      }).getQuietStartup();
+    const settingsManager = SettingsManager.create(ctx.cwd, getAgentDir(), {
+      projectTrusted: ctx.isProjectTrusted(),
+    });
+    const quiet = !process.argv.includes("--verbose") && settingsManager.getQuietStartup();
     res = readResources(pi, ctx, []);
     let expanded = false;
+    let piExpanded: boolean | undefined; // pi's ctrl+o state, which a click doesn't change
     let shown: string[] = []; // the last rendered lines, to tell text rows from blank ones
     let below: Node[] = [];
     let requestRender = () => {};
@@ -339,14 +355,17 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setHeader((tui) => {
       requestRender = () => tui.requestRender();
       const header = {
+        // pi calls this with its current state when the header is created or reloaded, and with the
+        // new state on ctrl+o. A click may have flipped the header since, so ctrl+o flips it too.
         setExpanded(value: boolean) {
-          expanded = value; // pi calls this on ctrl+o, then renders
+          expanded = piExpanded === undefined || value === piExpanded ? value : !expanded;
+          piExpanded = value;
         },
         invalidate() {},
         // Mouse events only arrive in fullscreen TUI mode; x/y are relative to the header.
         handleMouse(event: { type: string; button: string; x: number; y: number }) {
           if (event.type !== "click" || event.button !== "left") return undefined;
-          const top = quiet ? rowsFor(compact) : rowsFor(compact) - 1;
+          const top = topRows(compact, quiet);
           const logo = renderLogo(white, compact);
           const onLogo = event.y >= top && event.y < top + logo.lines.length;
           if (onLogo && event.x < logo.column) {
@@ -371,7 +390,7 @@ export default function (pi: ExtensionAPI) {
     });
 
     // Re-read once extensions resolve, which also picks up skills added by resources_discover.
-    resolveExtensions(ctx)
+    resolveExtensions(ctx, settingsManager)
       .then((extensions) => {
         res = readResources(pi, ctx, extensions);
         requestRender();
@@ -386,7 +405,8 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("loaded", {
     description:
       "Show loaded context files, skills, prompts, extensions, and themes with full paths",
-    handler: async () => {
+    handler: async (_args, ctx) => {
+      if (ctx.mode !== "tui") return; // the list is read in TUI mode only, and only the TUI renders it
       const sections = SECTIONS.filter((s) => res[s].length).map((s) => [
         s,
         res[s].map((i) => tilde(i.path)),
