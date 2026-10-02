@@ -807,8 +807,8 @@ working and end with the agent's last text or transcript. That is what pi-herd a
 
 ## 16. Size and scope
 
-- About 2,700 lines as formatted, in six files: `index.ts` (registry, messages, watches, tools,
-  `/agents`, about 1,500), `dashboard.ts` (the agents dashboard), `store.ts` (the shared files,
+- About 2,800 lines as formatted, in six files: `index.ts` (registry, messages, watches, tools,
+  `/agents`, about 1,600), `dashboard.ts` (the agents dashboard), `store.ts` (the shared files,
   agent names and the daily cleanup), `herdr.ts` (the socket API, the hidden session, and the herdr
   side of spawning, following status and the popup command), `transcript.ts` (transcripts and
   saved sessions) and `text.ts` (the brief, steer texts, and their renderers). The popup plugin
