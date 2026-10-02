@@ -9,13 +9,13 @@ Adds an elapsed timer to pi's working label. When the run ends, the spinner turn
  ╭── Waiting on 3 agents and 2 background jobs (1m 12s) ─╮    with pi-herd or pi-bash-bg
 ```
 
-| State   | Shows                                                                                                                                         |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Running | `Working (12s)`, then `(4m)`, `(1h 4m)`. The time is dim, and turns yellow when the model has been silent for 30s (running tools don't count) |
-| Done    | `✓ Worked for 4m 12s` in the theme's `success` color. `■` (yellow) if you interrupted it, `✗` (red) if it failed                              |
-| Cleared | When the next run starts or you press esc (esc still does whatever it normally does in pi)                                                    |
+| State   | Shows                                                                                                                                                                |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Running | `Working (12s)`, then `(4m)`, `(1h 4m)`. The time is dim. It turns the theme's `warning` color when the model sends nothing for 30s. While a tool runs, it stays dim |
+| Done    | `✓ Worked for 4m 12s` in muted text, with the ✓ in the theme's `success` color. `■` (`warning` color) if you interrupted it, `✗` (`error` color) if it failed        |
+| Cleared | When the next run starts or you press esc (esc still does whatever it normally does in pi)                                                                           |
 
-With [pi-herd](../pi-herd/README.md) or [pi-bash-bg](../pi-bash-bg/README.md), when a run ends while the agent still waits on agents it watches or background jobs it watches, the label reads `Waiting on 3 agents and 2 background jobs (1m 12s)`: agents first, only the parts that aren't zero (`Waiting on 1 agent (40s)`), timed from when the waiting started. A watch ending or a job's end wakes the agent and starts a new run; if the waiting ends some other way, the done label comes back.
+With [pi-herd](../pi-herd/README.md) or [pi-bash-bg](../pi-bash-bg/README.md), a run can end while the agent still waits on agents or background jobs that it watches. Then the label reads `Waiting on 3 agents and 2 background jobs (1m 12s)`. Agents come first, and parts that are zero are left out (`Waiting on 1 agent (40s)`). The time starts when the waiting starts. When a watched agent or job ends, it wakes the agent and a new run starts. If the waiting ends some other way, the done label comes back, unless you pressed esc.
 
 A run lasts from sending a message until pi is fully done, so retries, compaction and queued follow-ups all count toward the time.
 
@@ -49,5 +49,5 @@ Each run picks one verb at random from each list, e.g. `["Working", "Cooking", "
 
 ## Notes
 
-- The done label relies on an internal pi editor method (`setWorkingStatusIndicator`). If pi changes it, the label stops showing and nothing else breaks.
-- Another extension that also sets pi's working message will clash with this one; the last one to write wins.
+- The done label relies on internal parts of pi's editor (`setWorkingStatusIndicator`, `workingStatusIndicator`, `embedWorkingStatus`). If pi changes them, the label stops showing and nothing else breaks.
+- Do not combine this with another extension that sets pi's working message. pi-working rewrites the message every second during a run, so the other message shows for a second at most.

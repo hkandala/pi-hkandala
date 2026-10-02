@@ -41,7 +41,10 @@ function verbs(value: unknown, fallback: string): string[] {
 
 function readConfig(): Record<string, unknown> {
   try {
-    return JSON.parse(readFileSync(join(getAgentDir(), "extensions", "pi-working.json"), "utf8"));
+    const value = JSON.parse(
+      readFileSync(join(getAgentDir(), "extensions", "pi-working.json"), "utf8"),
+    );
+    return value && typeof value === "object" ? value : {};
   } catch {
     return {};
   }
@@ -69,7 +72,7 @@ const findEditor = (node: Node): Editor | undefined => {
 export default function (pi: ExtensionAPI) {
   let ctx: ExtensionContext | undefined;
   let root: Node | undefined;
-  let editor: Editor | undefined;
+  let editor: Editor | null | undefined; // null: none found, searched again at agent_settled
   let requestRender = () => {};
   let timer: ReturnType<typeof setInterval> | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -137,12 +140,14 @@ export default function (pi: ExtensionAPI) {
         `(${duration(Date.now() - startedAt)})`,
       );
       ctx.ui.setWorkingMessage(`${verb} ${time}`);
-    } else if ((done || waiting) && (editor ??= root && findEditor(root))) {
+    } else if (done || waiting) {
+      if (editor === undefined && root) editor = findEditor(root) ?? null;
+      if (!editor) return;
       const current = editor.workingStatusIndicator;
       // pi empties the border after its own indicators (e.g. an idle /compact): put the label back.
       if (!current) editor.setWorkingStatusIndicator(indicator);
       if (!current || (current === indicator && doneLabel() !== shown)) requestRender();
-    } else if (!done) clearDone(); // waiting ended with no label under it (e.g. after a /reload)
+    } else clearDone(); // waiting ended with no label under it (e.g. after a /reload)
   };
 
   const stop = () => {
