@@ -36,7 +36,6 @@ import {
   realpathSync,
   mkdirSync,
   readFileSync,
-  statSync,
   watch,
   writeFileSync,
   type FSWatcher,
@@ -49,22 +48,24 @@ import {
   alive,
   allAgents,
   ATTACHED,
-  cleanup,
-  DAY,
+  cleanupDaily,
   derived,
   isJson,
   isLive,
+  isStopped,
   label,
   list,
   liveAgents,
+  markStopped,
   MESSAGES,
   readAgent,
   readJson,
   rm,
   SESSIONS,
   short,
-  STAMP,
   STOPPED,
+  unmarkStopped,
+  writeAgent,
   writeAtomic,
   type Agent,
 } from "./store.ts";
@@ -164,8 +165,6 @@ const addBelow = (
       }
   }
 };
-const isStopped = (id: string) => existsSync(join(STOPPED, id));
-const writeAgent = (a: Agent) => writeAtomic(AGENTS, `${a.id}.json`, a);
 const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 const inside = (dir: string, p: string) => !relative(dir, p).startsWith("..");
 const duration = (ms: number) => {
@@ -687,12 +686,6 @@ export default function (pi: ExtensionAPI) {
     refresh();
   };
   const parentAlive = () => !parentId || isLive(readAgent(parentId));
-  /** A stopped/<id> marker: lists show the agent as stopped once it ends. Never blocks a stop. */
-  const markStopped = (id: string) => {
-    try {
-      writeFileSync(join(STOPPED, id), "");
-    } catch {}
-  };
   /** Agents die with the agent that started them: SIGTERM ourselves so pi shuts down cleanly. */
   let dying = false;
   const die = () => {
@@ -1516,7 +1509,7 @@ export default function (pi: ExtensionAPI) {
     g.me = id;
     mkdirSync(AGENTS, { recursive: true });
     mkdirSync(STOPPED, { recursive: true });
-    rm(join(STOPPED, id)); // live again (resumed)
+    unmarkStopped(id); // live again (resumed)
     me = {
       id,
       name: pi.getSessionName(),
@@ -1559,15 +1552,7 @@ export default function (pi: ExtensionAPI) {
     onAgents();
     onAttached();
     armDeadline();
-    // At most once a day, whoever starts first: the stamp is written before the cleanup runs.
-    let last = 0;
-    try {
-      last = statSync(STAMP).mtimeMs;
-    } catch {}
-    if (Date.now() - last > DAY) {
-      writeFileSync(STAMP, "");
-      void cleanup().catch(() => {});
-    }
+    cleanupDaily();
   });
 
   pi.on("session_info_changed", (event) => {

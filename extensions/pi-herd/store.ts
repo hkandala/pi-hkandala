@@ -10,6 +10,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import friendly from "friendly-words";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   readdirSync,
   statSync,
   readFileSync,
@@ -27,8 +28,8 @@ export const MESSAGES = join(DIR, "messages");
 export const ATTACHED = join(DIR, "attached");
 export const STOPPED = join(DIR, "stopped");
 export const SESSIONS = join(DIR, "sessions");
-export const STAMP = join(DIR, ".cleanup");
-export const DAY = 86_400_000;
+const STAMP = join(DIR, ".cleanup");
+const DAY = 86_400_000;
 
 export type Agent = {
   id: string;
@@ -93,7 +94,7 @@ export const writeAtomic = (path: string, name: string, data: unknown) => {
   renameSync(tmp, join(path, name));
 };
 
-export const agentFile = (id: string) => join(AGENTS, `${id}.json`);
+const agentFile = (id: string) => join(AGENTS, `${id}.json`);
 /** A record this version can use (not a broken file, or another version's of a different shape). */
 const valid = (a: unknown): a is Agent => {
   const x = a as Agent | undefined;
@@ -113,6 +114,15 @@ export const readAgent = (id: string) => {
 };
 /** Live: its session hasn't ended and its pid runs. */
 export const isLive = (a?: Agent): a is Agent => !!a && !a.ended && alive(a.pid);
+export const writeAgent = (a: Agent) => writeAtomic(AGENTS, `${a.id}.json`, a);
+export const isStopped = (id: string) => existsSync(join(STOPPED, id));
+/** A stopped/<id> marker: lists show the agent as stopped once it ends. Never blocks a stop. */
+export const markStopped = (id: string) => {
+  try {
+    writeFileSync(join(STOPPED, id), "");
+  } catch {}
+};
+export const unmarkStopped = (id: string) => rm(join(STOPPED, id));
 /** A record or message file's name (a write's temp file starts with a dot). */
 export const isJson = (f: string) => f.endsWith(".json") && !f.startsWith(".");
 // Each record file as last read, by name: re-read only once its stat changes (every write is a
@@ -187,4 +197,16 @@ export async function cleanup() {
     for (const pane of await orphans())
       if (first.includes(pane)) await rpc(HIDDEN, "pane.close", { pane_id: pane }).catch(() => {});
   }, 60_000).unref();
+}
+
+/** The cleanup at most once a day, whoever starts first: the stamp is written before it runs. */
+export function cleanupDaily() {
+  let last = 0;
+  try {
+    last = statSync(STAMP).mtimeMs;
+  } catch {}
+  if (Date.now() - last > DAY) {
+    writeFileSync(STAMP, "");
+    void cleanup().catch(() => {});
+  }
 }
