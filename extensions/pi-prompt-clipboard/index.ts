@@ -1,7 +1,7 @@
 /**
  * pi-prompt-clipboard: move prompts between the editor and the clipboard.
  * - ctrl+shift+s copies the whole prompt (pasted content included) to the clipboard and clears the
- *   editor. ctrl+- (undo) brings it back.
+ *   editor. Undo (ctrl+- by default) brings it back.
  * - Pasting a long text shows pi's usual `[paste #1 +40 lines]` marker; pasting the same text again
  *   with the cursor at that marker replaces it with the full, editable text.
  *
@@ -47,20 +47,31 @@ function patchPaste(): () => void {
   const original = proto.handlePaste;
   proto.handlePaste = function (this: Paster, text: string) {
     const { state, pastes } = this;
-    if (!state || !(pastes instanceof Map) || !this.insertTextAtCursorInternal) {
+    if (
+      !state ||
+      !Array.isArray(state.lines) ||
+      !(pastes instanceof Map) ||
+      !this.insertTextAtCursorInternal
+    ) {
       return original.call(this, text);
     }
     const { cursorLine, cursorCol } = state;
     const line = state.lines[cursorLine] ?? "";
-    const hit = [...line.matchAll(MARKER)].find(
+    // Two markers side by side can both touch the cursor.
+    const hits = [...line.matchAll(MARKER)].filter(
       (m) => m.index <= cursorCol && cursorCol <= m.index + m[0].length,
     );
     const count = this.pasteCounter;
     original.call(this, text); // pi cleans the text and inserts its own marker for long pastes
-    if (!hit || this.pasteCounter === count) return; // not at a marker, or a short paste
-    const stored = pastes.get(Number(hit[1]));
+    if (!hits.length || this.pasteCounter === count) return; // not at a marker, or a short paste
     const pasted = pastes.get(this.pasteCounter!);
-    if (stored === undefined || pasted === undefined || !same(stored, pasted)) return;
+    if (pasted === undefined) return;
+    const hit = hits.find((m) => {
+      const stored = pastes.get(Number(m[1]));
+      return stored !== undefined && same(stored, pasted);
+    });
+    if (!hit) return;
+    const stored = pastes.get(Number(hit[1]))!;
     // Same text: drop the new marker and put the old one's full text in its place. The old paste
     // stays in pi's map, so undoing back to the marker still sends the full text.
     pastes.delete(this.pasteCounter!);
