@@ -33,6 +33,7 @@ import { AgentsDashboard, FULL_SCREEN, type Row } from "./dashboard.ts";
 import { execFile } from "node:child_process";
 import {
   existsSync,
+  realpathSync,
   mkdirSync,
   readFileSync,
   statSync,
@@ -81,6 +82,10 @@ import {
 import { capture, findSession, KB, lastError, lastText, transcript } from "./transcript.ts";
 
 const MESSAGE_MAX = 32 * KB;
+const checkSize = (text: string) => {
+  if (Buffer.byteLength(text) > MESSAGE_MAX)
+    throw new Error("Message over 32 KB: write it to a file and send the path.");
+};
 const SPAWN_WAIT = 30_000;
 const BATCH_MS = 250; // messages and watch endings this close together share one steer
 const CLOSE_HINT = "ctrl+b q or /detach to close"; // in a popup
@@ -747,8 +752,7 @@ export default function (pi: ExtensionAPI) {
     m: { text: string; delivery?: Delivery; needsReply?: boolean },
     replyTo?: string,
   ) => {
-    if (Buffer.byteLength(m.text) > MESSAGE_MAX)
-      throw new Error("Message over 32 KB: write it to a file and send the path.");
+    checkSize(m.text);
     if (targets.some((t) => t.id === me!.id)) throw new Error("Can't message yourself.");
     const ids: string[] = [];
     for (const t of targets) {
@@ -1050,6 +1054,7 @@ export default function (pi: ExtensionAPI) {
       const resumed = params.session ? findSession(params.session) : undefined;
       if (!resumed && (!params.name || !params.message))
         throw new Error("name and message are required unless you resume a session.");
+      if (params.message) checkSize(params.message.text); // before anything starts
       const agents = liveAgents();
       if (resumed && agents.some((a) => a.id === resumed.id))
         throw new Error(`Session ${resumed.id} is already live.`);
@@ -1066,14 +1071,22 @@ export default function (pi: ExtensionAPI) {
       const thinking =
         params.thinking ?? (resumed ? undefined : (config.thinking ?? pi.getThinkingLevel()));
       const env = { PI_HERD_PARENT: me.id, ...NO_STALL };
+      // Trust only what the user already trusts: a folder inside this trusted project (real
+      // paths, so a symlink out of it doesn't count).
+      const trusted = () => {
+        try {
+          return inside(realpathSync(c.cwd), realpathSync(cwd)) && c.isProjectTrusted();
+        } catch {
+          return false;
+        }
+      };
       const flags = [
         // Its sessions (also a /new in it) go to pi-herd's folder: out of the user's /resume list.
         "--session-dir",
         SESSIONS,
         ...(resumed ? ["--session", resumed.file] : []),
         ...(params.name ? ["--name", params.name] : []),
-        // Trust only what the user already trusts: a folder inside this trusted project.
-        ...(inside(c.cwd, cwd) && c.isProjectTrusted() ? ["--approve"] : []),
+        ...(trusted() ? ["--approve"] : []),
         ...(model ? ["--model", model] : []),
         ...(thinking ? ["--thinking", thinking] : []),
         ...config.args,
@@ -1085,6 +1098,7 @@ export default function (pi: ExtensionAPI) {
       let sock = socket;
       let target: string;
       let created = true;
+      let rename: string | undefined; // a new workspace's tab
       if (where === "hidden") {
         await ensureServer();
         sock = HIDDEN;
@@ -1108,7 +1122,7 @@ export default function (pi: ExtensionAPI) {
             env,
             focus: false,
           });
-          await rpc(sock, "tab.rename", { tab_id: r.tab.tab_id, label: name });
+          rename = r.tab.tab_id; // named with the launch below: a failure there closes the pane
           target = r.root_pane.pane_id;
         }
       } else if (where === "tab") {
@@ -1156,6 +1170,7 @@ export default function (pi: ExtensionAPI) {
         return new Error(`${why}${screen ? `\nScreen:\n${screen}` : ""}`);
       };
       try {
+        if (rename) await rpc(sock, "tab.rename", { tab_id: rename, label: name });
         await rpc(sock, "pane.send_input", { pane_id: target, text: cmd, keys: ["enter"] });
       } catch (err) {
         throw await fail(`herdr: ${(err as Error).message}`);
@@ -1177,7 +1192,8 @@ export default function (pi: ExtensionAPI) {
         const timer = setTimeout(finish, SPAWN_WAIT);
         signal?.addEventListener("abort", onAbort, { once: true });
         waiters.add(check);
-        check();
+        if (signal?.aborted) finish(); // aborted before the wait started
+        else check();
       });
       if (!child)
         throw await fail(
