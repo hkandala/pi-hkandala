@@ -3,7 +3,7 @@
  * ended), messages/<toId>/<msgId>.json (one file per message), attached/<pid> (a popup shell and
  * the agent it shows), stopped/<id> (it was stopped, or ended with the agent that started it),
  * sessions/ (the pi sessions of the agents agent_start starts: out of the user's /resume list),
- * .cleanup (when the daily cleanup last ran).
+ * .cleanup (when the daily cleanup last ran). Also the agents' derived names, and the cleanup.
  */
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";

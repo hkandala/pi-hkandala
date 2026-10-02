@@ -1,4 +1,4 @@
-/** What agents read (the brief, steer items) and what the transcript shows of them. */
+/** What agents read (the brief, steer items), what the transcript shows of them, and /agents list. */
 
 import {
   DynamicBorder,

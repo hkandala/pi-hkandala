@@ -807,11 +807,12 @@ working and end with the agent's last text or transcript. That is what pi-herd a
 
 ## 16. Size and scope
 
-- About 2,500 lines as formatted, in six files: `index.ts` (registry, messages, watches, spawn,
-  tools, `/agents`, about 1,650), `dashboard.ts` (the agents dashboard), `store.ts` (the shared files and agent names), `herdr.ts` (the
-  socket API and the hidden session), `transcript.ts` (transcripts and saved sessions) and
-  `text.ts` (the brief, steer texts, and their renderer). The popup plugin and the herdr patch
-  live in the repo's `herdr/` folder.
+- About 2,700 lines as formatted, in six files: `index.ts` (registry, messages, watches, tools,
+  `/agents`, about 1,500), `dashboard.ts` (the agents dashboard), `store.ts` (the shared files,
+  agent names and the daily cleanup), `herdr.ts` (the socket API, the hidden session, and the herdr
+  side of spawning, following status and the popup command), `transcript.ts` (transcripts and
+  saved sessions) and `text.ts` (the brief, steer texts, and their renderers). The popup plugin
+  and the herdr patch live in the repo's `herdr/` folder.
 - One dependency, `friendly-words` (pinned to 1.2.1; later versions pull in a web server), for
   derived names. It requires herdr 0.9 or newer and runs only inside a herdr pane.
 

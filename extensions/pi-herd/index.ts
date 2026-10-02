@@ -2,13 +2,15 @@
  * pi-herd: every pi session running in a herdr pane is an agent that others can list, message,
  * watch, and start and stop agents of its own (and theirs).
  *
- * Files: store.ts (the shared folder), herdr.ts (its socket API), transcript.ts, text.ts (what
- * agents read, and its renderer), dashboard.ts (/agents dashboard). Status comes only from herdr
- * (its pi integration, plus the repo's patch in herdr/). A message is a steer that wakes an idle agent; a watch wakes the watcher when the
- * target stops working. Tools: agent_start, agent_stop, agent_send, agent_watch, agent_read,
- * agent_list. Commands: /agents, /detach.
- * An agent without a name gets a two-word one derived from its session id (frog-thunder).
- * Config (optional): ~/.pi/agent/extensions/pi-herd.json. See docs/SPEC.md for the design.
+ * Files: store.ts (the shared folder and its daily cleanup), herdr.ts (its socket API, and the
+ * herdr side of starting an agent, following its status and showing it in a popup),
+ * transcript.ts, text.ts (what agents read, and the renderers), dashboard.ts (/agents dashboard).
+ * Status comes only from herdr (its pi integration, plus the repo's patch in herdr/). A message
+ * is a steer that wakes an idle agent; a watch wakes the watcher when the target stops working.
+ * Tools: agent_start, agent_stop, agent_send, agent_watch, agent_read, agent_list. Commands:
+ * /agents, /detach. An agent without a name gets a two-word one derived from its session id
+ * (frog-thunder). Config (optional): ~/.pi/agent/extensions/pi-herd.json. See docs/SPEC.md for
+ * the design.
  */
 
 import { StringEnum, Type } from "@earendil-works/pi-ai";
@@ -36,9 +38,19 @@ import {
   writeFileSync,
   type FSWatcher,
 } from "node:fs";
-import net from "node:net";
 import { join, relative, resolve } from "node:path";
-import { ensureServer, HIDDEN, parseLine, PLUGIN, rpc, SESSION } from "./herdr.ts";
+import {
+  HIDDEN,
+  launchCommand,
+  openPane,
+  PLUGIN,
+  popupCommand,
+  q,
+  releasePane,
+  rpc,
+  SESSION,
+  subscribePane,
+} from "./herdr.ts";
 import {
   AGENTS,
   alive,
@@ -163,7 +175,6 @@ const addBelow = (
       }
   }
 };
-const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 const inside = (dir: string, p: string) => !relative(dir, p).startsWith("..");
 const duration = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -405,7 +416,6 @@ export default function (pi: ExtensionAPI) {
   /** Follows an agent's herdr status: one events.subscribe connection, reconnecting until stopped. */
   const follow = (a: Agent) => {
     let stopped = false;
-    let sock: net.Socket | undefined;
     const since = g.since;
     const f = {
       agent: a,
@@ -423,48 +433,6 @@ export default function (pi: ExtensionAPI) {
       onStatus(a, s);
       refresh();
     };
-    const connect = () => {
-      if (stopped) return;
-      let buf = "";
-      sock = net.createConnection(a.herdr.socket);
-      sock.on("connect", () => {
-        sock!.write(
-          `${JSON.stringify({
-            id: "pi-herd",
-            method: "events.subscribe",
-            params: {
-              subscriptions: [
-                { type: "pane.agent_status_changed", pane_id: a.herdr.pane },
-                { type: "pane.closed" },
-                { type: "pane.exited" },
-              ],
-            },
-          })}\n`,
-        );
-        void status(a).then(set); // (re)connected: read the status again
-      });
-      sock.on("data", (d) => {
-        buf += d;
-        for (let i; (i = buf.indexOf("\n")) >= 0;) {
-          const line = buf.slice(0, i);
-          buf = buf.slice(i + 1);
-          const ev = parseLine(line);
-          if (ev?.data?.pane_id !== a.herdr.pane) continue;
-          // herdr 0.9.3 names these pane.agent_status_changed but pane_exited / pane_closed.
-          const kind = String(ev.event).replace(".", "_");
-          if (kind === "pane_exited" || kind === "pane_closed") set("exited");
-          // The pid check in set() says whether pi still runs there; herdr may not have named
-          // the pane's agent yet when its first status arrives.
-          else if (kind === "pane_agent_status_changed") set(ev.data.agent_status ?? "unknown");
-        }
-      });
-      sock.on("error", () => {});
-      sock.on("close", () => {
-        if (stopped) return;
-        if (!alive(a.pid)) return set("exited");
-        setTimeout(connect, 1000);
-      });
-    };
     // Its message folder, for the delivered markers it writes (see checkDelivered).
     const dir = join(MESSAGES, a.id);
     mkdirSync(dir, { recursive: true });
@@ -472,13 +440,25 @@ export default function (pi: ExtensionAPI) {
     try {
       marks = watch(dir, () => checkDelivered(a));
     } catch {}
+    follows.set(a.id, f);
+    const unsubscribe = subscribePane(a.herdr.socket, a.herdr.pane, {
+      open: () => void status(a).then(set), // (re)connected: read the status again
+      // The pid check in set() says whether pi still runs there; herdr may not have named the
+      // pane's agent yet when its first status arrives.
+      status: (s) => set((s as Status | undefined) ?? "unknown"),
+      gone: () => set("exited"),
+      retry: () => {
+        if (stopped) return false;
+        if (alive(a.pid)) return true;
+        set("exited");
+        return false;
+      },
+    });
     f.stop = () => {
       stopped = true;
-      sock?.destroy();
+      unsubscribe();
       marks?.close();
     };
-    follows.set(a.id, f);
-    connect();
     checkDelivered(a);
   };
 
@@ -848,21 +828,7 @@ export default function (pi: ExtensionAPI) {
       endAttach();
       return;
     }
-    // The shell attaches to the agent its marker names, again after a switch (a new agent there);
-    // when an attach ends any other way (detach, the agent exits), the popup closes. Before each
-    // attach it sizes the agent's pane to the popup (herdr keeps the size after a release) and
-    // gives pi 200 ms to redraw, behind an "opening …" line: the attach then shows a settled
-    // screen instead of a redraw at the new size. A signal exits through the EXIT trap (dash runs
-    // it only so) to remove the marker.
-    const command =
-      `M=${q(ATTACHED)}/$$; trap 'rm -f "$M"' EXIT; trap 'exit 1' HUP INT TERM; ` +
-      `printf '%s\\n' ${q(a.id)} ${q(a.herdr.socket)} ${q(a.herdr.pane)} ${q(label(a))} > "$M"; ` +
-      `while { read -r ID; read -r S; read -r P; read -r N; } < "$M" && [ -n "$P" ]; do ` +
-      `printf '\\033[2J\\033[H\\n  \\033[2mopening %s…\\033[0m' "$N"; set -- $(stty size); ` +
-      `{ sleep 0.2; echo '{"type":"terminal.release"}'; } | HERDR_SOCKET_PATH="$S" ` +
-      `herdr terminal session control "$P" --takeover --rows "$1" --cols "$2" >/dev/null 2>&1; ` +
-      `HERDR_SOCKET_PATH="$S" herdr agent attach "$P" --takeover; ` +
-      `{ read -r NEXT; } < "$M"; [ "$NEXT" != "$ID" ] || break; done`;
+    const command = popupCommand(ATTACHED, { ...a.herdr, id: a.id, name: label(a) });
     try {
       await rpc(socket, "plugin.pane.open", {
         plugin_id: PLUGIN,
@@ -1116,71 +1082,19 @@ export default function (pi: ExtensionAPI) {
         .join(" ");
 
       // 1. The pane.
-      let sock = socket;
-      let target: string;
-      let created = true;
-      let rename: string | undefined; // a new workspace's tab
-      /** A new tab in a workspace of `sock`, unfocused: its pane. */
-      const newTab = async (workspace_id: string): Promise<string> =>
-        (await rpc(sock, "tab.create", { workspace_id, cwd, label: name, env, focus: false }))
-          .root_pane.pane_id;
-      if (where === "hidden") {
-        await ensureServer();
-        sock = HIDDEN;
-        const { workspaces } = await rpc(sock, "workspace.list");
-        const ws = (workspaces as { workspace_id: string; label: string }[]).find(
-          (w) => w.label === tilde(cwd),
-        );
-        if (ws) target = await newTab(ws.workspace_id);
-        else {
-          const r = await rpc(sock, "workspace.create", {
-            cwd,
-            label: tilde(cwd),
-            env,
-            focus: false,
-          });
-          rename = r.tab.tab_id; // named with the launch below: a failure there closes the pane
-          target = r.root_pane.pane_id;
-        }
-      } else if (where === "tab") {
-        const { pane: mine } = await rpc(sock, "pane.get", { pane_id: pane });
-        target = await newTab(mine.workspace_id);
-      } else {
-        created = false;
-        target = where;
-        const info = await rpc(sock, "pane.get", { pane_id: target }).catch(() => undefined);
-        if (!info) throw new Error(`No pane ${target} in your herdr session.`);
-        if (info.pane.agent) throw new Error(`Pane ${target} already runs ${info.pane.agent}.`);
-        const { process_info: p } = await rpc(sock, "pane.process_info", { pane_id: target });
-        if (p.foreground_process_group_id !== p.shell_pid)
-          throw new Error(
-            `Pane ${target} is busy (${p.foreground_processes?.[0]?.name ?? "a command"} is running).`,
-          );
-      }
+      const placed = await openPane(where, { socket, pane, cwd, folder: tilde(cwd), name, env });
+      const { sock, target } = placed;
 
       // 2. Start pi: exec in a pane we created (it closes with pi); in a given pane the shell stays.
-      const cmd = created
-        ? `exec pi ${flags}`
-        : `${params.cwd || resumed ? `cd ${q(cwd)} && ` : ""}${Object.entries(env)
-            .map(([k, v]) => `${k}=${q(v)}`)
-            .join(" ")} pi ${flags}`;
+      const cmd = launchCommand(placed, flags, env, params.cwd || resumed ? cwd : undefined);
       const fail = async (why: string) => {
         const screen = await capture(sock, target, config.captureLines);
-        if (created) await rpc(sock, "pane.close", { pane_id: target }).catch(() => {});
-        else {
-          const { process_info: p } = await rpc(sock, "pane.process_info", {
-            pane_id: target,
-          }).catch(() => ({}) as any);
-          for (const proc of p?.foreground_processes ?? [])
-            if (proc.pid !== p.shell_pid)
-              try {
-                process.kill(proc.pid, "SIGTERM");
-              } catch {}
-        }
+        await releasePane(placed);
         return new Error(`${why}${screen ? `\nScreen:\n${screen}` : ""}`);
       };
       try {
-        if (rename) await rpc(sock, "tab.rename", { tab_id: rename, label: name });
+        // A new workspace's tab is named with the launch: a failure here closes the pane.
+        if (placed.rename) await rpc(sock, "tab.rename", { tab_id: placed.rename, label: name });
         await rpc(sock, "pane.send_input", { pane_id: target, text: cmd, keys: ["enter"] });
       } catch (err) {
         throw await fail(`herdr: ${(err as Error).message}`);
