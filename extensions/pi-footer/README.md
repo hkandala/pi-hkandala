@@ -33,7 +33,7 @@ The icons use the icon color (see `iconColor`). Yellow and red are the theme's `
 
 If the terminal is narrow, the git piece goes first, then the context. The folder, cold, agents, jobs, and model pieces always stay. Statuses from other extensions show right-aligned on their own line below the footer line.
 
-With pi's `"tuiMode": "fullscreen"` setting, a click on a piece opens the dashboard at its tab:
+In fullscreen mode (pi's default since 1.0; make sure `"tuiMode"` isn't `"regular"`), a click on a piece opens the dashboard at its tab:
 
 - Folder and git open `git` (in a git repo).
 - Cold and context open `usage`.
@@ -66,7 +66,7 @@ To open the dashboard, press ↓ at the end of the prompt. A first ↓ moves the
 | any other key   | goes to the prompt, and the prompt gets the keys back. If ↓ opened the dashboard, the dashboard also closes                         |
 | `/footer [tab]` | opens the dashboard at that tab, or at the tab that ↓ picks. It stays open while you type. `/footer` alone closes an open dashboard |
 
-With pi's `"tuiMode": "fullscreen"` setting, you can also click:
+In fullscreen mode, you can also click:
 
 - A footer piece opens its tab, and the dashboard stays open while you type.
 - A tab switches to it.
