@@ -114,7 +114,7 @@ Optional; install any of them for the extra:
 - [pi-working](../pi-working/README.md): `Waiting on 3 agents and 2 background jobs (1m 12s)` in the prompt's border while the agent waits.
 - [pi-content-layout](../pi-content-layout/README.md): agent messages and watch endings in its dashed frames (`agent message`, `agent watcher`; click to expand, markdown highlighted), messages in open tool calls as highlighted markdown, and tool groups that read `Started 2 agents, talked to 3 agents, stopped 2 agents`.
 - [herdr/](../../herdr/README.md) in this repo:
-  - **the patch** keeps a pane `working` while it waits on agents or background jobs, so a watch doesn't end while its target still waits, and herdr doesn't play "done" too early. It also ends a turn that settles during compaction: without it, a watch on that agent ends only at its timeout.
+  - **the patch** keeps a pane `working` while it waits on agents or background jobs, so a watch doesn't end while its target still waits, and herdr doesn't play "done" too early. It also ends a turn that settles during compaction or a branch summary: without it, a watch on that agent ends only at its timeout.
   - **the plugin** has the popup the dashboard attaches in.
 
 ## Install
