@@ -1,6 +1,6 @@
 # pi-content-layout
 
-A compact, minimal transcript for pi: tool calls and thinking collapse into a summarized tree, and user messages sit in a rounded box.
+A compact, minimal transcript for pi: tool calls and thinking sit in a summarized tree of one-line rows, and user messages sit in a rounded box.
 
 ```
  ╭─────────────────────────────────────────────────────────────────────────────╮
@@ -28,18 +28,43 @@ A compact, minimal transcript for pi: tool calls and thinking collapse into a su
  ● I added sub(a, b) after add in math.js; the test run fails on the new case.
 ```
 
-- **Groups:** tool calls and thinking between two pieces of assistant text form one group: a summary line ("Read 2 files, ran 1 command", failures in red; [pi-web](../pi-web/README.md) calls read "searched the web 3 times, fetched 7 web pages", [pi-bash-bg](../pi-bash-bg/README.md)'s `bash_list` and `bash_watch` count as commands, and [pi-herd](../pi-herd/README.md) calls read "started 2 agents, talked to 3 agents, checked agents, stopped 2 agents", counting the agents each call names; an open `agent_start` or `agent_send` call shows its message as highlighted markdown) with a tree of one-row calls under it. `ctrl+shift+o` collapses all groups to their summary line, or expands them (saved to the config file, so it carries over to future sessions); click a summary line to collapse or expand just that group.
-- **Tool rows:** name (bold), target (file, command, or pattern), the other params the call passed (dim, `key value`, `key` for true: `bash  npm run dev · background · timeout 600`, `grep  TODO in src · glob *.ts · ignoreCase`; edits and writes show theirs as the diff or code), and result (line or match counts, an edit's `+added -removed` and a write's `+lines`, in the diff's colors when open, duration from 1s up; with [timestamps](#timestamps) on, in their column). Long targets shorten so the result stays visible, the params giving way first; values over 40 characters or on several lines show just their name. Running calls show `running Xs` and failures are red. With [pi-bash-bg](../pi-bash-bg/README.md), the last running bash call gets a dim `ctrl+shift+b to run in background` line under it once it has run 30s (the key moves all running calls, so one hint is enough). In fullscreen TUI mode, what's still running pulses gently: a closed call's whole row, an open call's name, `thinking…`, or a collapsed group's summary line (from the group's start until text or a message ends it, or the turn ends, so it keeps going between calls); closed ones from muted a little toward bright, open ones from bright a little toward muted.
+- **Groups:** tool calls and thinking between two pieces of assistant text form one group. A summary line sits on top ("Read 2 files, ran 1 command", failures in red), with a tree of one-row calls under it. Calls of other extensions' tools read:
+  - [pi-web](../pi-web/README.md): "searched the web 3 times, fetched 7 web pages".
+  - [pi-bash-bg](../pi-bash-bg/README.md): `bash_list` and `bash_watch` count as commands.
+  - [pi-herd](../pi-herd/README.md): "started 2 agents, talked to 3 agents, checked agents, stopped 2 agents", counting the agents each call names. An open `agent_start` or `agent_send` call shows its message as highlighted markdown.
+
+  `ctrl+shift+o` collapses all groups to their summary line, or expands them. The choice is saved to the config file, so it carries over to future sessions. Click a summary line to collapse or expand just that group.
+
+- **Tool rows:** each row shows:
+  - the name, in bold italic;
+  - the target: a file, command, or pattern;
+  - the other params the call passed, dim: `key value`, or `key` for true (`bash  npm run dev · background · timeout 600`, `grep  TODO in src · glob *.ts · ignoreCase`). Edits and writes show theirs as the diff or the code;
+  - the result: line or match counts, an edit's `+added -removed`, or a write's `+lines` (in the diff's colors when open), and the duration from 1s up. Parallel calls loaded from history show no duration here (see [Timestamps](#timestamps)). With timestamps on, the duration sits in their column.
+
+  Long targets shorten so the result stays visible, and the params give way first. Param values over 40 characters or on several lines show just their name. Running calls show `running Xs`, and failures are red.
+
+- **Background hint:** with [pi-bash-bg](../pi-bash-bg/README.md), the last running bash call gets a dim `ctrl+shift+b to run in background` line under it once it has run 30s. The key moves all running calls, so one hint is enough.
+- **Pulse:** in fullscreen TUI mode, what's still running pulses gently: a closed call's whole row, an open call's name, `thinking…`, or a collapsed group's summary line. A summary line pulses from the group's start until text or a message ends the group, or the agent stops, so it keeps going between calls. Closed ones go from muted a little toward bright, open ones from bright a little toward muted.
 - **Thinking:** a tree row, `thinking…` while it streams, then `thought for Xs`: `thought briefly` under a second, and `thought for some time` for messages loaded from history, since pi saves no thinking time. Thinking with no tool calls around it is a single `Thought for Xs` line. It opens or closes with `ctrl+t`, pi's own setting, new thinking included.
 - **Assistant text:** every piece starts with a `●`; click it to copy the reply (see [Copying](#copying)).
-- **Status lines:** pi's status lines, notices, warnings, and errors (setting changes, cache warnings, `Operation aborted`, an extension's notifications, and extension messages drawn as a plain line, like pi-continue's `Nudged to continue`) sit at column 3, lined up with assistant text, without a `●`. So do queued steering and follow-up messages above the prompt, inside its box edges.
+- **Status lines:** pi's status lines, notices, warnings, and errors sit at column 3, lined up with assistant text, without a `●`. These include setting changes, cache warnings, `Operation aborted`, an extension's notifications, and extension messages drawn as a plain line, like pi-continue's `Nudged to continue`. Queued steering and follow-up messages above the prompt sit at column 3 too (inside [pi-footer](../pi-footer/README.md)'s prompt box edges, when you use it).
 - **User messages:** in a rounded border like [pi-footer](../pi-footer/README.md)'s prompt box, without pi's background.
-- **Special messages:** compaction and branch summaries, skill invocations, and extension messages, pi's default look or an extension's own background box (like [pi-bash-bg](../pi-bash-bg/README.md)'s `background job` end messages), in a dashed rounded border with their label in the top edge (`╭┄┄ compaction ┄┄╮`). Click a summary, skill, or an extension's box to open it; their `(ctrl+o to expand)` is dim. Both boxes sit a column in on each side, so their text lines up with assistant text.
-- **User bash and info panels:** `!cmd` runs and panels between horizontal rules, pi's (`/changelog`, `/hotkeys`, update notices) or an extension's (pi-header's `/loaded`), read like assistant text, a `●` and column 3, without pi's horizontal rules. The `●` is white for assistant text, pi's bash green for `!cmd` (dim for `!!cmd`, which stays out of the context), and accent for panels, like their heading.
+- **Special messages:** compaction and branch summaries, skill invocations, and extension messages sit in a dashed rounded border, with their label in the top edge (`╭┄┄ compaction ┄┄╮`). Extension messages get it when they use pi's default look or an extension's own background box (like [pi-bash-bg](../pi-bash-bg/README.md)'s `background job` end messages). Click a summary, a skill, or an extension's box to open it; their `(ctrl+o to expand)` is dim. Both kinds of box sit a column in on each side, so their text lines up with assistant text.
+- **User bash and info panels:** `!cmd` runs and panels between horizontal rules read like assistant text: a `●` and column 3, without pi's horizontal rules. Panels are pi's (`/changelog`, `/hotkeys`, update notices) or an extension's (pi-header's `/loaded`). The `●` takes the theme's text color for assistant text, pi's bash color for `!cmd` (dim for `!!cmd`, which stays out of the context), and the accent color for panels, like their heading.
 
-Click a row (fullscreen TUI mode) to open or close it within the tree: its content hangs off a `└` under the row (a line lower when the row takes more than one line), followed by a blank line. Tools listed in `autoExpandedTools` (edits and writes, by default) start open. Edits show their diff, reads and writes their code with line numbers (a read's from its offset), other tools their output (live while running), and thinking shows its text. An open row also shows its full input: a target cut off with `…` wraps in full under it (a bash command with its own line breaks), with every param whole. Long lines of open content (a read, a write, a diff, bash or other output) end in `…`, or wrap with `ctrl+shift+w` (numbered code continues under its code, not its number); a call's full input (a bash command) and thinking always wrap. The input, the content, and open thinking each show up to `maxExpandedLines` (10 by default), then `↓ N more lines`: click it to show the rest, and `↑ show less` at the end to cut it again. Closed rows, thinking, and collapsed groups are muted; opened or expanded ones read in the text color, like their content. `ctrl+o` opens or closes all tool rows, clicked ones too (and cuts expanded ones again), and `ctrl+t` all thinking. Rows and text keep a 3-column margin on both sides, and the transcript always ends one blank line further from the prompt, whatever comes last.
+## Open rows
 
-**Syntax highlighting:** read, written, and edited code is colored by pi's own highlighter (the one for code blocks in assistant text), by file extension, in the pi theme's `syntax*` colors: switch themes, or make your own (pi's themes docs), to change them. An open bash command is colored as bash; output stays plain. Edits tint added and removed lines with the theme's tool backgrounds, and when a changed line pairs with its new version, mark the changed words with a stronger tint:
+- **Open or close:** click a row (fullscreen TUI mode) to open or close it within the tree. Tools listed in `autoExpandedTools` (edits and writes, by default) start open. `ctrl+o` opens or closes all tool rows, clicked ones and `autoExpandedTools` ones too (and cuts expanded ones again), and `ctrl+t` all thinking.
+- **Content:** it hangs off a `└` under the row (a line lower when the row takes more than one line), followed by a blank line. Edits show their diff, reads and writes their code with line numbers (a read's from its offset), and other tools their output (live while running). Thinking shows its text.
+- **Input:** an open row also shows its full input. A target cut off with `…` wraps in full under it (a bash command with its own line breaks), with every param whole.
+- **Long lines:** long lines of open content (a read, a write, a diff, bash or other output) end in `…`, or wrap with `ctrl+shift+w`. Numbered code wraps under its code, not its number. A call's full input (a bash command), thinking, and a pi-herd message always wrap.
+- **Line limit:** the input, the content, and open thinking each show up to `maxExpandedLines` (10 by default), then `↓ N more lines`. Click it to show the rest, and click `↑ show less` at the end to cut it again.
+- **Colors:** closed rows, thinking, and collapsed groups are muted. Opened or expanded ones read in the text color, like their content.
+- **Margins:** rows and text keep a 3-column margin on both sides. The transcript always ends one blank line further from the prompt, whatever comes last.
+
+## Syntax highlighting
+
+Read, written, and edited code is colored by pi's own highlighter (the one for code blocks in assistant text), by file extension, in the pi theme's `syntax*` colors: switch themes, or make your own (pi's themes docs), to change them. An open bash command is colored as bash (red when it failed); output stays plain. Edits tint added and removed lines with the theme's tool backgrounds, and when a changed line pairs with its new version, mark the changed words with a stronger tint:
 
 ```
    └ edit  math.js · +1 -1
@@ -49,14 +74,18 @@ Click a row (fullscreen TUI mode) to open or close it within the tree: its conte
          4   return items.slice(0, max);
 ```
 
-| Shortcut       | Does                                                                                                                                                 |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ctrl+o`       | Open or close all tool rows (pi's)                                                                                                                   |
-| `ctrl+t`       | Open or close all thinking (pi's)                                                                                                                    |
-| `ctrl+shift+o` | Collapse or expand all groups to their summary line (saved)                                                                                          |
-| `ctrl+shift+t` | Cycle [timestamps](#timestamps): off → relative → absolute (saved)                                                                                   |
-| `ctrl+shift+w` | Wrap long lines of open tool content, or end them in `…` (saved)                                                                                     |
-| Click          | A row, thought, or summary line: open or close just that one; a `↓ N more lines` or `↑ show less` line: show or cut the rest; a reply's `●`: copy it |
+## Shortcuts
+
+| Shortcut       | Does                                                                                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ctrl+o`       | Open or close all tool rows (pi's)                                                                                                                                        |
+| `ctrl+t`       | Open or close all thinking (pi's)                                                                                                                                         |
+| `ctrl+shift+o` | Collapse or expand all groups to their summary line (saved)                                                                                                               |
+| `ctrl+shift+t` | Cycle [timestamps](#timestamps): off → relative → absolute (saved)                                                                                                        |
+| `ctrl+shift+w` | Wrap long lines of open tool content, or end them in `…` (saved)                                                                                                          |
+| Click          | Fullscreen TUI mode. A row, thought, or summary line: open or close just that one; a `↓ N more lines` or `↑ show less` line: show or cut the rest; a reply's `●`: copy it |
+
+## Compatibility
 
 pi has no public API for restyling its own messages, so this extension patches the rendering of pi's message and tool components (restored on shutdown, and falling back to pi's own rendering on any error). It doesn't combine with other extensions that restyle the same components.
 
@@ -64,7 +93,7 @@ pi has no public API for restyling its own messages, so this extension patches t
 
 In fullscreen TUI mode, click a reply's `●` to copy the reply as written, in markdown; it shows `✓` for a moment.
 
-Selecting text copies it without the layout's decoration: box edges and sides, tree lines, bullets, timestamps, and `↓`/`↑` lines. Text wrapped to fit (assistant text, boxes, thinking on its own) joins back into its original lines. Tool output and code keep their lines, dedented to column 0: a read or write copies without its line numbers, a diff as its code after the edit (no line numbers, `+`/`-`, or removed lines), wherever the selection starts and with wrapped lines joined back, and a code block in assistant text without its extra indent. Lines cut off with `…` copy as shown (`ctrl+shift+w` wraps them to show them whole).
+In fullscreen TUI mode, selecting text copies it without the layout's decoration: box edges and sides, tree lines, bullets, timestamps, and `↓`/`↑` lines. Text wrapped to fit (assistant text, boxes, thinking on its own) joins back into its original lines. Tool output and code keep their lines, dedented to column 0: a read or write copies without its line numbers, a diff as its code after the edit (no line numbers, `+`/`-`, or removed lines), wherever the selection starts and with wrapped lines joined back, and a code block in assistant text without its extra indent. Lines cut off with `…` copy as shown (`ctrl+shift+w` wraps them to show them whole).
 
 ## Timestamps
 
