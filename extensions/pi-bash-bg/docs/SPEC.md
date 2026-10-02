@@ -8,7 +8,7 @@ Background bash for pi. The `bash` tool can run a command in the background, eit
 - **Stopping:** Esc kills the running foreground call, as in pi, and never touches background jobs. The agent stops a job with `kill <pid>`. The user stops one with `/background kill`, the log viewer, or pi-footer's jobs tab.
 - **Ending:** however a watched job ends (exit, any kill, timeout), its session gets one steer message shaped like a bash result.
 
-Code: `index.ts` (everything except the viewer) and `viewer.ts` (the log viewer).
+Code: `index.ts` (the bash tool, the other tools, the command and the event wiring), `jobs.ts` (the job files, job state and end-message text), `render.ts` (the end message and `/background list` renderers) and `viewer.ts` (the log viewer).
 
 ## 1. Files
 

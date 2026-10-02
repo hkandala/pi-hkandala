@@ -11,6 +11,7 @@
  * the call moves to the background) and <id>.watch.<sessionId> (empty; this session watches it).
  * Config (optional): ~/.pi/agent/extensions/pi-bash-bg.json
  *   { "autoBackgroundSeconds": 120, "shortcut": "ctrl+shift+b", "keepOnExit": true }
+ * The job store is in jobs.ts, the renderers in render.ts, the log viewer in viewer.ts.
  * See docs/SPEC.md for the design.
  */
 
@@ -19,60 +20,53 @@ import {
   createBashToolDefinition,
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
-  DynamicBorder,
   type CustomMessageEntryDraft,
   type ExtensionAPI,
   type ExtensionContext,
-  type Theme,
-  formatSize,
   getAgentDir,
   getShellConfig,
-  keyText,
   SettingsManager,
-  truncateTail,
 } from "@earendil-works/pi-coding-agent";
-import {
-  Box,
-  Container,
-  type KeyId,
-  Spacer,
-  Text,
-  visibleWidth,
-  wrapTextWithAnsi,
-} from "@earendil-works/pi-tui";
+import type { KeyId } from "@earendil-works/pi-tui";
 import { spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
   mkdirSync,
   openSync,
-  readdirSync,
-  readFileSync,
   readSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { readdir, stat, unlink } from "node:fs/promises";
-import { constants, homedir, uptime } from "node:os";
+import { constants } from "node:os";
 import { join } from "node:path";
 import {
-  clean,
-  cut,
-  FULL_SCREEN,
-  highlightBash,
-  LogViewer,
-  readTail,
-  TAIL_BYTES,
-} from "./viewer.ts";
+  byPid,
+  cleanup,
+  DIR,
+  elapsed,
+  type Ending,
+  endText,
+  ending,
+  file,
+  ids,
+  type Job,
+  job,
+  jobs,
+  type Limits,
+  type Meta,
+  oneLine,
+  readJson,
+  state,
+  terminate,
+  tilde,
+} from "./jobs.ts";
+import { endMessage, listEntry, type Row } from "./render.ts";
+import { FULL_SCREEN, LogViewer } from "./viewer.ts";
 
-const DIR = join(getAgentDir(), "bash-bg");
 const TYPE = "background job";
-const DAY = 86_400_000;
-const COUNT_BYTES = 32 * 1024 * 1024; // a bigger log's lines aren't counted: it would block pi
 const PUMP_BYTES = 4 * 1024 * 1024; // the most log bytes a call passes on per event-loop turn
 const LIST_MAX = 100; // bash_list's and /background list's most rows
-const COLLAPSED_LINES = 4; // a collapsed end message's most lines
 // $1 the command, $2 the exit file. `& wait` lets the trap run while the command runs; the trap
 // stops the whole group, so plain `kill <pid>` takes `&` grandchildren down too.
 const WRAPPER = `trap 'trap - TERM INT HUP; echo 143 > "$2"; kill -TERM 0' TERM INT HUP
@@ -81,9 +75,6 @@ const NOTIFIED = "You'll be notified when it exits; don't wait, sleep or poll on
 const SLEEP_TIP =
   "Tip: don't sleep to wait. Run long commands with background: true; you'll be notified when they exit.";
 
-type Meta = { pid: number; command: string; cwd: string; startedAt: number; sessionId: string };
-/** code: undefined while running, null when it ended without one (kill -9, reboot). */
-type Job = Meta & { id: string; log: string; code?: number | null; endedAt?: number };
 /** Why a call moved to the background: the agent asked, the user did, or it ran too long. */
 type Reason = "agent" | "user" | "auto";
 type Call = { background: (reason: Reason) => void; abort: () => void };
@@ -97,193 +88,6 @@ const g = ((globalThis as { __piBashBg?: unknown }).__piBashBg ??= {}) as {
   abortAll?: () => void;
   cleaned?: boolean;
 };
-
-const file = (id: string, ext: string) => join(DIR, `${id}.${ext}`);
-const readJson = (path: string): Record<string, any> => {
-  try {
-    const value = JSON.parse(readFileSync(path, "utf8"));
-    return value && typeof value === "object" ? value : {};
-  } catch {
-    return {};
-  }
-};
-const alive = (pid: number) => {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
-const tilde = (p: string) =>
-  p === homedir() || p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p;
-const oneLine = (cmd: string) => {
-  const lines = cmd.trim().split("\n");
-  return lines.length > 1 ? `${lines[0]} …` : lines[0]!;
-};
-const duration = (ms: number) => {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m${s % 60}s`;
-  return `${Math.floor(s / 3600)}h${Math.floor(s / 60) % 60}m`;
-};
-const killed = (code: number) => code === 129 || code === 130 || code === 143;
-const state = (j: Job) =>
-  j.code === undefined
-    ? "running"
-    : j.code === null
-      ? "ended"
-      : killed(j.code)
-        ? "killed"
-        : `exit ${j.code}`;
-const elapsed = (j: Job) => duration((j.endedAt ?? Date.now()) - j.startedAt);
-/** ● running, ✓ exit 0, ■ killed, ✗ anything else. */
-const stateIcon = (theme: Theme, s: string) =>
-  s === "running"
-    ? theme.fg("accent", "●")
-    : s === "exit 0"
-      ? theme.fg("success", "✓")
-      : s === "killed"
-        ? theme.fg("warning", "■")
-        : theme.fg("error", "✗");
-
-/** Job ids whose file names end with the suffix, newest first. */
-const ids = (suffix: string) => {
-  try {
-    return readdirSync(DIR)
-      .filter((f) => f.endsWith(suffix))
-      .map((f) => f.slice(0, f.indexOf(".")))
-      .sort((a, b) => parseInt(b) - parseInt(a));
-  } catch {
-    return [];
-  }
-};
-
-// Meta files never change and an ended job stays ended, so both are read once.
-const metas = new Map<string, Meta>();
-const ended = new Map<string, Job>();
-function job(id: string): Job | undefined {
-  const done = ended.get(id);
-  if (done) return done;
-  let meta = metas.get(id);
-  if (!meta) {
-    const json = readJson(file(id, "json"));
-    if (typeof json.pid !== "number") return undefined; // a foreground call, or not written yet
-    metas.set(id, (meta = json as Meta));
-  }
-  const j: Job = { ...meta, id, log: file(id, "log") };
-  const exitCode = () => {
-    try {
-      const text = readFileSync(file(id, "exit"), "utf8").trim(); // empty: being written
-      return text ? Number(text) : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-  let code = exitCode();
-  // A job started before the last boot has ended: its pid may be another process's by now.
-  const booted = Date.now() - uptime() * 1000;
-  if (code === undefined && meta.startedAt > booted && alive(meta.pid)) return j;
-  code ??= exitCode(); // it may have exited between the two checks
-  let endedAt = Date.now();
-  try {
-    endedAt = statSync(code === undefined ? j.log : file(id, "exit")).mtimeMs;
-  } catch {}
-  const result = { ...j, code: code ?? null, endedAt };
-  ended.set(id, result);
-  return result;
-}
-const jobs = (list: string[]) => list.map(job).filter((j): j is Job => !!j);
-const byPid = (pid: number) => jobs(ids(".json")).find((j) => j.pid === pid);
-const terminate = (j: Job) => {
-  try {
-    process.kill(-j.pid, "SIGTERM");
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/** Lines in a text, counted like lineCount. */
-const textLines = (text: string) =>
-  text.split("\n").length - (!text || text.endsWith("\n") ? 1 : 0);
-/** Lines in a file, counted in 1MB chunks. */
-function lineCount(path: string): number {
-  let n = 0;
-  let last = 10;
-  try {
-    const fd = openSync(path, "r");
-    const buf = Buffer.alloc(1024 * 1024);
-    for (let read; (read = readSync(fd, buf, 0, buf.length, null)) > 0; last = buf[read - 1]!)
-      for (let i = buf.indexOf(10); i !== -1 && i < read; i = buf.indexOf(10, i + 1)) n++;
-    closeSync(fd);
-  } catch {}
-  return last === 10 ? n : n + 1;
-}
-
-type Limits = { maxLines: number; maxBytes: number };
-/** How a job ended: its output tail, capped like the bash tool's, and where the rest is. */
-function ending(j: Job, limits: Limits) {
-  const { size, text } = readTail(j.log);
-  const t = truncateTail(text, limits);
-  const total =
-    size <= TAIL_BYTES ? textLines(text) : size <= COUNT_BYTES ? lineCount(j.log) : undefined;
-  const full = `Full output (${formatSize(size)}): ${j.log}`;
-  return {
-    pid: j.pid,
-    command: j.command,
-    code: j.code ?? null,
-    state: state(j),
-    elapsed: elapsed(j),
-    output: t.content.replace(/\n$/, ""),
-    note: t.lastLinePartial
-      ? `[Showing the last ${formatSize(t.outputBytes)} of the last line. ${full}]`
-      : total === undefined
-        ? `[Showing the last ${t.outputLines} lines. ${full}]`
-        : t.outputLines < total
-          ? `[Showing the last ${t.outputLines} of ${total} lines. ${full}]`
-          : undefined,
-  };
-}
-type Ending = ReturnType<typeof ending>;
-
-/** The end message's text for the agent, shaped like a bash result. */
-function endText(e: Ending): string {
-  const what =
-    e.code === null
-      ? "ended without an exit code"
-      : killed(e.code)
-        ? "was killed"
-        : `exited with code ${e.code}`;
-  const lines = [`Background job ${e.pid} \`${oneLine(e.command)}\` ${what} after ${e.elapsed}.`];
-  if (e.output) lines.push(e.output);
-  if (e.note) lines.push(e.note);
-  if (e.code) lines.push(`Command exited with code ${e.code}`);
-  return lines.join("\n");
-}
-
-/** Deletes finished jobs' files after 7 days and crashed foreground calls' after a day. */
-async function cleanup() {
-  const files = await readdir(DIR).catch(() => [] as string[]);
-  const byId = Map.groupBy(files, (f) => f.slice(0, f.indexOf(".")));
-  for (const [id, names] of byId) {
-    const j = names.includes(`${id}.json`) ? job(id) : undefined;
-    // A foreground call ages from its log's last write: one can run for longer than a day.
-    const lastWrite = j
-      ? 0
-      : await stat(file(id, "log")).then(
-          (s) => s.mtimeMs,
-          () => parseInt(id),
-        );
-    const old = j
-      ? j.endedAt !== undefined && Date.now() - j.endedAt > 7 * DAY
-      : Date.now() - lastWrite > DAY;
-    if (!old) continue;
-    for (const name of names) await unlink(join(DIR, name)).catch(() => {});
-    metas.delete(id);
-    ended.delete(id);
-  }
-}
 
 export default function (pi: ExtensionAPI) {
   const defaults = { autoBackgroundSeconds: 120, shortcut: "ctrl+shift+b", keepOnExit: true };
@@ -658,120 +462,11 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // Collapsed like pi's compaction message, in at most 4 lines: one per job, its command cut to
-  // fit. Expanded, the whole command, then its output.
-  pi.registerMessageRenderer<{ jobs: Ending[] }>(TYPE, (message, { expanded }, theme) => {
-    const list = message.details?.jobs ?? [];
-    const dim = (s: string) => theme.fg("dim", s);
-    const box = new Box(1, 1, (s) => theme.bg("customMessageBg", s));
-    const rows = list.map((j) => ({
-      icon: stateIcon(theme, j.state),
-      command: highlightBash(j.command),
-      meta: dim(` · pid ${j.pid} · ${j.state} · ${j.elapsed}`),
-      j,
-    }));
-    if (!expanded) {
-      const shown = rows.length > COLLAPSED_LINES ? rows.slice(0, COLLAPSED_LINES - 1) : rows;
-      const more = rows.length - shown.length;
-      const hint = dim(` (${keyText("app.tools.expand")} to expand)`);
-      let last: { width: number; lines: string[] } | undefined; // see the expanded one below
-      box.addChild({
-        invalidate: () => (last = undefined),
-        render: (width: number) => {
-          if (last?.width === width) return last.lines;
-          const lines = shown.map((r, i) => {
-            const tail = r.meta + (!more && i === shown.length - 1 ? hint : "");
-            const room = Math.max(1, width - 2 - visibleWidth(tail));
-            const cmd = r.command.length > 1 ? `${r.command[0]} …` : r.command[0]!;
-            return cut(`${r.icon} ${cut(cmd, room)}${tail}`, width);
-          });
-          if (more) lines.push(cut(dim(`+${more} more`) + hint, width));
-          last = { width, lines };
-          return lines;
-        },
-      });
-      return box;
-    }
-    // Like pi-content-layout's open bash row: a command on more than one line continues under
-    // a │ and gets a │ line before its output, which hangs off a └. Kept per width: pi renders
-    // the whole chat on every frame in full screen, and the output can run to a thousand lines.
-    let last: { width: number; lines: string[] } | undefined;
-    box.addChild({
-      invalidate: () => (last = undefined),
-      render: (width: number) => {
-        if (last?.width === width) return last.lines;
-        const fit = Math.max(1, width - 2);
-        const lines: string[] = [];
-        for (const { icon, command, meta, j } of rows) {
-          const cmd = [...command.slice(0, -1), command.at(-1) + meta].flatMap((l) =>
-            wrapTextWithAnsi(l, fit),
-          );
-          lines.push(...cmd.map((l, i) => `${i ? dim("│") : icon} ${l}`));
-          if (cmd.length > 1) lines.push(dim("│"));
-          const out = [j.output?.trim() && j.output, j.note].filter(Boolean).join("\n");
-          // Cleaned like the log viewer's lines: raw \r and cursor codes would break pi's frame.
-          const outLines = (out ? out.split("\n").map(clean) : ["(no output)"]).flatMap((l) =>
-            wrapTextWithAnsi(theme.fg(out ? "toolOutput" : "dim", l), fit),
-          );
-          lines.push(...outLines.map((l, i) => `${i ? " " : dim("└")} ${l}`), "");
-        }
-        lines.pop();
-        last = { width, lines };
-        return lines;
-      },
-    });
-    return box;
-  });
-
-  // /background list: printed like /hotkeys, never sent to the model, gone after a reload. A
-  // bullet per job, newest first: state, pid, start time, how long, cwd, and (listing all jobs)
-  // whether this session watches it; its log dim under it. Commands stay out: they're long.
-  type Row = {
-    pid: number;
-    state: string;
-    startedAt: number;
-    elapsed: string;
-    cwd: string;
-    log: string;
-    watching?: boolean;
-  };
-  const clock = (ms: number) => {
-    const d = new Date(ms);
-    const time = d.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
-    return d.toDateString() === new Date().toDateString()
-      ? time
-      : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
-  };
+  pi.registerMessageRenderer<{ jobs: Ending[] }>(TYPE, endMessage);
   const loadedAt = Date.now();
   pi.registerEntryRenderer<{ title: string; jobs: Row[]; more: number }>(
     "bash-bg-list",
-    (entry, _o, theme) => {
-      if (Date.parse(entry.timestamp) < loadedAt) return undefined;
-      const { title, jobs: rows = [], more = 0 } = entry.data!;
-      const dim = (s: string) => theme.fg("dim", s);
-      const lines = rows.flatMap((j) => [
-        `${dim("•")} ${stateIcon(theme, j.state)} ${theme.fg("accent", String(j.pid))} ` +
-          theme.fg(
-            "text",
-            `· ${clock(j.startedAt)} · ${j.state} · ${j.elapsed} · ${tilde(j.cwd)}`,
-          ) +
-          (j.watching ? ` ${theme.fg("accent", "· watching")}` : ""),
-        dim(`    ${tilde(j.log)}`),
-      ]);
-      if (more) lines.push(dim(`+${more} more in ${tilde(DIR)}/`));
-      const box = new Container();
-      box.addChild(new DynamicBorder());
-      box.addChild(new Text(theme.bold(theme.fg("accent", title)), 1, 0));
-      box.addChild(new Spacer(1));
-      box.addChild(new Text(lines.join("\n") || dim("No matching background jobs."), 1, 0));
-      box.addChild(new DynamicBorder());
-      return box;
-    },
+    (entry, _o, theme) => listEntry(entry, theme, loadedAt),
   );
 
   const moveAll = () => {
