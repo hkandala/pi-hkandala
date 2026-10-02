@@ -757,6 +757,12 @@ function fitted(
   return toggle ? [[...shown, toggle], true] : [shown, false];
 }
 
+/** Tools whose input is code: the param, and the language it's colored as when open. */
+const SOURCE: Record<string, [param: string, lang: string]> = {
+  bash: ["command", "bash"],
+  codemode: ["code", "javascript"],
+};
+
 /** A long line wrapped to `fit`; numbered code (a diff, a read, a write) continues under its code. */
 function hanging(line: string, fit: number): string[] {
   // oxlint-disable-next-line no-control-regex
@@ -802,11 +808,12 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme): string[] {
     let lines: string[];
     let toggle: string | undefined; // the input's toggle, under the result
     if (open) {
-      const full = t.toolName === "bash" ? untab(str(t.args?.command).trim()) : target;
+      const src = SOURCE[t.toolName];
+      const full = src ? untab(str(t.args?.[src[0]]).trim()) : target;
       // A copy: the highlighted command is memoized, and the options get appended to it.
       const colored = [
-        ...(t.toolName === "bash" && state !== "error"
-          ? memo(t, "clCommand", [full, theme], () => highlighted(full, "bash", theme))
+        ...(src && state !== "error"
+          ? memo(t, "clCommand", [full, theme], () => highlighted(full, src[1], theme))
           : full.split("\n").map((l) => theme.fg(color, l))),
       ];
       // The options follow the input, dim, their own line breaks kept.

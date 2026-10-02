@@ -64,7 +64,7 @@ A compact, minimal transcript for pi: tool calls and thinking sit in a summarize
 
 ## Syntax highlighting
 
-Read, written, and edited code is colored by pi's own highlighter (the one for code blocks in assistant text), by file extension, in the pi theme's `syntax*` colors: switch themes, or make your own (pi's themes docs), to change them. An open bash command is colored as bash (red when it failed); output stays plain. Edits tint added and removed lines with the theme's tool backgrounds, and when a changed line pairs with its new version, mark the changed words with a stronger tint:
+Read, written, and edited code is colored by pi's own highlighter (the one for code blocks in assistant text), by file extension, in the pi theme's `syntax*` colors: switch themes, or make your own (pi's themes docs), to change them. An open bash command is colored as bash, and an open codemode script as JavaScript (red when it failed); output stays plain. Edits tint added and removed lines with the theme's tool backgrounds, and when a changed line pairs with its new version, mark the changed words with a stronger tint:
 
 ```
    └ edit  math.js · +1 -1
