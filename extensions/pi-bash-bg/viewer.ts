@@ -16,24 +16,61 @@ import {
 } from "@earendil-works/pi-tui";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 
-const MAX_BYTES = 1024 * 1024; // only the log's last 1MB is shown
+export const TAIL_BYTES = 1024 * 1024; // the viewer and end messages read at most the log's last 1MB
 
-/** What the viewer shows about its job, read on every render. */
+/** The log's size and its last 1MB as text, without the first line when it was cut. */
+export function readTail(path: string): { size: number; text: string } {
+  try {
+    const size = statSync(path).size;
+    const start = Math.max(0, size - TAIL_BYTES);
+    const buf = Buffer.alloc(size - start);
+    const fd = openSync(path, "r");
+    try {
+      readSync(fd, buf, 0, buf.length, start);
+    } finally {
+      closeSync(fd);
+    }
+    const text = buf.toString("utf8");
+    return { size, text: start > 0 ? text.slice(text.indexOf("\n") + 1) : text };
+  } catch {
+    return { size: 0, text: "" };
+  }
+}
+
+/** What the viewer shows about its job, read by its timer every 250ms (not per frame: it can read files). */
 export type ViewerInfo = { pid: number; command: string; detail: string; running: boolean };
 
 /** One display line: after the last \r (progress bars), only color escapes kept, no controls. */
-const clean = (line: string) => {
+export const clean = (line: string) => {
   const text = line.replace(/\r+$/, "");
   return (
     text
       .slice(text.lastIndexOf("\r") + 1)
       .replace(/\t/g, "    ")
+      // OSC, DCS, APC and PM strings (titles, hyperlinks), with or without their terminator.
+      // oxlint-disable-next-line no-control-regex
+      .replace(/\x1b[\]_P^][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "")
       // oxlint-disable-next-line no-control-regex
       .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, (m) => (m.endsWith("m") ? m : ""))
+      // Any other escape (charset, reset, cursor save), and a CSI cut off at the line's end.
+      // oxlint-disable-next-line no-control-regex
+      .replace(/\x1b(?!\[)[ -/]*[0-~]?|\x1b\[[0-9;?]*[ -/]*$/g, "")
       // oxlint-disable-next-line no-control-regex
       .replace(/[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f]/g, "")
   );
 };
+
+/** A bash command colored line by line; a token across lines (a quoted string) is reopened on each. */
+export function highlightBash(command: string): string[] {
+  let open = "";
+  return highlightCode(command.trim(), "bash").map((l) => {
+    const line = open + l;
+    // oxlint-disable-next-line no-control-regex
+    const last = line.match(/\x1b\[(?:38;[\d;]*|39)m/g)?.at(-1) ?? "";
+    open = last.startsWith("\x1b[38") ? last : "";
+    return line;
+  });
+}
 
 /** Cuts `text` to `width` with a … in the style at the cut (pi's truncateToWidth resets it). */
 export function cut(text: string, width: number): string {
@@ -80,15 +117,7 @@ export class LogViewer {
   ) {
     Object.assign(this, { tui, theme, log, info, kill, done });
     this.now = info();
-    // A token across lines (a quoted string) has its color reopened on each, as pi-content-layout does.
-    let open = "";
-    this.command = highlightCode(this.now.command.trim(), "bash").map((l) => {
-      const line = open + l;
-      // oxlint-disable-next-line no-control-regex
-      const last = line.match(/\x1b\[(?:38;[\d;]*|39)m/g)?.at(-1) ?? "";
-      open = last.startsWith("\x1b[38") ? last : "";
-      return line;
-    });
+    this.command = highlightBash(this.now.command); // reopened per line, as pi-content-layout does
     this.load();
     let ticks = 0;
     this.timer = setInterval(() => {
@@ -107,17 +136,9 @@ export class LogViewer {
       size = statSync(this.log).size;
     } catch {}
     if (size === this.size) return false;
-    this.size = size;
-    const start = Math.max(0, size - MAX_BYTES);
-    const buf = Buffer.alloc(size - start);
-    try {
-      const fd = openSync(this.log, "r");
-      readSync(fd, buf, 0, buf.length, start);
-      closeSync(fd);
-    } catch {}
-    let text = buf.toString("utf8");
-    if (start > 0) text = text.slice(text.indexOf("\n") + 1); // drop the cut first line
-    this.lines = text.replace(/\n$/, "").split("\n");
+    const tail = readTail(this.log);
+    this.size = tail.size;
+    this.lines = tail.text.replace(/\n$/, "").split("\n");
     if (this.lines.length === 1 && !this.lines[0]) this.lines = [];
     return true;
   }
@@ -171,9 +192,8 @@ export class LogViewer {
   }
 
   /**
-   * The log's lines cleaned and wrapped to `width`, again only when the log grew or the width
-   * changed. None when it is only whitespace.
-   * ponytail: rewraps the whole tail (up to 1MB) on each growth; wrap only new lines if it lags.
+   * The log's lines cleaned and wrapped to `width`, all of them again whenever the log grew or the
+   * width changed. None when it is only whitespace.
    */
   private wrap(width: number): string[] {
     const w = this.wrapped;
@@ -194,7 +214,7 @@ export class LogViewer {
   }
 
   handleInput(data: string): void {
-    const x = data === "x" && this.info().running;
+    const x = data === "x" && this.now.running;
     if (matchesKey(data, Key.escape) || data === "q") return this.done();
     if (x && this.armed) this.kill();
     this.armed = x && !this.armed;

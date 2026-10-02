@@ -27,7 +27,6 @@ import {
   formatSize,
   getAgentDir,
   getShellConfig,
-  highlightCode,
   keyText,
   SettingsManager,
   truncateTail,
@@ -54,20 +53,31 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { readdir, unlink } from "node:fs/promises";
-import { constants, homedir } from "node:os";
+import { readdir, stat, unlink } from "node:fs/promises";
+import { constants, homedir, uptime } from "node:os";
 import { join } from "node:path";
-import { cut, FULL_SCREEN, LogViewer } from "./viewer.ts";
+import {
+  clean,
+  cut,
+  FULL_SCREEN,
+  highlightBash,
+  LogViewer,
+  readTail,
+  TAIL_BYTES,
+} from "./viewer.ts";
 
 const DIR = join(getAgentDir(), "bash-bg");
 const TYPE = "background job";
 const DAY = 86_400_000;
-const TAIL_BYTES = 1024 * 1024; // end messages read at most the log's last 1MB
+const COUNT_BYTES = 32 * 1024 * 1024; // a bigger log's lines aren't counted: it would block pi
+const PUMP_BYTES = 4 * 1024 * 1024; // the most log bytes a call passes on per event-loop turn
+const LIST_MAX = 100; // bash_list's and /background list's most rows
 const COLLAPSED_LINES = 4; // a collapsed end message's most lines
 // $1 the command, $2 the exit file. `& wait` lets the trap run while the command runs; the trap
 // stops the whole group, so plain `kill <pid>` takes `&` grandchildren down too.
 const WRAPPER = `trap 'trap - TERM INT HUP; echo 143 > "$2"; kill -TERM 0' TERM INT HUP
 (__cmd=$1; set --; eval "$__cmd") & wait $!; c=$?; echo $c > "$2"; exit $c`;
+const NOTIFIED = "You'll be notified when it exits; don't wait, sleep or poll on it.";
 const SLEEP_TIP =
   "Tip: don't sleep to wait. Run long commands with background: true; you'll be notified when they exit.";
 
@@ -76,20 +86,23 @@ type Meta = { pid: number; command: string; cwd: string; startedAt: number; sess
 type Job = Meta & { id: string; log: string; code?: number | null; endedAt?: number };
 /** Why a call moved to the background: the agent asked, the user did, or it ran too long. */
 type Reason = "agent" | "user" | "auto";
-type Call = { startedAt: number; background: (reason: Reason) => void; abort: () => void };
+type Call = { background: (reason: Reason) => void; abort: () => void };
 
-// Survives /reload: which watched jobs this session has seen running, and the last herdr flag.
+// Survives /reload: the watched jobs this session has seen running, the last herdr flag, the live
+// runtime's check and abort hooks, and whether cleanup already ran in this process.
 const g = ((globalThis as { __piBashBg?: unknown }).__piBashBg ??= {}) as {
   seen?: { sessionId: string; ids: Set<string> };
   herdr?: boolean;
   poke?: () => void;
+  abortAll?: () => void;
   cleaned?: boolean;
 };
 
 const file = (id: string, ext: string) => join(DIR, `${id}.${ext}`);
 const readJson = (path: string): Record<string, any> => {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    const value = JSON.parse(readFileSync(path, "utf8"));
+    return value && typeof value === "object" ? value : {};
   } catch {
     return {};
   }
@@ -102,7 +115,8 @@ const alive = (pid: number) => {
     return (err as NodeJS.ErrnoException).code === "EPERM";
   }
 };
-const tilde = (p: string) => (p.startsWith(homedir()) ? `~${p.slice(homedir().length)}` : p);
+const tilde = (p: string) =>
+  p === homedir() || p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p;
 const oneLine = (cmd: string) => {
   const lines = cmd.trim().split("\n");
   return lines.length > 1 ? `${lines[0]} …` : lines[0]!;
@@ -167,7 +181,9 @@ function job(id: string): Job | undefined {
     }
   };
   let code = exitCode();
-  if (code === undefined && alive(meta.pid)) return j;
+  // A job started before the last boot has ended: its pid may be another process's by now.
+  const booted = Date.now() - uptime() * 1000;
+  if (code === undefined && meta.startedAt > booted && alive(meta.pid)) return j;
   code ??= exitCode(); // it may have exited between the two checks
   let endedAt = Date.now();
   try {
@@ -188,6 +204,9 @@ const terminate = (j: Job) => {
   }
 };
 
+/** Lines in a text, counted like lineCount. */
+const textLines = (text: string) =>
+  text.split("\n").length - (!text || text.endsWith("\n") ? 1 : 0);
 /** Lines in a file, counted in 1MB chunks. */
 function lineCount(path: string): number {
   let n = 0;
@@ -205,20 +224,11 @@ function lineCount(path: string): number {
 type Limits = { maxLines: number; maxBytes: number };
 /** How a job ended: its output tail, capped like the bash tool's, and where the rest is. */
 function ending(j: Job, limits: Limits) {
-  let size = 0;
-  let text = "";
-  try {
-    size = statSync(j.log).size;
-    const start = Math.max(0, size - TAIL_BYTES);
-    const buf = Buffer.alloc(size - start);
-    const fd = openSync(j.log, "r");
-    readSync(fd, buf, 0, buf.length, start);
-    closeSync(fd);
-    text = buf.toString("utf8");
-    if (start > 0) text = text.slice(text.indexOf("\n") + 1); // drop the cut first line
-  } catch {}
+  const { size, text } = readTail(j.log);
   const t = truncateTail(text, limits);
-  const total = lineCount(j.log);
+  const total =
+    size <= TAIL_BYTES ? textLines(text) : size <= COUNT_BYTES ? lineCount(j.log) : undefined;
+  const full = `Full output (${formatSize(size)}): ${j.log}`;
   return {
     pid: j.pid,
     command: j.command,
@@ -226,10 +236,13 @@ function ending(j: Job, limits: Limits) {
     state: state(j),
     elapsed: elapsed(j),
     output: t.content.replace(/\n$/, ""),
-    note:
-      t.outputLines < total
-        ? `[Showing the last ${t.outputLines} of ${total} lines. Full output (${formatSize(size)}): ${j.log}]`
-        : undefined,
+    note: t.lastLinePartial
+      ? `[Showing the last ${formatSize(t.outputBytes)} of the last line. ${full}]`
+      : total === undefined
+        ? `[Showing the last ${t.outputLines} lines. ${full}]`
+        : t.outputLines < total
+          ? `[Showing the last ${t.outputLines} of ${total} lines. ${full}]`
+          : undefined,
   };
 }
 type Ending = ReturnType<typeof ending>;
@@ -255,9 +268,16 @@ async function cleanup() {
   const byId = Map.groupBy(files, (f) => f.slice(0, f.indexOf(".")));
   for (const [id, names] of byId) {
     const j = names.includes(`${id}.json`) ? job(id) : undefined;
+    // A foreground call ages from its log's last write: one can run for longer than a day.
+    const lastWrite = j
+      ? 0
+      : await stat(file(id, "log")).then(
+          (s) => s.mtimeMs,
+          () => parseInt(id),
+        );
     const old = j
       ? j.endedAt !== undefined && Date.now() - j.endedAt > 7 * DAY
-      : Date.now() - parseInt(id) > DAY;
+      : Date.now() - lastWrite > DAY;
     if (!old) continue;
     for (const name of names) await unlink(join(DIR, name)).catch(() => {});
     metas.delete(id);
@@ -266,12 +286,12 @@ async function cleanup() {
 }
 
 export default function (pi: ExtensionAPI) {
-  const config = {
-    autoBackgroundSeconds: 120,
-    shortcut: "ctrl+shift+b",
-    keepOnExit: true,
-    ...readJson(join(getAgentDir(), "extensions", "pi-bash-bg.json")),
-  };
+  const defaults = { autoBackgroundSeconds: 120, shortcut: "ctrl+shift+b", keepOnExit: true };
+  const user = readJson(join(getAgentDir(), "extensions", "pi-bash-bg.json"));
+  // A key of the wrong type keeps its default.
+  const config = Object.fromEntries(
+    Object.entries(defaults).map(([k, v]) => [k, typeof user[k] === typeof v ? user[k] : v]),
+  ) as typeof defaults;
   let ctx: ExtensionContext | undefined;
   let sessionId = "";
   let settings: SettingsManager | undefined;
@@ -282,6 +302,11 @@ export default function (pi: ExtensionAPI) {
   let settling: CustomMessageEntryDraft[] | undefined; // print mode: end messages go into agent_before_settle
   let lastUpdate = "";
   const calls = new Set<Call>(); // running foreground calls
+  const durations = new Map<string, number>(); // failed bash calls' durations, by tool call id
+  // pi kills its own bash calls when it exits without a session_shutdown (a crash, a lost
+  // terminal); one exit hook per process, for whichever runtime is live.
+  if (!g.abortAll) process.on("exit", () => g.abortAll?.());
+  g.abortAll = () => calls.forEach((call) => call.abort());
 
   const seen = () => g.seen?.ids ?? new Set<string>();
   /** The bash tool's output limits: pi-bash-cap's when it's loaded (it fills them in), else pi's. */
@@ -300,13 +325,14 @@ export default function (pi: ExtensionAPI) {
     );
   const running = (list: Job[]) => list.filter((j) => j.code === undefined);
   /** Watched jobs, then other sessions' running ones: what the pickers and completions offer. */
-  const listed = (watched = watchedIds()) => [
-    ...jobs(watched),
-    ...running(jobs(ids(".json").filter((id) => !watched.includes(id)))),
-  ];
+  const listed = (watched = watchedIds()) => {
+    const mine = new Set(watched);
+    return [...jobs(watched), ...running(jobs(ids(".json").filter((id) => !mine.has(id))))];
+  };
 
   // herdr (optional patch, see herdr/README.md at the repo root): working while watched jobs run.
-  // It plays "done" on every working → idle change, so it must never see a gap.
+  // Its pane goes idle at once on a working → idle change (the done toast and sound follow later),
+  // and an agent watching the pane takes any idle as finished, so it must never see a gap.
   const emitHerdr = (active: boolean) => {
     g.herdr = active;
     pi.events.emit("herdr:working", { source: "pi-bash-bg", active });
@@ -318,7 +344,9 @@ export default function (pi: ExtensionAPI) {
     if (!ctx) return;
     const mine = jobs(watchedIds());
     const count = running(mine).length;
-    const waiting = busy ? 0 : count;
+    // Jobs that ended but whose end message isn't sent yet still count, so there is no gap.
+    const pending = Math.max(count, jobs([...seen()]).length);
+    const waiting = busy ? 0 : pending;
     const update = {
       jobs: mine.map((j) => ({
         pid: j.pid,
@@ -337,15 +365,20 @@ export default function (pi: ExtensionAPI) {
     lastUpdate = json;
     // Also during the turn: herdr publishes idle when the turn settles, before this could say
     // otherwise, and an agent watching this one would take that as finished.
-    const active = count > 0 || !!waking;
+    const active = pending > 0 || !!waking;
     if (active !== g.herdr) emitHerdr(active);
   };
 
   /** Sends the end message for watched jobs that ended since the last check. */
   const check = () => {
     if (!ctx) return;
-    const done = jobs([...seen()]).filter((j) => j.code !== undefined);
-    for (const j of done) seen().delete(j.id);
+    const done: Job[] = [];
+    for (const id of seen()) {
+      const j = job(id);
+      if (j && j.code === undefined) continue;
+      seen().delete(id); // ended, or its files were deleted
+      if (j) done.push(j);
+    }
     if (done.length) {
       const endings = done.map((j) => ending(j, limits()));
       const message = {
@@ -387,6 +420,12 @@ export default function (pi: ExtensionAPI) {
   ) =>
     new Promise<{ exitCode: number | null }>((resolve, reject) => {
       if (opts.signal?.aborted) return reject(new Error("aborted"));
+      // pi's own checks: setTimeout fires at once on a negative or too large delay.
+      const t = opts.timeout;
+      if (t !== undefined && (!Number.isFinite(t) || t <= 0))
+        return reject(new Error("Invalid timeout: must be a finite number of seconds"));
+      if (t !== undefined && t > 2147483.647)
+        return reject(new Error("Invalid timeout: maximum is 2147483.647 seconds"));
       if (!existsSync(cwd))
         return reject(
           new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`),
@@ -402,16 +441,19 @@ export default function (pi: ExtensionAPI) {
       );
       closeSync(out);
       const input = openSync(log, "r");
+      const chunk = Buffer.allocUnsafe(64 * 1024);
       let offset = 0;
+      /** Passes new log bytes on, at most PUMP_BYTES a turn; returns whether more are left. */
       const pump = () => {
-        for (let n = 1; n > 0;) {
-          const buf = Buffer.alloc(64 * 1024);
-          n = readSync(input, buf, 0, buf.length, offset);
+        for (let sent = 0; sent < PUMP_BYTES; sent += chunk.length) {
+          const n = readSync(input, chunk, 0, chunk.length, offset);
+          if (n <= 0) return false;
           offset += n;
-          if (n > 0) opts.onData(buf.subarray(0, n));
+          opts.onData(Buffer.from(chunk.subarray(0, n))); // a copy: pi keeps the chunks
         }
+        return true;
       };
-      const kill = (sig: NodeJS.Signals) => {
+      const signal = (sig: NodeJS.Signals) => {
         try {
           if (child.pid) process.kill(-child.pid, sig);
         } catch {}
@@ -420,10 +462,10 @@ export default function (pi: ExtensionAPI) {
       const timer = opts.timeout
         ? setTimeout(() => {
             timedOut = true;
-            kill(calls.has(call) ? "SIGKILL" : "SIGTERM"); // a background job records its end
+            signal(calls.has(call) ? "SIGKILL" : "SIGTERM"); // a background job records its end
           }, opts.timeout * 1000).unref()
         : undefined;
-      const onAbort = () => kill("SIGKILL");
+      const onAbort = () => signal("SIGKILL");
       opts.signal?.addEventListener("abort", onAbort, { once: true });
       const poll = setInterval(pump, 250);
       const auto =
@@ -433,23 +475,17 @@ export default function (pi: ExtensionAPI) {
       const stop = () => {
         clearInterval(poll);
         clearTimeout(auto);
-        closeSync(input);
         opts.signal?.removeEventListener("abort", onAbort);
         calls.delete(call);
       };
+      const startedAt = Date.now();
       const call: Call = {
-        startedAt: Date.now(),
         abort: onAbort,
         background: (reason) => {
           if (!calls.has(call) || !child.pid) return;
           stop();
-          const meta: Meta = {
-            pid: child.pid,
-            command: shown,
-            cwd,
-            startedAt: call.startedAt,
-            sessionId,
-          };
+          closeSync(input);
+          const meta: Meta = { pid: child.pid, command: shown, cwd, startedAt, sessionId };
           writeFileSync(file(id, "json"), JSON.stringify(meta));
           writeFileSync(file(id, `watch.${sessionId}`), "");
           seen().add(id);
@@ -461,7 +497,7 @@ export default function (pi: ExtensionAPI) {
               : reason === "user"
                 ? `The user moved this command to the background while it ran. It keeps running ${where}; its output so far is in the log.`
                 : `Still running after ${config.autoBackgroundSeconds}s, so it moved to the background automatically. It keeps running ${where}; its output so far is in the log.`) +
-              " You'll be notified when it exits; don't wait, sleep or poll on it.",
+              ` ${NOTIFIED}`,
           );
           resolve({ exitCode: 0 });
           refresh();
@@ -477,6 +513,7 @@ export default function (pi: ExtensionAPI) {
       child.on("error", (err) => {
         if (!calls.has(call)) return;
         stop();
+        closeSync(input);
         clearTimeout(timer);
         forget();
         reject(err);
@@ -484,14 +521,19 @@ export default function (pi: ExtensionAPI) {
       child.on("exit", (code, sig) => {
         clearTimeout(timer);
         if (!calls.has(call)) return g.poke?.(); // a background job: whichever runtime is live checks
-        pump();
-        // Part of the output, so it survives truncation and stays ahead of pi's status line.
-        if (tip) opts.onData(Buffer.from(`\n${SLEEP_TIP}`));
         stop();
-        forget();
-        if (opts.signal?.aborted) reject(new Error("aborted"));
-        else if (timedOut) reject(new Error(`timeout:${opts.timeout}`));
-        else resolve({ exitCode: code ?? 128 + (sig ? (constants.signals[sig] ?? 0) : 0) });
+        // The rest of the log, a turn at a time, so a big backlog doesn't hold the event loop.
+        const finish = () => {
+          if (pump()) return void setImmediate(finish);
+          closeSync(input);
+          // Part of the output, so it survives truncation and stays ahead of pi's status line.
+          if (tip) opts.onData(Buffer.from(`\n${SLEEP_TIP}`));
+          forget();
+          if (opts.signal?.aborted) reject(new Error("aborted"));
+          else if (timedOut) reject(new Error(`timeout:${opts.timeout}`));
+          else resolve({ exitCode: code ?? 128 + (sig ? (constants.signals[sig] ?? 0) : 0) });
+        };
+        finish();
       });
       if (background) call.background("agent");
     });
@@ -535,15 +577,28 @@ export default function (pi: ExtensionAPI) {
             run(cmd, cwd, opts, command, background === true, tip, (text) => (moved = text)),
         },
       });
-      const started = Date.now();
-      const result = await tool.execute(toolCallId, { command, timeout }, signal, onUpdate, c);
       // How long the call held the turn (until it ended or moved to the background). pi saves a
       // batch of parallel results together, so this is the only exact duration for history.
+      const started = Date.now();
+      let result;
+      try {
+        result = await tool.execute(toolCallId, { command, timeout }, signal, onUpdate, c);
+      } catch (err) {
+        durations.set(toolCallId, Date.now() - started); // added to pi's error result below
+        throw err;
+      }
       const durationMs = Date.now() - started;
       return moved
         ? { content: [{ type: "text", text: moved }], details: { durationMs } }
         : { ...result, details: { ...result.details, durationMs } };
     },
+  });
+  // pi turns a thrown error into a result with empty details: the duration goes there.
+  pi.on("tool_result", (event) => {
+    const durationMs = durations.get(event.toolCallId);
+    if (durationMs === undefined) return;
+    durations.delete(event.toolCallId);
+    return { details: { ...(event.details as object), durationMs } };
   });
 
   const jobLine = (j: Job) =>
@@ -568,10 +623,10 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, { jobs: which = "watching", status = "any" }) {
       const list = find(which as Scope, status as Status);
-      const lines = list.slice(0, 100).map(jobLine);
-      if (list.length > 100)
+      const lines = list.slice(0, LIST_MAX).map(jobLine);
+      if (list.length > LIST_MAX)
         lines.push(
-          `Showing 100 of ${list.length}. All jobs are in ${tilde(DIR)}/ (<id>.json has pid and command).`,
+          `Showing ${LIST_MAX} of ${list.length}. All jobs are in ${tilde(DIR)}/ (<id>.json has pid and command).`,
         );
       return {
         content: [{ type: "text", text: lines.join("\n") || "No matching background jobs." }],
@@ -595,10 +650,9 @@ export default function (pi: ExtensionAPI) {
         );
       writeFileSync(file(j.id, `watch.${sessionId}`), "");
       if (j.code === undefined) seen().add(j.id);
+      else seen().delete(j.id); // this answer is its end message
       const text =
-        j.code === undefined
-          ? `Watching pid ${pid}. You'll be notified when it exits; don't wait, sleep or poll on it.`
-          : endText(ending(j, limits()));
+        j.code === undefined ? `Watching pid ${pid}. ${NOTIFIED}` : endText(ending(j, limits()));
       refresh();
       return { content: [{ type: "text", text }], details: undefined };
     },
@@ -612,7 +666,7 @@ export default function (pi: ExtensionAPI) {
     const box = new Box(1, 1, (s) => theme.bg("customMessageBg", s));
     const rows = list.map((j) => ({
       icon: stateIcon(theme, j.state),
-      command: highlightCode(j.command.trim(), "bash"),
+      command: highlightBash(j.command),
       meta: dim(` · pid ${j.pid} · ${j.state} · ${j.elapsed}`),
       j,
     }));
@@ -620,9 +674,11 @@ export default function (pi: ExtensionAPI) {
       const shown = rows.length > COLLAPSED_LINES ? rows.slice(0, COLLAPSED_LINES - 1) : rows;
       const more = rows.length - shown.length;
       const hint = dim(` (${keyText("app.tools.expand")} to expand)`);
+      let last: { width: number; lines: string[] } | undefined; // see the expanded one below
       box.addChild({
-        invalidate() {},
+        invalidate: () => (last = undefined),
         render: (width: number) => {
+          if (last?.width === width) return last.lines;
           const lines = shown.map((r, i) => {
             const tail = r.meta + (!more && i === shown.length - 1 ? hint : "");
             const room = Math.max(1, width - 2 - visibleWidth(tail));
@@ -630,6 +686,7 @@ export default function (pi: ExtensionAPI) {
             return cut(`${r.icon} ${cut(cmd, room)}${tail}`, width);
           });
           if (more) lines.push(cut(dim(`+${more} more`) + hint, width));
+          last = { width, lines };
           return lines;
         },
       });
@@ -652,7 +709,8 @@ export default function (pi: ExtensionAPI) {
           lines.push(...cmd.map((l, i) => `${i ? dim("│") : icon} ${l}`));
           if (cmd.length > 1) lines.push(dim("│"));
           const out = [j.output?.trim() && j.output, j.note].filter(Boolean).join("\n");
-          const outLines = (out ? out.split("\n") : ["(no output)"]).flatMap((l) =>
+          // Cleaned like the log viewer's lines: raw \r and cursor codes would break pi's frame.
+          const outLines = (out ? out.split("\n").map(clean) : ["(no output)"]).flatMap((l) =>
             wrapTextWithAnsi(theme.fg(out ? "toolOutput" : "dim", l), fit),
           );
           lines.push(...outLines.map((l, i) => `${i ? " " : dim("└")} ${l}`), "");
@@ -803,7 +861,7 @@ export default function (pi: ExtensionAPI) {
         const watched = which === "all" ? watchedIds() : [];
         return pi.appendEntry("bash-bg-list", {
           title: `Background jobs · ${status === "any" ? "all" : status} · ${scope}`,
-          jobs: list.slice(0, 100).map((j) => ({
+          jobs: list.slice(0, LIST_MAX).map((j) => ({
             pid: j.pid,
             state: state(j),
             startedAt: j.startedAt,
@@ -812,12 +870,15 @@ export default function (pi: ExtensionAPI) {
             cwd: j.cwd,
             log: j.log,
           })),
-          more: Math.max(0, list.length - 100),
+          more: Math.max(0, list.length - LIST_MAX),
         });
       }
       if (sub === "logs") {
-        const j = arg ? byPid(Number(arg)) : await pick("Open logs", listed());
+        const tui = c.mode === "tui";
+        const j = arg ? byPid(Number(arg)) : tui ? await pick("Open logs", listed()) : undefined;
         if (arg && !j) return c.ui.notify(`pid ${arg} is not a background job.`, "warning");
+        if (!tui)
+          return c.ui.notify(`The log viewer needs the TUI. Log: ${j?.log ?? `${DIR}/`}`, "info");
         if (j) await openLogs(j);
         return;
       }
@@ -853,7 +914,10 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (event, c) => {
     ctx = c;
     sessionId = c.sessionManager.getSessionId();
-    settings = SettingsManager.create(c.cwd);
+    // Project settings only when pi trusts the project, as for pi's own bash.
+    settings = SettingsManager.create(c.cwd, getAgentDir(), {
+      projectTrusted: c.isProjectTrusted(),
+    });
     lastUpdate = "";
     // Only jobs running now can send an end message; a /reload keeps the list, so jobs that ended
     // during it still do.
@@ -878,9 +942,14 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_start", () => {
     busy = true;
-    clearTimeout(waking);
-    waking = undefined;
     refresh();
+    // The wake-up ends after every extension's agent_start, so herdr's integration is working
+    // first, whichever loaded first.
+    setTimeout(() => {
+      clearTimeout(waking);
+      waking = undefined;
+      refresh();
+    }, 0);
   });
   pi.on("agent_settled", () => {
     busy = false;
