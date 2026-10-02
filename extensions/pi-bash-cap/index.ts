@@ -148,6 +148,8 @@ export default function (pi: ExtensionAPI) {
 
     return {
       content: [{ type: "text", text }],
+      // pi's structured result (codemode reads it) is not cut by the model-facing limits: keep it.
+      structuredContent: event.structuredContent,
       // Keeps other details (e.g. pi-bash-bg's durationMs); replaces pi's truncation ones.
       details: {
         ...(event.details as object),
