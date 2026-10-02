@@ -4,7 +4,7 @@
  * Port of https://github.com/DietrichGebert/ponytail (skills/ copied as-is, not registered as pi
  * skills: /ponytail run sends them, and the section points the model at their files).
  *
- * /ponytail mode [lite|full|ultra|off] · status · run [ponytail|review|audit|debt|gain]
+ * /ponytail mode <lite|full|ultra|off> · status · run [ponytail|review|audit|debt|gain]
  *
  * The mode is not remembered: every session starts at defaultMode.
  * Config (optional): ~/.pi/agent/extensions/pi-ponytail.json  →  { "defaultMode": "full" }
@@ -19,10 +19,10 @@ import { fileURLToPath } from "node:url";
 const MODES = ["lite", "full", "ultra", "off"];
 const SKILLS = ["ponytail", "review", "audit", "debt", "gain"];
 const USAGE =
-  "Usage: /ponytail mode [lite|full|ultra|off] · status · run [" + SKILLS.join("|") + "]";
+  "Usage: /ponytail mode <lite|full|ultra|off> · status · run [" + SKILLS.join("|") + "]";
 const skillsDir = join(dirname(fileURLToPath(import.meta.url)), "skills");
-const skillPath = (name: string) =>
-  join(skillsDir, name === "ponytail" ? name : `ponytail-${name}`, "SKILL.md");
+const skillName = (name: string) => (name === "ponytail" ? name : `ponytail-${name}`);
+const skillPath = (name: string) => join(skillsDir, skillName(name), "SKILL.md");
 
 function defaultMode(): string {
   try {
@@ -36,27 +36,34 @@ function defaultMode(): string {
 
 const stripFrontmatter = (text: string) => text.replace(/^---[\s\S]*?---\s*/, "").trim();
 
+// A mode's intensity table row and example line in the ponytail SKILL.md.
+const ROW = /^\| \*\*(lite|full|ultra)\*\* \| (.+?) \|$/;
+const EXAMPLE = /^- (lite|full|ultra): "/;
+const header = (mode: string) => `PONYTAIL MODE ACTIVE — level: ${mode}`;
+
 /** SKILL.md body without frontmatter, keeping only this mode's intensity row and example. */
-export function instructions(skill: string, mode: string): string {
+function instructions(skill: string, mode: string): string {
   const body = stripFrontmatter(skill)
     .split("\n")
     .filter((line) => {
-      const m =
-        line.match(/^\| \*\*(lite|full|ultra)\*\* \|/) ?? line.match(/^- (lite|full|ultra): "/);
+      const m = line.match(ROW) ?? line.match(EXAMPLE);
       return !m || m[1] === mode;
     })
     .join("\n");
-  return `PONYTAIL MODE ACTIVE — level: ${mode}\n\n${body}`;
+  return `${header(mode)}\n\n${body}`;
 }
 
 /**
  * The system prompt section: the gist, the mode's intensity row, and where the full rules are.
  * The model reads the ponytail skill file before code work, so the prompt stays short.
  */
-export function gist(skill: string, mode: string): string {
-  const row = skill.match(new RegExp(`^\\| \\*\\*${mode}\\*\\* \\| (.+?) \\|$`, "m"))?.[1];
+function gist(skill: string, mode: string): string {
+  const row = skill
+    .split("\n")
+    .map((line) => line.match(ROW))
+    .find((m) => m?.[1] === mode)?.[2];
   return [
-    `PONYTAIL MODE ACTIVE — level: ${mode}${row ? `. ${row}` : ""}`,
+    `${header(mode)}${row ? `. ${row}` : ""}`,
     "",
     "You are a lazy senior developer: the simplest solution that works. Before writing code, ask in order: does it need to exist, is it already in this codebase, does the stdlib, the platform or an installed dependency cover it, can it be one line; only then write the minimum. Fix root causes, not symptoms. No unrequested abstractions; deletion over addition; the shortest correct diff, but only after reading the code it touches.",
     "",
@@ -82,7 +89,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("ponytail", {
     description:
-      "Ponytail: mode [lite|full|ultra|off], status, run [ponytail|review|audit|debt|gain]",
+      "Ponytail: mode <lite|full|ultra|off>, status, run [ponytail|review|audit|debt|gain]",
     getArgumentCompletions: (prefix) => {
       const all = [...MODES.map((m) => `mode ${m}`), "status", ...SKILLS.map((s) => `run ${s}`)];
       const items = all.filter((a) => a.startsWith(prefix)).map((a) => ({ value: a, label: a }));
@@ -103,10 +110,10 @@ export default function (pi: ExtensionAPI) {
           arg === "ponytail"
             ? instructions(text, mode === "off" ? "full" : mode)
             : stripFrontmatter(text);
-        const name = arg === "ponytail" ? arg : `ponytail-${arg}`;
+        // When idle, pi ignores deliverAs and sends it now.
         pi.sendUserMessage(
-          `<skill name="${name}" location="${path}">\nReferences are relative to ${dirname(path)}.\n\n${body}\n</skill>`,
-          { deliverAs: ctx.isIdle() ? undefined : "followUp" },
+          `<skill name="${skillName(arg)}" location="${path}">\nReferences are relative to ${dirname(path)}.\n\n${body}\n</skill>`,
+          { deliverAs: "followUp" },
         );
       } else {
         ctx.ui.notify(USAGE, "warning");
