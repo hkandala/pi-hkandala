@@ -59,11 +59,16 @@ type Indicator = {
 type Editor = { workingStatusIndicator?: unknown; setWorkingStatusIndicator(i?: Indicator): void };
 type Node = { children?: Node[]; embedWorkingStatus?: boolean } & Partial<Editor>;
 
-const findEditor = (node: Node): Editor | undefined => {
+// Searched on every tick while a label shows: pi swaps its editor (pi-footer's box, a /reload), and
+// a selector or dialog can stand in for it. Last child first and a few levels down at most: the
+// editor sits near the bottom of pi's tree (TUI, editor container, editor), so a hit takes a few
+// steps and a miss never walks the whole transcript.
+const findEditor = (node: Node, depth = 3): Editor | undefined => {
   if (node.embedWorkingStatus === true && typeof node.setWorkingStatusIndicator === "function")
     return node as Editor;
-  for (const child of node.children ?? []) {
-    const found = findEditor(child);
+  const children = depth > 0 ? (node.children ?? []) : [];
+  for (let i = children.length - 1; i >= 0; i--) {
+    const found = findEditor(children[i]!, depth - 1);
     if (found) return found;
   }
   return undefined;
@@ -72,7 +77,7 @@ const findEditor = (node: Node): Editor | undefined => {
 export default function (pi: ExtensionAPI) {
   let ctx: ExtensionContext | undefined;
   let root: Node | undefined;
-  let editor: Editor | null | undefined; // null: none found, searched again at agent_settled
+  let editor: Editor | undefined; // the one the label went on last
   let requestRender = () => {};
   let timer: ReturnType<typeof setInterval> | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -141,8 +146,13 @@ export default function (pi: ExtensionAPI) {
       );
       ctx.ui.setWorkingMessage(`${verb} ${time}`);
     } else if (done || waiting) {
-      if (editor === undefined && root) editor = findEditor(root) ?? null;
-      if (!editor) return;
+      const found = root && findEditor(root);
+      if (!found) return; // e.g. /reload's notice or a selector in its place: the next tick looks again
+      if (found !== editor) {
+        if (editor?.workingStatusIndicator === indicator)
+          editor.setWorkingStatusIndicator(undefined);
+        editor = found;
+      }
       const current = editor.workingStatusIndicator;
       // pi empties the border after its own indicators (e.g. an idle /compact): put the label back.
       if (!current) editor.setWorkingStatusIndicator(indicator);
@@ -228,7 +238,6 @@ export default function (pi: ExtensionAPI) {
     if (!ctx || startedAt === undefined) return;
     done = { verb: pick(config.done), ms: Date.now() - startedAt, endedAt: Date.now(), outcome };
     startedAt = undefined;
-    editor = (root && findEditor(root)) ?? editor; // found late: another extension may swap it
     tick();
   });
 }
