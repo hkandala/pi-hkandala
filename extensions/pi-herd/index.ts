@@ -177,8 +177,21 @@ export default function (pi: ExtensionAPI) {
     transcriptMessages: 20,
     captureLines: 100,
     detachKey: "ctrl+shift+q",
-    ...readJson<object>(join(getAgentDir(), "extensions", "pi-herd.json")),
   };
+  // Each key the user sets, when it has the default's type (model, thinking: a string or null;
+  // args: strings); otherwise the default.
+  const user = readJson<Record<string, unknown>>(join(getAgentDir(), "extensions", "pi-herd.json"));
+  for (const [k, d] of Object.entries(config)) {
+    const v = user?.[k];
+    if (
+      d === null
+        ? v === null || typeof v === "string"
+        : Array.isArray(d)
+          ? Array.isArray(v) && v.every((x) => typeof x === "string")
+          : typeof v === typeof d
+    )
+      Object.assign(config, { [k]: v });
+  }
 
   let ctx: ExtensionContext | undefined;
   let me: Agent | undefined; // this agent's record, while registered
