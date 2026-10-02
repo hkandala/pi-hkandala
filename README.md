@@ -4,21 +4,21 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 
 ## Extensions
 
-| Extension                                                       | Description                                                                                                                          |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| [pi-bash-bg](extensions/pi-bash-bg/README.md)                   | Background bash: move a running command to the background, get a message when it ends                                                |
-| [pi-bash-cap](extensions/pi-bash-cap/README.md)                 | Configurable line and byte limits for bash tool output                                                                               |
-| [pi-content-layout](extensions/pi-content-layout/README.md)     | Compact transcript: tool calls and thinking in collapsible summarized groups, boxed user messages, optional timestamps               |
-| [pi-continue](extensions/pi-continue/README.md)                 | ctrl+shift+enter nudges the agent to continue without a user message (queued as a follow-up while it is working)                     |
-| [pi-footer](extensions/pi-footer/README.md)                     | Minimal one-line footer in a rounded prompt box that expands into a dashboard                                                        |
-| [pi-header](extensions/pi-header/README.md)                     | Minimal startup header with the official pi logo                                                                                     |
-| [pi-herd](extensions/pi-herd/README.md)                         | pi agents in herdr: message and watch other pi sessions, start agents in herdr panes, woken when they reply or finish                |
-| [pi-ponytail](extensions/pi-ponytail/README.md)                 | Lazy-senior-dev ruleset from ponytail as a cache-friendly system prompt section, with `/ponytail` to run its skills                  |
-| [pi-prompt-clipboard](extensions/pi-prompt-clipboard/README.md) | ctrl+shift+s copies the prompt to the clipboard and clears it; paste long text twice to expand it for editing                        |
-| [pi-retry](extensions/pi-retry/README.md)                       | Makes pi's auto-retry cover every model error (unknown errors, 400s, ...), except auth errors                                        |
-| [pi-time-sense](extensions/pi-time-sense/README.md)             | Gives the agent a sense of time: a hidden current-time marker at most once an hour, cache-friendly                                   |
-| [pi-web](extensions/pi-web/README.md)                           | `web_search` and `web_fetch` tools backed by TinyFish's free APIs; fetched pages are saved to files, previewed only for a single URL |
-| [pi-working](extensions/pi-working/README.md)                   | Elapsed timer in the working label, and a `✓ Worked for 4m 12s` label after each run                                                 |
+| Extension                                                       | Description                                                                                                                                   |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| [pi-bash-bg](extensions/pi-bash-bg/README.md)                   | Background bash: move a running command to the background, get a message when it ends                                                         |
+| [pi-bash-cap](extensions/pi-bash-cap/README.md)                 | Configurable line and byte limits for bash tool output                                                                                        |
+| [pi-content-layout](extensions/pi-content-layout/README.md)     | Compact transcript: tool calls and thinking in collapsible summarized groups, boxed user messages, optional timestamps                        |
+| [pi-continue](extensions/pi-continue/README.md)                 | ctrl+shift+enter nudges the agent to continue without a user message (queued as a follow-up while it is working)                              |
+| [pi-footer](extensions/pi-footer/README.md)                     | Minimal one-line footer in a rounded prompt box that expands into a dashboard                                                                 |
+| [pi-header](extensions/pi-header/README.md)                     | Minimal startup header with the official pi logo                                                                                              |
+| [pi-herd](extensions/pi-herd/README.md)                         | pi agents in herdr: message and watch other pi sessions, start agents in herdr panes, woken when they reply or finish                         |
+| [pi-ponytail](extensions/pi-ponytail/README.md)                 | Lazy-senior-dev ruleset from ponytail as a cache-friendly system prompt section, with `/ponytail` to set the mode and run its skills          |
+| [pi-prompt-clipboard](extensions/pi-prompt-clipboard/README.md) | ctrl+shift+s copies the prompt to the clipboard and clears it; paste long text again at its `[paste #N]` marker to expand it for editing      |
+| [pi-retry](extensions/pi-retry/README.md)                       | Makes pi's auto-retry cover every model error (unknown errors, 400s, ...), except auth errors                                                 |
+| [pi-time-sense](extensions/pi-time-sense/README.md)             | Gives the agent a sense of time: a hidden current-time marker at most once an hour by default, cache-friendly                                 |
+| [pi-web](extensions/pi-web/README.md)                           | `web_search` and `web_fetch` tools backed by TinyFish's free APIs; fetched pages are saved to files, previewed only for a single URL          |
+| [pi-working](extensions/pi-working/README.md)                   | Elapsed timer in the working label, a `✓ Worked for 4m 12s` label after each run, and `Waiting on …` while watched agents or jobs are pending |
 
 ## Skills
 
