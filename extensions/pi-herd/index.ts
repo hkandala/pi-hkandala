@@ -82,6 +82,7 @@ import {
 import {
   brief,
   itemText,
+  plainText,
   listRenderer,
   renderer,
   tilde,
@@ -240,6 +241,25 @@ export default function (pi: ExtensionAPI) {
   let waking: ReturnType<typeof setTimeout> | undefined; // a steer is waking this idle agent
   let afterSettle: Item[] = []; // immediate messages, delivered once the aborted turn settles
   let outbox: Item[] = [];
+  /**
+   * A child's first delivery, sent as a user prompt so pi runs its before_agent_start hooks and
+   * builds the whole system prompt (a steer starts a run without them). Until it reaches the
+   * model, later items wait in the outbox. started: it reached pi-herd's input handler; queued:
+   * pi queued it behind a run; lost: it collided with a live run, so pi dropped it.
+   */
+  let pending:
+    | {
+        text: string;
+        items: Item[];
+        at: number;
+        started?: boolean;
+        queued?: boolean;
+        lost?: boolean;
+      }
+    | undefined;
+  let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+  let prompted = false; // this session took the prompt path once: never again
+  const redelivered = new Set<string>(); // prompt texts sent again as steers: drop a late copy
   let flushTimer: ReturnType<typeof setTimeout> | undefined;
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   let parentTimer: ReturnType<typeof setInterval> | undefined;
@@ -426,7 +446,8 @@ export default function (pi: ExtensionAPI) {
    * as finished.
    */
   const syncHerdr = () => {
-    const active = g.watches.size > 0 || !!waking || afterSettle.length > 0 || outbox.length > 0;
+    const active =
+      g.watches.size > 0 || !!waking || afterSettle.length > 0 || outbox.length > 0 || !!pending;
     if (active !== g.herdr) emitHerdr(active);
   };
 
@@ -539,12 +560,17 @@ export default function (pi: ExtensionAPI) {
   };
   const flush = () => {
     if (!me) return;
+    if (pending) return refresh(); // the first delivery is on its way: the rest waits for it
     const items = outbox;
     outbox = [];
     // Drop the watches this steer ends; others marked ending may still be gathering their ending.
     for (const it of items) {
       const id = it.kind === "watch" ? it.agent.id : it.endsWatch ? it.msg.from.id : undefined;
       if (id && g.watches.get(id)?.ending) g.watches.delete(id);
+    }
+    if (firstDelivery()) {
+      prompt(items);
+      return refresh();
     }
     // Messages go by their delivery; watch endings on their own, in an "agent watcher" box.
     const groups = Map.groupBy(items, (it) =>
@@ -573,6 +599,61 @@ export default function (pi: ExtensionAPI) {
       }, 2000);
     }
     void pi.sendMessage(message, { deliverAs, triggerTurn: true });
+  };
+
+  /** pi's run signal: set while a run goes, also at the false agent_settled of a colliding prompt. */
+  const signal = (c = ctx) => {
+    try {
+      return c?.signal;
+    } catch {
+      return undefined; // a stale ctx
+    }
+  };
+  /** A child's session that never had a prompt, with pi idle: deliver as a user prompt. */
+  const firstDelivery = () => {
+    if (!parentId || prompted || busy || !ctx?.isIdle() || signal() || !ctx.model) return false;
+    const branch = ctx.sessionManager.getBranch();
+    prompted = branch.some((e) => e.type === "message" && e.message.role === "user");
+    return !prompted;
+  };
+  const prompt = (items: Item[]) => {
+    prompted = busy = true;
+    pending = { text: items.map(plainText).join("\n\n"), items, at: Date.now() };
+    pendingTimer = setTimeout(checkPending, 10_000);
+    pi.sendUserMessage(pending.text, { deliverAs: "steer" });
+  };
+  /**
+   * Every 10 s while the prompt hasn't reached the model: if pi is idle with no run, send its
+   * items as a steer when it never reached pi-herd's input handler (prompt() threw first:
+   * compaction), or after 120 s idle (an auth failure, or a throw after the hooks: no event
+   * comes). Only idle time counts: prompt() may compact first, for longer than that.
+   */
+  const checkPending = () => {
+    if (!pending) return;
+    const idle = !!ctx?.isIdle() && !signal();
+    if (!idle) pending.at = Date.now();
+    else if (!pending.started || Date.now() - pending.at >= 120_000) return redeliver();
+    pendingTimer = setTimeout(checkPending, 10_000);
+  };
+  /** The prompt failed or was dropped: its items go out as a steer, with what waited behind it. */
+  const redeliver = () => {
+    const p = pending!;
+    pending = undefined;
+    clearTimeout(pendingTimer);
+    redelivered.add(p.text);
+    // An abort puts a queued prompt back in the editor (joined with other queued text and the
+    // user's draft): take it out again.
+    const editor = ctx?.ui.getEditorText() ?? "";
+    if (editor.includes(p.text))
+      ctx!.ui.setEditorText(
+        editor
+          .replace(p.text, "")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim(),
+      );
+    busy = !ctx?.isIdle();
+    outbox.unshift(...p.items);
+    flush();
   };
 
   /** Ends a watch with an event, gathering what that ending carries. */
@@ -1549,8 +1630,26 @@ export default function (pi: ExtensionAPI) {
     refresh();
   });
   pi.on("turn_end", (_e, c) => publishCost(c));
-  pi.on("agent_settled", () => {
+  // A prompt sent again as a steer, then run anyway (deferred, or from the editor): drop it.
+  pi.on("input", (event) => {
+    if (redelivered.delete(event.text)) return { action: "handled" };
+    if (pending && event.text === pending.text)
+      Object.assign(pending, { started: true, queued: event.streamingBehavior !== undefined });
+    return { action: "continue" };
+  });
+  pi.on("agent_settled", (_e, c) => {
+    // A false settle: a prompt collided with a live run (pi dropped it); that run still goes.
+    if (signal(c)) {
+      if (pending) pending.lost = true;
+      return;
+    }
     busy = false;
+    // Not when it is still in its hooks: then it reaches the model next.
+    if (
+      pending &&
+      (pending.lost || !pending.started || (pending.queued && !c.hasPendingMessages()))
+    )
+      redeliver();
     const items = afterSettle;
     afterSettle = [];
     if (items.length) deliver(steer(TYPE, items), "steer");
@@ -1559,9 +1658,22 @@ export default function (pi: ExtensionAPI) {
 
   // A message reaching the model: mark it delivered, so its sender's watch arms (checkDelivered).
   pi.on("message_start", (event) => {
-    const m = event.message as { role?: string; customType?: string; details?: { items?: Item[] } };
-    if (!me || m.role !== "custom" || m.customType !== TYPE) return;
-    for (const it of m.details?.items ?? [])
+    const m = event.message as {
+      role?: string;
+      customType?: string;
+      details?: { items?: Item[] };
+      content?: string | { text?: string }[];
+    };
+    if (!me) return;
+    let items = m.role === "custom" && m.customType === TYPE ? m.details?.items : undefined;
+    const text = typeof m.content === "string" ? m.content : m.content?.[0]?.text;
+    if (pending && m.role === "user" && text === pending.text) {
+      items = pending.items;
+      pending = undefined;
+      clearTimeout(pendingTimer);
+      setTimeout(flush); // what waited goes out as steers into this run
+    }
+    for (const it of items ?? [])
       if (it.kind === "message")
         try {
           writeFileSync(join(MESSAGES, me.id, `${it.msg.id}.delivered`), "");
@@ -1570,7 +1682,7 @@ export default function (pi: ExtensionAPI) {
 
   /** Drops the messages not yet delivered: the next runtime takes them in again. */
   const requeue = () => {
-    for (const it of [...outbox, ...afterSettle])
+    for (const it of [...outbox, ...afterSettle, ...(pending?.items ?? [])])
       if (it.kind === "message") {
         g.queued.delete(it.msg.id);
         const c = g.counts.get(it.msg.from.id);
@@ -1578,6 +1690,8 @@ export default function (pi: ExtensionAPI) {
       }
     outbox = [];
     afterSettle = [];
+    pending = undefined;
+    clearTimeout(pendingTimer);
   };
   pi.on("session_shutdown", (event, c) => {
     closeDashboard?.();

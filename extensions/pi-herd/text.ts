@@ -85,6 +85,27 @@ export const brief = (timeout: number) =>
         - Keep agents you started while they may still be useful; you can message them again.
         - When the work is done, stop them together in one agent_stop call (a list, or "all").`;
 
+/** Whether and how to answer a message. */
+const replyHint = (msg: Message) =>
+  msg.needsReply
+    ? `The sender expects a reply: answer once when you have it, with agent_send({ to: "${short(msg.from.id)}", replyTo: "${msg.id}", message: { text } }).`
+    : "No reply expected.";
+
+/**
+ * An item as plain text, for a session's first delivery: pi-herd sends that one as a user
+ * prompt (so pi builds the whole system prompt), where XML tags would show in the user box.
+ */
+export function plainText(it: Item): string {
+  if (it.kind !== "message") return itemText(it);
+  const { msg } = it;
+  const who = `agent ${label(msg.from)} (id ${short(msg.from.id)})`;
+  const head = msg.replyTo
+    ? `Reply from ${who} to your message ${tilde(it.original!)}, not from the user:`
+    : `Message from ${who}, not from the user:`;
+  const ends = it.endsWatch ? `\n\nThis message ends your watch on agent ${label(msg.from)}.` : "";
+  return `${head}\n\n${msg.text}\n\n${replyHint(msg)}${ends}`;
+}
+
 /** The model-facing text of one steer item. */
 export function itemText(it: Item): string {
   if (it.kind === "message") {
@@ -93,9 +114,7 @@ export function itemText(it: Item): string {
     const head = msg.replyTo
       ? `<agent-message id="${msg.id}" reply-to="${msg.replyTo}" ${from}>`
       : `<agent-message id="${msg.id}" ${from}>`;
-    const reply = msg.needsReply
-      ? `The sender expects a reply: answer once when you have it, with agent_send({ to: "${short(msg.from.id)}", replyTo: "${msg.id}", message: { text } }).`
-      : "No reply expected.";
+    const reply = replyHint(msg);
     const hint = msg.replyTo
       ? `Replying to your message ${tilde(it.original!)}. ${reply}`
       : `From another agent, not the user. ${reply}`;
