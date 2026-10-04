@@ -356,6 +356,11 @@ function body(t: Tool & Proto, theme: Theme): string[] {
   const deps = [open, t.result, t.isPartial, t.args?.content, t.args?.message, t.clFullBody, theme];
   return memo(t, "clBody", deps, () => bodyLines(t, open, theme));
 }
+/** Output without the blank lines it starts or ends with (code keeps them: they're numbered). */
+function unpadded(lines: string[]): string[] {
+  const first = lines.findIndex((l) => l.trim());
+  return first < 0 ? [] : lines.slice(first, lines.findLastIndex((l) => l.trim()) + 1);
+}
 function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
   if (!open) return [];
   const lang = getLanguageFromPath(str(t.args?.path ?? t.args?.file_path));
@@ -368,7 +373,7 @@ function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
   }
   const text = HERD_MESSAGE.has(t.toolName) && str((t.args?.message as { text?: unknown })?.text);
   if (text) {
-    const out = t.result ? linesOf(t.result).map((l) => theme.fg("muted", l)) : [];
+    const out = t.result ? unpadded(linesOf(t.result)).map((l) => theme.fg("muted", l)) : [];
     return [
       ...highlighted(untab(text.trimEnd()), "markdown", theme),
       ...(out.length ? ["", ...out] : []),
@@ -395,8 +400,8 @@ function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
     /^Script (completed|failed)$/.test(out[0] ?? "") &&
     out[2] === "Output:"
   )
-    out = out.slice(out[3] === "" ? 4 : 3);
-  const lines = out.map((l) => theme.fg(color, l)); // live output while running
+    out = out.slice(3);
+  const lines = unpadded(out).map((l) => theme.fg(color, l)); // live output while running
   if (lines.length) return lines;
   // None yet while it runs; none (or only whitespace) once done.
   return [theme.fg("dim", t.isPartial ? "(no output yet)" : "(no output)")];
