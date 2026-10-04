@@ -1,14 +1,14 @@
 /**
- * pi-header: minimal startup header with the official pi logo.
- * Collapsed shows resource counts; ctrl+o expands the lists; /loaded prints full paths.
- * Clicking the logo (fullscreen TUI mode) toggles color/white and saves the choice; clicking the
- * text expands or collapses the header, like ctrl+o.
+ * pi-header: minimal startup header with pi's own logo.
+ * Collapsed shows the version and resource counts; ctrl+o expands the resource lists; /loaded
+ * prints full paths.
+ * Clicking the logo (fullscreen TUI mode) plays pi's 3D logo animation; clicking the text expands
+ * or collapses the header, like ctrl+o.
  * Before the first message, pi's "Tool output: …" line for ctrl+o is hidden (the header expanding
  * is the feedback); every other status line and notice shows.
  *
- * Config (optional): ~/.pi/agent/extensions/pi-header.json
- *   →  { "logo": "color" | "white", "compact": false }  (compact: 2-row half-block logo)
- * Pair with "quietStartup": true in ~/.pi/agent/settings.json to hide pi's built-in listing.
+ * Pair with "quietStartup": "header" in ~/.pi/agent/settings.json to hide pi's built-in listing
+ * (with true, pi has no logo animation to borrow).
  */
 
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -17,7 +17,6 @@ import {
   DynamicBorder,
   getAgentDir,
   getMarkdownTheme,
-  keyText,
   SettingsManager,
   VERSION,
 } from "@earendil-works/pi-coding-agent";
@@ -25,7 +24,6 @@ import {
   backgroundAnsi,
   Container,
   foregroundAnsi,
-  getCellDimensions,
   Markdown,
   mixColors,
   rgbColor,
@@ -34,85 +32,31 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 
-type RGB = [number, number, number];
-const LOGO = ["SSS.", "B.S.", "BB.Y", "B..Y"];
-const COLORS: Record<string, RGB> = { S: [240, 144, 130], B: [78, 154, 191], Y: [241, 190, 88] }; // sRGB, measured from the official logo
-const WHITE: RGB = [255, 255, 255];
-const BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]; // left-aligned k/8 of a cell
-const SPACING = 1.5; // logo pixels left/right of the logo
-// Blank rows above/below, in whole rows closest to SPACING: 2 (1-row pixels), 1 compact (half-row).
-const rowsFor = (compact: boolean) => (compact ? 1 : 2);
-// Unless quietStartup is true, pi adds a blank row above the header and one below it.
-const topRows = (compact: boolean, quiet: boolean) => rowsFor(compact) - (quiet ? 0 : 1);
 const SECTIONS = ["context", "skills", "prompts", "extensions", "themes"] as const;
 type Resources = Record<(typeof SECTIONS)[number], { name: string; path: string }[]>;
-
-type Mode = ReturnType<Theme["getColorMode"]>;
-const fg = (c: RGB, mode: Mode) => foregroundAnsi(rgbColor(...c), mode);
-const bg = (c: RGB, mode: Mode) => backgroundAnsi(rgbColor(...c), mode);
+const PAD = 3; // columns left and right of the logo: the left lines it up with the transcript's text
+const ROWS = 2; // blank rows above and below
+// Unless quietStartup is true, pi adds a blank row above the header and one below it.
+const topRows = (quiet: boolean) => ROWS - (quiet ? 0 : 1);
 
 /**
- * Each logo pixel is one row tall and exactly one cell-height wide (measured via
- * pi-tui's cell size), with edges placed in 1/8 cells. SPACING logo pixels of space
- * on each side. Returns lines padded to the text column.
+ * pi's own header logo, which its 3D logo animation starts from (pi doesn't export it): 4 cells
+ * wide and 2 rows tall, PAD columns on each side, so the text starts at COLUMN.
  */
-function renderLogo(white: boolean, compact: boolean, mode: Mode) {
-  if (compact) return renderCompactLogo(white, mode);
-  const { widthPx, heightPx } = getCellDimensions();
-  const px = (8 * heightPx) / widthPx;
-  const column = Math.round(((LOGO.length + 2 * SPACING) * px) / 8);
-  const offset = Math.round((column * 8 - LOGO.length * px) / 2);
-  const edges = [0, 1, 2, 3, 4].map((c) => offset + Math.round(c * px));
-  const colorAt = (row: string, e: number): RGB | undefined => {
-    if (e < edges[0] || e >= edges[4]) return undefined;
-    const color = COLORS[row[edges.findLastIndex((x) => x <= e)]];
-    return color && white ? WHITE : color;
-  };
-
-  const lines = LOGO.map((row) => {
-    let line = "";
-    for (let cell = 0; cell < column; cell++) {
-      const start = cell * 8;
-      const split = edges.find((e) => e > start && e < start + 8); // pixels ≥ 1 cell, so at most one
-      const l = colorAt(row, start);
-      const r = split === undefined ? l : colorAt(row, split);
-      const glyph = split === undefined ? "" : BLOCKS[split - start];
-      if (!l && !r) line += " ";
-      else if (l === r) line += `${fg(l!, mode)}█\x1b[39m`;
-      else if (!r) line += `${fg(l!, mode)}${glyph}\x1b[39m`;
-      else if (!l) line += `\x1b[7m${fg(r, mode)}${glyph}\x1b[27;39m`; // reverse: glyph takes the terminal background
-      else line += `${fg(l, mode)}${bg(r, mode)}${glyph}\x1b[39;49m`;
-    }
-    return line;
-  });
-  return { lines, pad: Math.floor(offset / 8), column };
-}
-
-/** Compact: each pixel is half a row tall (▀/▄ half blocks) and as wide as that in whole cells. */
-function renderCompactLogo(white: boolean, mode: Mode) {
-  const { widthPx, heightPx } = getCellDimensions();
-  const w = Math.max(1, Math.round(heightPx / 2 / widthPx)); // cells per pixel
-  const pad = Math.round(SPACING * w);
-  const colorAt = (ch = "") => (COLORS[ch] && white ? WHITE : COLORS[ch]);
-  const lines: string[] = [];
-  for (let y = 0; y < LOGO.length; y += 2) {
-    let line = " ".repeat(pad);
-    for (let x = 0; x < LOGO[y].length; x++) {
-      const t = colorAt(LOGO[y][x]);
-      const b = colorAt(LOGO[y + 1]?.[x]);
-      if (!t && !b) line += " ".repeat(w);
-      else if (t === b) line += `${fg(t!, mode)}${"█".repeat(w)}\x1b[39m`;
-      else if (!b) line += `${fg(t!, mode)}${"▀".repeat(w)}\x1b[39m`;
-      else if (!t) line += `${fg(b, mode)}${"▄".repeat(w)}\x1b[39m`;
-      else line += `${fg(t, mode)}${bg(b, mode)}${"▀".repeat(w)}\x1b[39;49m`;
-    }
-    lines.push(line + " ".repeat(pad));
-  }
-  return { lines, pad, column: 2 * pad + LOGO[0].length * w };
+const COLUMN = 4 + 2 * PAD;
+const CORAL = rgbColor(228, 138, 122);
+const BLUE = rgbColor(79, 142, 179);
+const YELLOW = rgbColor(234, 182, 93);
+function renderLogo(mode: ReturnType<Theme["getColorMode"]>) {
+  const fg = (c: typeof CORAL) => foregroundAnsi(c, mode);
+  const R = "\x1b[0m";
+  const top = `${fg(CORAL)}${backgroundAnsi(BLUE, mode)}▀${R}${fg(CORAL)}▀█${R} `;
+  const bottom = `${fg(BLUE)}█▀${R} ${fg(YELLOW)}█${R}`;
+  const pad = " ".repeat(PAD);
+  return [pad + top + pad, pad + bottom + pad];
 }
 
 /** Cuts `text` to `width` with a … in the style at the cut (pi's truncateToWidth resets it). */
@@ -132,41 +76,27 @@ function render(
   theme: Theme,
   res: Resources,
   expanded: boolean,
-  white: boolean,
-  compact: boolean,
   quiet: boolean,
   width: number,
   blanksBelow: number,
 ): string[] {
   const gray = soft(theme);
   const dot = theme.fg("dim", " · ");
-  const key = (id: string) => keyText(id).replace("escape", "esc");
-  const hint = (pairs: string[][]) => pairs.map(([k, d]) => gray(`${k} ${d}`)).join(dot);
-
-  const hints = hint([
-    [key("app.interrupt"), "interrupt"],
-    ["/", "commands"],
-    ["!", "bash"],
-    [key("app.tools.expand"), expanded ? "collapse" : "expand"],
-  ]);
   const counts = SECTIONS.filter((s) => res[s].length)
     .map((s) => gray(`${res[s].length} ${res[s].length === 1 ? s.replace(/s$/, "") : s}`))
     .join(dot);
 
-  const logo = renderLogo(white, compact, theme.getColorMode());
-  const title = theme.bold("pi") + gray(` v${VERSION}`);
-  const info = compact ? [title + dot + hints, counts] : [title, hints, "", counts];
-  const rows = rowsFor(compact);
+  const info = [gray(`v${VERSION}`), counts];
   // Blank lines the content below already starts with count toward the gap.
-  const top = Array<string>(topRows(compact, quiet)).fill("");
-  const bottom = Array<string>(Math.max(0, topRows(compact, quiet) - blanksBelow)).fill("");
-  const out = [...top, ...logo.lines.map((line, i) => line + info[i])];
+  const top = Array<string>(topRows(quiet)).fill("");
+  const bottom = Array<string>(Math.max(0, topRows(quiet) - blanksBelow)).fill("");
+  const out = [...top, ...renderLogo(theme.getColorMode()).map((line, i) => line + info[i])];
   if (!expanded) return [...out, ...bottom];
 
   // Lists: label under the logo, items in the text column (wider if a label needs it), packed so
   // " · " never ends a line.
-  const column = Math.max(logo.column, logo.pad + Math.max(...SECTIONS.map((s) => s.length)) + 1);
-  out.push(...Array<string>(rows).fill(""));
+  const column = Math.max(COLUMN, PAD + Math.max(...SECTIONS.map((s) => s.length)) + 1);
+  out.push(...Array<string>(ROWS).fill("")); // as far from the logo as the rows around it
   for (const s of SECTIONS) {
     const lines: string[] = [];
     for (const item of res[s].map((i) => gray(i.name))) {
@@ -177,19 +107,13 @@ function render(
     }
     lines.forEach((line, i) =>
       out.push(
-        (i
-          ? " ".repeat(column)
-          : " ".repeat(logo.pad) + gray(s.padEnd(column - logo.pad - 1)) + " ") + line,
+        (i ? " ".repeat(column) : " ".repeat(PAD) + gray(s.padEnd(column - PAD - 1)) + " ") + line,
       ),
     );
   }
   out.push(
     "",
-    " ".repeat(column) +
-      hint([
-        ["/hotkeys", "all shortcuts"],
-        ["/loaded", "full paths"],
-      ]),
+    " ".repeat(PAD) + gray("/hotkeys for all shortcuts") + dot + gray("/loaded for full paths"),
   );
   return [...out, ...bottom];
 }
@@ -253,6 +177,22 @@ async function resolveExtensions(
 }
 
 type Node = { children?: Node[] };
+type LogoClick = (column: number, row: number) => void;
+
+/**
+ * pi's built-in header plays the 3D logo animation on a logo click, but pi doesn't export it. Our
+ * header factory runs before ours replaces that header, so borrow its handler from the tree (after
+ * /reload, from the previous pi-header, which keeps it as `onLogoClick` too).
+ */
+const findLogoClick = (node: Node): LogoClick | undefined => {
+  const own = (node as { onLogoClick?: unknown }).onLogoClick;
+  if (typeof own === "function") return own as LogoClick;
+  for (const child of node.children ?? []) {
+    const found = findLogoClick(child);
+    if (found) return found;
+  }
+  return undefined;
+};
 const parentOf = (node: Node, target: Node): Node | undefined => {
   for (const child of node.children ?? []) {
     if (child === target) return node;
@@ -303,45 +243,11 @@ function leadingBlanks(below: Node[], width: number, rows: number): number {
   return n;
 }
 
-const configPath = () => join(getAgentDir(), "extensions", "pi-header.json");
-
-/** The parsed config file: {} when missing, undefined when it isn't a JSON object. */
-function parseConfig(): { logo?: string; compact?: boolean } | undefined {
-  let text: string;
-  try {
-    text = readFileSync(configPath(), "utf8");
-  } catch {
-    return {};
-  }
-  try {
-    const value = JSON.parse(text);
-    return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-const readConfig = () => parseConfig() ?? {};
-
-/** Persist the logo toggle into the config file, keeping any other keys. */
-function saveLogo(white: boolean) {
-  try {
-    const current = parseConfig();
-    if (!current) return; // broken config: don't overwrite it, the toggle applies to this session
-    mkdirSync(dirname(configPath()), { recursive: true });
-    const config = { ...current, logo: white ? "white" : "color" };
-    writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`);
-  } catch {} // unwritable config: the toggle still applies to this session
-}
-
 export default function (pi: ExtensionAPI) {
   let res: Resources = { context: [], skills: [], prompts: [], extensions: [], themes: [] };
 
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-    const config = readConfig();
-    let white = config.logo === "white";
-    const compact = config.compact === true;
     const settingsManager = SettingsManager.create(ctx.cwd, getAgentDir(), {
       projectTrusted: ctx.isProjectTrusted(),
     });
@@ -358,7 +264,9 @@ export default function (pi: ExtensionAPI) {
 
     ctx.ui.setHeader((tui) => {
       requestRender = () => tui.requestRender();
+      const onLogoClick = findLogoClick(tui as Node);
       const header = {
+        onLogoClick,
         // pi calls this with its current state when the header is created or reloaded, and with the
         // new state on ctrl+o. A click may have flipped the header since, so ctrl+o flips it too.
         setExpanded(value: boolean) {
@@ -367,14 +275,21 @@ export default function (pi: ExtensionAPI) {
         },
         invalidate() {},
         // Mouse events only arrive in fullscreen TUI mode; x/y are relative to the header.
-        handleMouse(event: { type: string; button: string; x: number; y: number }) {
+        handleMouse(event: {
+          type: string;
+          button: string;
+          x: number;
+          y: number;
+          screenX: number;
+          screenY: number;
+        }) {
           if (event.type !== "click" || event.button !== "left") return undefined;
-          const top = topRows(compact, quiet);
-          const logo = renderLogo(white, compact, ctx.ui.theme.getColorMode());
-          const onLogo = event.y >= top && event.y < top + logo.lines.length;
-          if (onLogo && event.x < logo.column) {
-            white = !white;
-            saveLogo(white);
+          const top = topRows(quiet);
+          // The logo's 4 cells, from column PAD, in its 2 rows.
+          if (event.y >= top && event.y < top + 2 && event.x < COLUMN) {
+            const onLogo = event.x >= PAD && event.x < PAD + 4;
+            if (!onLogo || !onLogoClick) return undefined; // quietStartup: true or Apple Terminal: pi has no animation
+            onLogoClick(event.screenX - event.x + PAD, event.screenY - event.y + top); // the logo's screen cell
           } else if (visibleWidth(shown[event.y] ?? "")) expanded = !expanded;
           else return undefined; // the blank rows around it
           return { handled: true };
@@ -383,9 +298,9 @@ export default function (pi: ExtensionAPI) {
           // The header renders before the chat, so dropped lines never reach the screen.
           below = below.length ? below : containersBelow(tui, header);
           if (fresh) fresh = dropToolOutputStatus(below);
-          const blanks = leadingBlanks(below, width, rowsFor(compact));
-          shown = render(ctx.ui.theme, res, expanded, white, compact, quiet, width, blanks).map(
-            (l) => cut(l, width),
+          const blanks = leadingBlanks(below, width, ROWS);
+          shown = render(ctx.ui.theme, res, expanded, quiet, width, blanks).map((l) =>
+            cut(l, width),
           );
           return shown;
         },
