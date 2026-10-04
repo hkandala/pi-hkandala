@@ -199,8 +199,8 @@ export function describe(t: Tool): [target: string, result: string] {
       return [target, diff ? `+${added} -${removed}` : ""];
     }
     case "grep":
-      // Match lines read "file:N: text"; context lines read "file-N- text".
-      return [target, plural(out.match(/^.+?:\d+: /gm)?.length ?? 0, "match", "matches")];
+      // Match lines read "file:N: text" ("file:N:text" for some greps); context lines "file-N- text".
+      return [target, plural(out.match(/^.+?:\d+:/gm)?.length ?? 0, "match", "matches")];
     case "find":
       return [target, plural(out.startsWith("No files") ? 0 : lineCount(out), "file")];
     case "ls":
