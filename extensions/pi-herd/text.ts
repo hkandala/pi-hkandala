@@ -85,25 +85,29 @@ export const brief = (timeout: number) =>
         - Keep agents you started while they may still be useful; you can message them again.
         - When the work is done, stop them together in one agent_stop call (a list, or "all").`;
 
-/** Whether and how to answer a message. */
-const replyHint = (msg: Message) =>
+/** Whether and how to answer a message. q: quotes the call (markdown code in the plain form). */
+const replyHint = (msg: Message, q = "") =>
   msg.needsReply
-    ? `The sender expects a reply: answer once when you have it, with agent_send({ to: "${short(msg.from.id)}", replyTo: "${msg.id}", message: { text } }).`
+    ? `The sender expects a reply: answer once when you have it, with ${q}agent_send({ to: "${short(msg.from.id)}", replyTo: "${msg.id}", message: { text } })${q}.`
     : "No reply expected.";
 
 /**
- * An item as plain text, for a session's first delivery: pi-herd sends that one as a user
- * prompt (so pi builds the whole system prompt), where XML tags would show in the user box.
+ * An item as markdown, for a session's first delivery: pi-herd sends that one as a user prompt
+ * (so pi builds the whole system prompt), where XML tags would show in the user box. pi-herd's
+ * lines go in a blockquote above the message, which stays as sent.
  */
 export function plainText(it: Item): string {
   if (it.kind !== "message") return itemText(it);
   const { msg } = it;
-  const who = `agent ${label(msg.from)} (id ${short(msg.from.id)})`;
-  const head = msg.replyTo
-    ? `Reply from ${who} to your message ${tilde(it.original!)}, not from the user:`
-    : `Message from ${who}, not from the user:`;
-  const ends = it.endsWatch ? `\n\nThis message ends your watch on agent ${label(msg.from)}.` : "";
-  return `${head}\n\n${msg.text}\n\n${replyHint(msg)}${ends}`;
+  const who = `${label(msg.from)} (\`${short(msg.from.id)}\`)`;
+  const lines = [
+    msg.replyTo
+      ? `**Agent reply** from ${who} to your message \`${tilde(it.original!)}\`, not from the user.`
+      : `**Agent message** from ${who}, not from the user.`,
+    replyHint(msg, "`"),
+    ...(it.endsWatch ? [`This message ends your watch on ${label(msg.from)}.`] : []),
+  ];
+  return `${lines.map((l) => `> ${l}`).join("\n")}\n\n${msg.text}`;
 }
 
 /** The model-facing text of one steer item. */

@@ -177,8 +177,9 @@ and `pane.agent_status_changed` events). pi-herd adds no status logic.
 - **First delivery in a child.** A run started by a steer skips pi's `before_agent_start` hooks,
   so a child's first run would have no system prompt (pi builds it there). So when a child's
   session has no user message yet and pi is idle, the whole delivery goes out once as a user
-  prompt, `pi.sendUserMessage(text, { deliverAs: "steer" })`, in plain text (`plainText()`: "Message
-  from agent main (id c8e1f2a9), not from the user:", the text, the reply hint). Until that
+  prompt, `pi.sendUserMessage(text, { deliverAs: "steer" })`, as markdown (`plainText()`: a blockquote
+  with "**Agent message** from main (`c8e1f2a9`), not from the user." and the reply hint, then
+  the text as sent). Until that
   prompt reaches the model, later items wait. If it fails (pi idle with no run: before pi-herd's
   `input` handler after 10 s, otherwise after 120 s; collided with a live run, seen as an
   `agent_settled` while `ctx.signal` is set; or dropped from the queue by an abort), its items go
