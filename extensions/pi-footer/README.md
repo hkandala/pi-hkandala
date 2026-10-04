@@ -166,6 +166,8 @@ pi-footer works on its own. These features need another extension, and without i
 
 The icons are Nerd Font glyphs. Ghostty has them built in. In other terminals, use a Nerd Font.
 
+pi draws its own footer and editor for a moment before pi-footer's replace them. Install [pi-no-flash](../pi-no-flash/README.md) to start with pi-footer's in the first frame.
+
 ## Install
 
 ```bash

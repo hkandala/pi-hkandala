@@ -1,0 +1,30 @@
+{
+  "name": "@hkandala/pi-no-flash",
+  "version": "0.1.0",
+  "description": "No flash of pi's own UI at startup: the first frame already shows every extension's header, footer, and editor",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hkandala/pi-hkandala.git",
+    "directory": "extensions/pi-no-flash"
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

@@ -13,6 +13,7 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 | [pi-footer](extensions/pi-footer/README.md)                     | Minimal one-line footer in a rounded prompt box that expands into a dashboard                                                                 |
 | [pi-header](extensions/pi-header/README.md)                     | Minimal startup header with the official pi logo                                                                                              |
 | [pi-herd](extensions/pi-herd/README.md)                         | pi agents in herdr: message and watch other pi sessions, start agents in herdr panes, woken when they reply or finish                         |
+| [pi-no-flash](extensions/pi-no-flash/README.md)                 | No flash of pi's own UI at startup: the first frame already shows every extension's header, footer, and editor                                |
 | [pi-ponytail](extensions/pi-ponytail/README.md)                 | Lazy-senior-dev ruleset from ponytail as a cache-friendly system prompt section, with `/ponytail` to set the mode and run its skills          |
 | [pi-prompt-clipboard](extensions/pi-prompt-clipboard/README.md) | ctrl+shift+s copies the prompt to the clipboard and clears it; paste long text again at its `[paste #N]` marker to expand it for editing      |
 | [pi-prompt-keep](extensions/pi-prompt-keep/README.md)           | Keeps hook-added system prompt sections in runs an extension message starts, so the prompt cache survives                                     |
