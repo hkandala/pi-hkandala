@@ -1,5 +1,5 @@
 /**
- * pi-prompt-keep: keeps the sections `before_agent_start` hooks add to the system prompt
+ * pi-cache-keep: keeps the sections `before_agent_start` hooks add to the system prompt
  * (ponytail, meta_workspace, CLAUDE.md in project_context, mcp_servers, ...) in runs that an
  * extension message starts (`sendMessage` with `triggerTurn`: pi-herd, pi-bash-bg, pi-continue).
  *
@@ -17,6 +17,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+// Named before the rename to pi-cache-keep; sessions have it recorded, so it stays.
 const MARK = "prompt_keep";
 /** Sections only pi's base prompt builds: no hook edits them, so they apply at once. */
 const BASE = new Set(["preamble", "tools", "rules", "docs", "skills", "cwd", "addendum"]);
@@ -97,7 +98,7 @@ export default function (pi: ExtensionAPI) {
       if (notes > 1) {
         warned = true;
         ctx.ui.notify(
-          "pi-prompt-keep: a `context` handler merged the system messages; prompt sections may drop in woken runs.",
+          "pi-cache-keep: a `context` handler merged the system messages; prompt sections may drop in woken runs.",
           "warning",
         );
       }

@@ -1,4 +1,4 @@
-// Self-check for keep(): node extensions/pi-prompt-keep/test.ts
+// Self-check for keep(): node extensions/pi-cache-keep/test.ts
 import { deepStrictEqual as eq } from "node:assert";
 import { keep } from "./index.ts";
 
@@ -68,4 +68,4 @@ eq(
 );
 eq(keep([sys({ prompt_keep: "1" }), user])[0].role, "system");
 
-console.log("pi-prompt-keep: ok");
+console.log("pi-cache-keep: ok");

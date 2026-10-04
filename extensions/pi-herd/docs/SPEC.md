@@ -184,7 +184,7 @@ and `pane.agent_status_changed` events). pi-herd adds no status logic.
   `agent_settled` while `ctx.signal` is set; or dropped from the queue by an abort), its items go
   out as a steer, and a late copy of the prompt is dropped in `input`. A `/reload` while the prompt starts can still
   deliver it twice. Later deliveries are steers;
-  pi-prompt-keep keeps the hook sections in their runs.
+  pi-cache-keep keeps the hook sections in their runs.
 - **Delivered marker.** When pi hands the message to the model (pi's `message_start` for the
   custom message, or for that first user prompt), the recipient writes an empty `messages/<myId>/<msgId>.delivered`. A watch on
   that message arms only then (section 6). The daily cleanup deletes markers with their messages.

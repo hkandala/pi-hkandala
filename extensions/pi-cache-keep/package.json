@@ -1,5 +1,5 @@
 {
-  "name": "@hkandala/pi-prompt-keep",
+  "name": "@hkandala/pi-cache-keep",
   "version": "0.1.0",
   "description": "Keeps hook-added system prompt sections in runs an extension message starts, so the prompt cache survives",
   "keywords": [
@@ -9,7 +9,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hkandala/pi-hkandala.git",
-    "directory": "extensions/pi-prompt-keep"
+    "directory": "extensions/pi-cache-keep"
   },
   "files": [
     "index.ts",
