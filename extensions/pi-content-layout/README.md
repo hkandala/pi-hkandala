@@ -43,6 +43,25 @@ A compact, minimal transcript for pi: tool calls and thinking sit in a summarize
 
   Long targets shorten so the result stays visible, and the params give way first. Param values over 40 characters or on several lines show just their name. Running calls show `running Xs`, and failures are red.
 
+- **Codemode calls:** the tools a `codemode` script calls hang off its row as rows of their own, like any other call: name, target, params, result counts, and duration. Click one to open it (`autoExpandedTools` ones start open), and `ctrl+o` opens them all:
+
+  ```
+     Read 2 files, ran 2 commands, edited 1 file, 1 failed
+     └ codemode  console.log(await tools.read({ path: "a.txt" })); …  · 2.9s
+       ├ read  a.txt · 2 lines
+       ├ bash  echo hi && sleep 2 · 2.1s
+       ├ edit  a.txt · +1 -1
+       │ └  1 hello
+       │   -2 world
+       │   +2 there
+       │
+       └ read  missing.txt · error
+  ```
+
+  The codemode row shows its last 5 calls under a `… N earlier calls` line: click it to show them all, and click `↑ show less` in its place to cut them again. Open, the codemode row shows its script, and its output after the calls (without the `Script completed`, `Wall time`, `Output:` lines it starts with). The summary line counts each codemode call as a command, and its script's calls as their own ("Read 2 files, ran 2 commands"), and the script's failed calls as failures.
+
+  pi passes extensions each call's args and result while it runs, but never saves the results. For history (after a restart or `/reload`), the calls show their target, params, how they ended, and their duration, with no counts or output. They don't open, except failed ones, which show their error.
+
 - **Background hint:** with [pi-bash-bg](../pi-bash-bg/README.md), the last running bash call gets a dim `ctrl+shift+b to run in background` line under it once it has run 30s. The key moves all running calls, so one hint is enough.
 - **Pulse:** in fullscreen TUI mode, what's still running pulses gently: a closed call's whole row, an open call's name, `thinking…`, or a collapsed group's summary line. A summary line pulses from the group's start until text or a message ends the group, or the agent stops, so it keeps going between calls. Closed ones go from muted a little toward bright, open ones from bright a little toward muted.
 - **Thinking:** a tree row, `thinking…` while it streams, then `thought for Xs`: `thought briefly` under a second, and `thought for some time` for messages loaded from history, since pi saves no thinking time. Thinking with no tool calls around it is a single `Thought for Xs` line. It opens or closes with `ctrl+t`, pi's own setting, new thinking included.
@@ -76,18 +95,20 @@ Read, written, and edited code is colored by pi's own highlighter (the one for c
 
 ## Shortcuts
 
-| Shortcut       | Does                                                                                                                                                                      |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ctrl+o`       | Open or close all tool rows (pi's)                                                                                                                                        |
-| `ctrl+t`       | Open or close all thinking (pi's)                                                                                                                                         |
-| `ctrl+shift+o` | Collapse or expand all groups to their summary line (saved)                                                                                                               |
-| `ctrl+shift+t` | Cycle [timestamps](#timestamps): off → relative → absolute (saved)                                                                                                        |
-| `ctrl+shift+w` | Wrap long lines of open tool content, or end them in `…` (saved)                                                                                                          |
-| Click          | Fullscreen TUI mode. A row, thought, or summary line: open or close just that one; a `↓ N more lines` or `↑ show less` line: show or cut the rest; a reply's `●`: copy it |
+| Shortcut       | Does                                                                                                                                                                                            |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ctrl+o`       | Open or close all tool rows (pi's)                                                                                                                                                              |
+| `ctrl+t`       | Open or close all thinking (pi's)                                                                                                                                                               |
+| `ctrl+shift+o` | Collapse or expand all groups to their summary line (saved)                                                                                                                                     |
+| `ctrl+shift+t` | Cycle [timestamps](#timestamps): off → relative → absolute (saved)                                                                                                                              |
+| `ctrl+shift+w` | Wrap long lines of open tool content, or end them in `…` (saved)                                                                                                                                |
+| Click          | Fullscreen TUI mode. A row, thought, or summary line: open or close just that one; a `↓ N more lines`, `… N earlier calls`, or `↑ show less` line: show or cut the rest; a reply's `●`: copy it |
 
 ## Compatibility
 
 pi has no public API for restyling its own messages, so this extension patches the rendering of pi's message and tool components (restored on shutdown, and falling back to pi's own rendering on any error). It doesn't combine with other extensions that restyle the same components.
+
+pi draws its own UI for a moment at startup, before extensions start. Install [pi-no-flash](../pi-no-flash/README.md) to start with every extension's UI, pi-content-layout's included, in the first frame.
 
 ## Copying
 

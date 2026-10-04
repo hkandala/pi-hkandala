@@ -47,6 +47,7 @@ import {
   agentsIn,
   describe,
   linesOf,
+  nestedOf,
   options,
   plural,
   stateOf,
@@ -340,9 +341,14 @@ const pairedStamp = (node: Proto) => (stamps === "off" ? "" : clock(timeOf(node)
 
 /** Tools whose rows start open (autoExpandedTools). */
 let autoExpanded = ["edit", "write"];
-/** Whether a row shows its content: autoExpandedTools open; ctrl+o sets all; a click, its own. */
+/**
+ * Whether a row shows its content: autoExpandedTools open; ctrl+o sets all; a click, its own. A
+ * codemode call's call from history has none to show (pi keeps no results for them), unless it
+ * failed: it never opens.
+ */
 const isOpen = (t: Tool & Proto): boolean =>
-  t.clOpen ?? (t.expanded || autoExpanded.includes(t.toolName));
+  (!t.clStatus || t.clStatus === "error") &&
+  (t.clOpen ?? (t.expanded || autoExpanded.includes(t.toolName)));
 
 /** Lines shown under an open row: the diff, written content, or output (red for failures). */
 function body(t: Tool & Proto, theme: Theme): string[] {
@@ -381,7 +387,16 @@ function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
     return [...numbered(code, first, theme), ...lines.slice(note).map((l) => theme.fg("muted", l))];
   }
   const color = t.result.isError ? "error" : "text";
-  const lines = linesOf(t.result).map((l) => theme.fg(color, l)); // live output while running
+  let out = linesOf(t.result);
+  // pi's codemode renderer leaves out the "Script completed", "Wall time", "Output:" its result
+  // starts with.
+  if (
+    t.toolName === "codemode" &&
+    /^Script (completed|failed)$/.test(out[0] ?? "") &&
+    out[2] === "Output:"
+  )
+    out = out.slice(out[3] === "" ? 4 : 3);
+  const lines = out.map((l) => theme.fg(color, l)); // live output while running
   if (lines.length) return lines;
   // None yet while it runs; none (or only whitespace) once done.
   return [theme.fg("dim", t.isPartial ? "(no output yet)" : "(no output)")];
@@ -616,11 +631,17 @@ function summary(members: unknown[], theme: Theme, collapsed: boolean, live: boo
   for (const m of members) {
     if (!(m instanceof ToolExecutionComponent)) continue;
     const t = m as unknown as Tool;
-    if (stateOf(t) === "error") failed++;
-    const wording = (WORDING[t.toolName] ??= [`ran ${t.toolName}`, "time"]); // one entry per tool
-    const urls = t.toolName === "web_fetch" && t.args?.urls;
-    const n = Array.isArray(urls) ? urls.length : HERD_TOOLS.has(t.toolName) ? agentsIn(t) : 1;
-    counts.set(wording, (counts.get(wording) ?? 0) + n);
+    // A codemode call counts as a command, and its script's calls as their own: "Read 3 files,
+    // ran 2 commands".
+    const kids = kidsOf(t);
+    const kidsFailed = kids.filter((k) => stateOf(k) === "error").length;
+    failed += Math.max(kidsFailed, stateOf(t) === "error" ? 1 : 0);
+    for (const c of [t, ...kids]) {
+      const wording = (WORDING[c.toolName] ??= [`ran ${c.toolName}`, "time"]); // one per tool
+      const urls = c.toolName === "web_fetch" && c.args?.urls;
+      const n = Array.isArray(urls) ? urls.length : HERD_TOOLS.has(c.toolName) ? agentsIn(c) : 1;
+      counts.set(wording, (counts.get(wording) ?? 0) + n);
+    }
   }
   const text =
     [...counts]
@@ -637,7 +658,9 @@ function summary(members: unknown[], theme: Theme, collapsed: boolean, live: boo
  * when open), and its body. A member alone in its group shows `solo` instead, when given, as the
  * summary line with no tree. The summary line shows when the group started, the row `stamp`.
  * A collapsed group shows only its summary line.
- * Sets node.clHeadY and node.clRowY to the summary line's and the row's lines, for click handling.
+ * `kids` (a codemode call's calls) hang off the row in a tree of their own, before its body.
+ * Sets node.clHeadY and node.clRowY to the summary line's and the row's lines, and node.clKidAt to
+ * what a click on each kid line does, for click handling.
  */
 function groupLines(
   node: Proto,
@@ -647,6 +670,7 @@ function groupLines(
   theme: Theme,
   solo?: string,
   stamp = "",
+  kids: Kid[] = [],
 ) {
   let list: unknown[] = chat?.children ?? [];
   if (list[node.clIndex] !== node) node.clIndex = list.indexOf(node);
@@ -687,9 +711,10 @@ function groupLines(
     : memo(node, "clFit", [rowBody, fit, wrap, node.clFullBody, theme], () =>
         fitted(rowBody, fit, wrap, theme, node.clFullBody),
       );
-  const deps = [row, wrapped, width, theme, last, alone, head, started, stamp, collapsed];
+  const deps = [row, wrapped, width, theme, last, alone, head, started, stamp, collapsed, kids];
   return memo(node, "clGroup", deps, () => {
-    node.clMoreY = undefined;
+    node.clMoreY = node.clKidAt = undefined;
+    const kidStamps: [number, string][] = [];
     if (collapsed) {
       if (!head) return [];
       const line = truncateToWidth(`   ${head}`, Math.max(1, width - 3), theme.fg("muted", "…"));
@@ -702,17 +727,32 @@ function groupLines(
     if (alone) lines = ["", `   ${solo}`, ...hung.map((l) => `   ${l}`)]; // └ under the line's start
     else {
       const rail = last ? " " : theme.fg("dim", "│");
+      const below = hung.length || kids.length;
       lines = [
         ...(head ? ["", `   ${head}`] : []), // aligned with assistant text
         `   ${theme.fg("dim", last ? "└" : "├")} ${row[0]}`,
-        // A wrapped row's └ hangs from the row through a │ down its lines.
-        ...row
-          .slice(1)
-          .map((l) => `   ${rail} ${hung.length ? theme.fg("dim", "│") + l.slice(1) : l}`),
+        // A wrapped row's kids or └ hang from the row through a │ down its lines.
+        ...row.slice(1).map((l) => `   ${rail} ${below ? theme.fg("dim", "│") + l.slice(1) : l}`),
         // A row on more than one line (a multi-line bash command) gets a line before its content.
-        ...(row.length > 1 && hung.length ? [`   ${rail} ${theme.fg("dim", "│")}`] : []),
-        ...hung.map((l) => `   ${rail} ${l}`),
+        ...(row.length > 1 && below ? [`   ${rail} ${theme.fg("dim", "│")}`] : []),
       ];
+      // Kids are the body's siblings: the last ends the tree when no body follows. A line follows
+      // a kid's content, and sets them apart from the body.
+      const hits: Kid["hits"] = [];
+      kids.forEach((kid, j) => {
+        const end = j === kids.length - 1 && !hung.length;
+        const sub = end ? " " : theme.fg("dim", "│");
+        kid.lines.forEach((l, i) => {
+          hits[lines.length] = kid.hits[i];
+          if (!i) kidStamps.push([lines.length, kid.stamp]);
+          lines.push(`   ${rail} ${i ? sub : theme.fg("dim", end ? "└" : "├")} ${l}`);
+        });
+        if (kid.body && (!end || !last)) lines.push(`   ${rail} ${sub}`);
+      });
+      if (kids.length && hung.length && !kids.at(-1)!.body)
+        lines.push(`   ${rail} ${theme.fg("dim", "│")}`);
+      lines.push(...hung.map((l) => `   ${rail} ${l}`));
+      node.clKidAt = hits;
     }
     // The content's toggle is its last line (a spacer may follow).
     node.clMoreY = toggle ? lines.length - hung.length + wrapped.length - 1 : undefined;
@@ -720,6 +760,7 @@ function groupLines(
     lines = lines.map((l) => truncateToWidth(l, Math.max(1, width - 3), theme.fg("muted", "…")));
     if (head || alone) lines[1] = stamped(lines[1]!, started, width, theme);
     if (!alone) lines[rowY] = stamped(lines[rowY]!, stamp, width, theme);
+    for (const [y, kidStamp] of kidStamps) lines[y] = stamped(lines[y]!, kidStamp, width, theme);
     return lines;
   });
 }
@@ -774,13 +815,28 @@ function hanging(line: string, fit: number): string[] {
 
 function renderTool(t: Tool & Proto, width: number, theme: Theme): string[] {
   t.clDrawn = true; // ctrl+o sets it from now on (see setExpanded)
-  const state = stateOf(t);
+  const running = stateOf(t) === "running";
   if (t.executionStarted) t.clStart ??= Date.now();
-  if (state !== "running" && t.clStart) t.clEnd ??= Date.now();
+  if (!running && t.clStart) t.clEnd ??= Date.now();
+  const { row, stamp, seconds } = toolRow(t, width, theme);
+  let content = body(t, theme);
+  // Only calls run in this session: one from history without a result never ran to an end.
+  if (t.toolName === "bash" && running && t.clStart) runningBash.add(t);
+  else runningBash.delete(t);
+  if (backgroundKey && seconds >= HINT_AFTER_S && [...runningBash].at(-1) === t)
+    content = [...content, theme.fg("dim", `${backgroundKey} to run in background`)];
+  const kids = t.toolName === "codemode" ? nestedRows(t, width, theme) : [];
+  return groupLines(t, row, content, width, theme, undefined, stamp, kids);
+}
+
+/** A call's row (`width`: what a top-level row has), and its stamp for the time column. */
+function toolRow(t: Tool & Proto, width: number, theme: Theme) {
+  const state = stateOf(t);
   // Until a result arrives the arguments may still be streaming in.
-  const [target, detail] = t.result
-    ? memo(t, "clInfo", [t.result], () => describe(t))
-    : describe(t);
+  let [target, detail] = t.result ? memo(t, "clInfo", [t.result], () => describe(t)) : describe(t);
+  // A codemode call's call without its result: only how it ended.
+  if (t.clStatus)
+    detail = t.clStatus === "cancelled" ? "cancelled" : state === "error" ? detail : "";
   const { start, end, bound } = timesOf(t);
   const seconds = start ? Math.max(0, ((end ?? Date.now()) - start) / 1000) : 0;
   const took = start && end ? (bound ? "≤" : "") + duration(seconds) : "";
@@ -862,17 +918,70 @@ function renderTool(t: Tool & Proto, width: number, theme: Theme): string[] {
   };
   // A settled row doesn't change: build it once. Measuring every row's text each frame is slow,
   // and pi's width cache (512 strings) can't hold a long session's rows.
-  const row =
+  const row: string[] =
     state === "running"
       ? buildRow()
       : memo(t, "clRow", [state, result, open, width, room, t.args, t.clFullRow, theme], buildRow);
-  let content = body(t, theme);
-  // Only calls run in this session: one from history without a result never ran to an end.
-  if (t.toolName === "bash" && state === "running" && t.clStart) runningBash.add(t);
-  else runningBash.delete(t);
-  if (backgroundKey && seconds >= HINT_AFTER_S && [...runningBash].at(-1) === t)
-    content = [...content, theme.fg("dim", `${backgroundKey} to run in background`)];
-  return groupLines(t, row, content, width, theme, undefined, stamp);
+  return { row, stamp, seconds };
+}
+
+/** Calls codemode scripts made in this session, by id, from pi's events (results and all). */
+const nested = new Map<string, Tool & Proto>();
+/** A codemode call's calls (cached: rows render every frame). */
+const kidsOf = (t: Tool): (Tool & Proto)[] =>
+  t.toolName === "codemode"
+    ? memo(t as Proto, "clKids", [t.result, nested.size], () => nestedOf(t, nested))
+    : [];
+
+/** A call under a codemode row: its lines, what a click on each does, and its stamp. */
+type Kid = { lines: string[]; hits: ([Proto, string] | undefined)[]; stamp: string; body: boolean };
+const KIDS_SHOWN = 5;
+/**
+ * The calls a codemode script made, as rows like the codemode row's own, each with its content
+ * when open: the last KIDS_SHOWN, under a line that shows the rest (clAllKids) or cuts them again.
+ */
+function nestedRows(t: Tool & Proto, width: number, theme: Theme): Kid[] {
+  const kids = kidsOf(t);
+  const shown = t.clAllKids ? kids : kids.slice(-KIDS_SHOWN);
+  const fit = Math.max(1, width - 12); // 2 more columns in than a top-level row's content
+  const rows = shown.map((k) => {
+    k.expanded = t.expanded; // ctrl+o opens them too
+    const { row, stamp } = toolRow(k, width - 2, theme);
+    const content = body(k, theme);
+    const [wrapped, toggle] = memo(k, "clFit", [content, fit, wordWrap, k.clFullBody, theme], () =>
+      fitted(content, fit, wordWrap, theme, k.clFullBody),
+    );
+    return memo(k, "clKid", [row, wrapped, stamp], (): Kid => {
+      // Like a top-level row: content hangs off a └ under the name, through a │ down a long row.
+      const hung = wrapped.map((l, j) => (j ? "  " : `${theme.fg("dim", "└")} `) + l);
+      const bar = theme.fg("dim", "│");
+      const lines = [
+        row[0]!,
+        ...row.slice(1).map((l) => (hung.length ? bar + l.slice(1) : l)),
+        ...(row.length > 1 && hung.length ? [bar] : []),
+        ...hung,
+      ];
+      const hits = lines.map((_, i): [Proto, string] => [
+        k,
+        i === k.clRowMore
+          ? "clFullRow"
+          : toggle && i === lines.length - 1
+            ? "clFullBody"
+            : "clOpen",
+      ]);
+      return { lines, hits, stamp, body: hung.length > 0 };
+    });
+  });
+  const earlier = kids.length - KIDS_SHOWN;
+  if (earlier <= 0) return rows;
+  const all = !!t.clAllKids;
+  const more = memo(t, "clEarlier", [earlier, all, theme], () => ({
+    lines: [theme.fg("dim", all ? "↑ show less" : `… ${plural(earlier, "earlier call")}`)],
+    hits: [[t, "clAllKids"] as [Proto, string]],
+    stamp: "",
+    body: false,
+  }));
+  return [more, ...rows];
 }
 
 export default function (pi: ExtensionAPI) {
@@ -939,7 +1048,37 @@ export default function (pi: ExtensionAPI) {
     working = false;
   });
 
+  // The calls codemode scripts make: pi draws no rows for them, but tells extensions, with their
+  // args and results (it keeps neither in the session).
+  type NestedEvent = {
+    toolCallId: string;
+    parentToolCallId?: string;
+    toolName: string;
+    args?: Record<string, unknown>;
+    partialResult?: Tool["result"];
+    result?: Tool["result"];
+    isError?: boolean;
+  };
+  pi.on("tool_execution_start", (e: NestedEvent, ctx) => {
+    if (!e.parentToolCallId) return;
+    const { toolCallId, toolName, args } = e;
+    const kid = { toolCallId, toolName, args, cwd: ctx.cwd, isPartial: true, clStart: Date.now() };
+    nested.set(toolCallId, kid as unknown as Tool & Proto);
+  });
+  pi.on("tool_execution_update", (e: NestedEvent) => {
+    const kid = e.parentToolCallId && nested.get(e.toolCallId);
+    if (kid) kid.result = e.partialResult;
+  });
+  pi.on("tool_execution_end", (e: NestedEvent) => {
+    const kid = e.parentToolCallId && nested.get(e.toolCallId);
+    if (!kid) return;
+    kid.result = { ...e.result!, isError: e.isError };
+    kid.isPartial = false;
+    kid.clEnd = Date.now();
+  });
+
   pi.on("session_start", (_event, ctx) => {
+    nested.clear();
     if (ctx.mode !== "tui" || restores.length) return;
     const config = readConfig() ?? {};
     collapseGroups = config.collapseGroups === true;
@@ -1045,6 +1184,8 @@ export default function (pi: ExtensionAPI) {
         function (this: Tool & Proto, expanded: boolean) {
           this.clOpen = this.clDrawn ? expanded : undefined;
           this.clFullRow = this.clFullBody = undefined;
+          this.clAllKids = undefined;
+          for (const k of kidsOf(this)) k.clOpen = k.clFullRow = k.clFullBody = undefined;
           return orig.call(this, expanded);
         },
     );
@@ -1058,6 +1199,14 @@ export default function (pi: ExtensionAPI) {
           if (event.type !== "click" || event.button !== "left") return undefined;
           if (event.y === this.clHeadY) return toggleGroup(this);
           if (event.y < this.clRowY) return undefined;
+          // A codemode call's call: like a row of its own.
+          const hit = this.clKidAt?.[event.y];
+          if (hit) {
+            const [k, part] = hit;
+            k[part] = part === "clOpen" ? !isOpen(k) : !k[part];
+            this.ui.requestRender();
+            return { handled: true };
+          }
           // A toggle line shows or cuts its part; anywhere else opens or closes the row.
           const part =
             event.y === this.clRowY + this.clRowMore

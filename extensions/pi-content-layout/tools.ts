@@ -40,6 +40,7 @@ export const WORDING: Record<string, Wording> = {
   edit: ["edited", "file"],
   write: ["wrote", "file"],
   bash: RAN,
+  codemode: RAN, // and its script's calls count as their own
   // pi-bash-bg's tools count as commands too.
   bash_list: RAN,
   bash_watch: RAN,
@@ -208,4 +209,67 @@ export function describe(t: Tool): [target: string, result: string] {
     default:
       return [target, ""];
   }
+}
+
+type Call = {
+  id: string;
+  name: string;
+  args?: string;
+  status: string;
+  durationMs?: number;
+  error?: string;
+};
+type Calls = {
+  details?: { calls?: Call[] };
+  nestedCalls?: { calls?: { id: string; arguments?: Record<string, unknown> }[] };
+};
+
+/** Args from pi's preview: JSON cut to 200 characters (then its first string param), or a model. */
+function parseArgs(s = ""): Record<string, unknown> {
+  try {
+    const v = JSON.parse(s);
+    if (v && typeof v === "object" && !Array.isArray(v)) return v;
+  } catch {}
+  const [, k, v] = /^\{"([^"]+)":"((?:[^"\\]|\\.)*)/.exec(s) ?? [];
+  if (!k) return { value: s };
+  try {
+    return { [k]: JSON.parse(`"${v}"`) };
+  } catch {
+    return { [k]: v };
+  }
+}
+
+/**
+ * The calls a codemode script made, in order: pi lists them in its result's details. `live` holds
+ * the ones seen running in this session, by id, with their whole args and results. The others
+ * (history, model calls) have only how they ended: pi keeps no results for them (`clStatus`), and
+ * the whole args only in a saved result's nestedCalls.
+ */
+export function nestedOf(t: Tool, live: Map<string, Tool>): Tool[] {
+  const r = t.result as Calls | undefined;
+  const whole = new Map(r?.nestedCalls?.calls?.map((c) => [c.id, c.arguments]));
+  let n = 0;
+  return (r?.details?.calls ?? []).map((c) => {
+    // Tool calls read `<id>/<n>`, numbered in order (`<id>/?` until they end); model calls
+    // `<id>/<name>/<n>`.
+    const tool = c.id.slice(t.toolCallId.length).split("/").length === 2;
+    const id = tool && c.id.endsWith("/?") ? `${t.toolCallId}/${n + 1}` : c.id;
+    if (tool) n++;
+    const found = live.get(id);
+    if (found) return found;
+    const running = c.status === "running";
+    return {
+      toolName: c.name,
+      toolCallId: id,
+      args: whole.get(id) ?? parseArgs(c.args),
+      cwd: t.cwd,
+      isPartial: running,
+      result: running
+        ? undefined
+        : { content: [{ type: "text", text: c.error ?? "" }], isError: c.status === "error" },
+      clStatus: c.status,
+      // Its duration, as a start and end (timesOf reads them).
+      ...(c.durationMs === undefined ? {} : { clStart: 1, clEnd: 1 + c.durationMs }),
+    } as unknown as Tool;
+  });
 }
