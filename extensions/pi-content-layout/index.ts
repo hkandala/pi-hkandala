@@ -490,7 +490,17 @@ function thinkingOf(message: Message): string {
   return run.join("\n");
 }
 
+/** A chat child's kind, cached on it: it changes only with its message or whether it's hidden. */
 function kindOf(node: unknown): Kind {
+  const n = node as Proto | undefined;
+  if (!n) return "boundary";
+  const c = n.clKind;
+  if (c && c.message === n.lastMessage && c.hidden === n.hideComponent) return c.kind;
+  const kind = kindNow(node);
+  n.clKind = { message: n.lastMessage, hidden: n.hideComponent, kind };
+  return kind;
+}
+function kindNow(node: unknown): Kind {
   if (node instanceof ToolExecutionComponent) {
     const t = node as unknown as Tool;
     return t.hideComponent ? "skip" : "item";
