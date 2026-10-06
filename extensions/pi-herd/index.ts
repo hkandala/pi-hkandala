@@ -1214,7 +1214,10 @@ export default function (pi: ExtensionAPI) {
     new Promise<Agent | undefined>((done) => {
       const check = (all = allAgents()) => {
         const a = all.find((x) => isLive(x) && x.herdr.pane === target && x.herdr.socket === sock);
-        if (a) finish(a);
+        if (a) {
+          finish(a);
+          refresh(all); // lists it: a direct check has no onAgents refresh after it
+        }
       };
       const finish = (a?: Agent) => {
         waiters.delete(check);

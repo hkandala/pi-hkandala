@@ -583,7 +583,7 @@ agents` (`herd:update`'s agents as a tree, `├ └ │` by `parent`; ended ones
     (ctrl+b q or /detach)."
 - **In other extensions.** Both read `herd:update` next to pi-bash-bg's `bash-bg:update`.
   - **pi-working**: one label in the prompt box's border while the agent is idle and waiting:
-    - `Waiting on 3 agents and 2 background jobs (1m 12s)`
+    - `Waiting on 3 agents and 2 background jobs (1m)`
     - only the non-zero parts are shown: `Waiting on 3 agents (40s)`, `Waiting on 1 background
 job (2m)`
     - singular for one: `1 agent`, `1 background job`
