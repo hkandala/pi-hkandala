@@ -46,7 +46,7 @@ trap 'trap - TERM INT HUP; echo 143 > "$2"; kill -TERM 0' TERM INT HUP
 - The command runs in a subshell with no positional parameters, so it behaves like `bash -c "<command>"`, including `exit N`, `set -e` and heredocs.
 - **Why `& wait`:** a shell runs a trap only between commands, so it would wait for a foreground command to finish first. While the shell waits on a background child, the trap runs right away. The trap stops the whole group, so plain `kill <pid>` also stops `&` grandchildren, and 143 is recorded. `kill -9 <pid>` cannot be trapped; `kill -9 -- -<pid>` kills the group.
 - `exit $c` gives the wrapper the command's exit code, so a foreground call can use the child's own `exit` event.
-- **Cost:** about 13 ms per `echo hi`, against about 6 ms for pi's pipe-based bash, from one subshell fork and two small files. There is no PTY and no login shell.
+- **Cost:** about 13 ms per `echo hi`, against about 6 ms for pi's pipe-based bash, from one or two extra forks (the subshell, and the command under `eval`, which `bash -c` would exec in place), no extra exec, and two small files. There is no PTY and no login shell.
 
 **The `bash` tool** is pi's own `createBashToolDefinition(cwd, { commandPrefix, operations: { exec } })`, created per call. So pi's renderer, truncation, full-output file, error strings and `PI_*` env are unchanged, and pi-bash-cap still caps the result because the tool is still `bash`. The parameters are pi's `command` and `timeout`, plus `background?: boolean`.
 

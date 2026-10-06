@@ -81,7 +81,7 @@ Run `/reload` after editing.
 - It replaces pi's `bash` tool with pi's own tool, run through a small wrapper. So pi's rendering, truncation and error messages stay the same. The `shellPath` and `shellCommandPrefix` settings of pi apply (project settings only in a trusted project, as in pi).
 - macOS and Linux only: it stops jobs through process groups.
 - In `pi -p` and `--mode json`, pi waits for this session's running background jobs before it exits, and then the agent continues with their results. A server started in the background keeps pi running until the server stops.
-- Each call costs about 7 ms more than pi's bash (a subshell and two small files: the log and the exit code).
+- Each call costs about 7 ms more than pi's bash (one or two extra forks and two small files: the log and the exit code).
 - A process cannot catch `kill -9 <pid>`, so that command does not stop the job's child processes. Use `kill -9 -- -<pid>` to stop them too.
 - When pi starts, it deletes the files of jobs that ended more than 7 days ago. It also deletes the files that a crash left behind, one day after their last write.
 - In tmux, ctrl+shift+b needs `set -g extended-keys on`.
