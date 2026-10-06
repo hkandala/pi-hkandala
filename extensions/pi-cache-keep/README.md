@@ -41,5 +41,5 @@ None.
 
 - A real change to a hook section or to `project_context` that pi records in a message-started run reaches the model at your next prompt. For example: you edit AGENTS.md, run `/reload`, and a job wakes the session before you type.
 - `ctx.getSystemPrompt()`, `/export` and the session file show what pi recorded, not what the model got.
-- A hook that returns a whole `systemPrompt`, or a `context` handler that changes the message list, is not covered. In the second case the extension warns once.
+- A hook that returns a whole `systemPrompt`, or a `context` handler that changes the message list, is not covered. In the second case the extension warns once. The built-in llm-rules extension (`META_PI_LLM_RULES=1`) is such a handler: once one of its notes is in history, pi-cache-keep does nothing for that session.
 - Check: `node extensions/pi-cache-keep/test.ts`.
