@@ -547,7 +547,9 @@ The only link to other extensions is the event bus.
     ended. The marker makes an agent several levels down read `stopped` for everyone above it. An agent resumed with `agent_start` is live
     again.
 
-- **pi-herd listens for** `herd:attach { id }` (opens the attach popup, section 11) and
+- **pi-herd emits** `herd:focused {}` when viewing an agent made herdr focus its pane instead of
+  opening a popup (section 11): pi-footer closes its tabs.
+- **pi-herd listens for** `herd:attach { id }` (views the agent, section 11) and
   `herd:stop { id }` (the same as `agent_stop`: any live agent below this one).
 - **`/agents`** (`/agents list [children|cwd|all]`): prints the agents like `/background list`
   prints jobs: `appendEntry("pi-herd-list", …)` with a framed entry renderer (never sent to the
@@ -573,7 +575,7 @@ agents` (`herd:update`'s agents as a tree, `├ └ │` by `parent`; ended ones
     (to the end of its level). (`herd:update` sends the agents grouped instead, for pi-footer: working, then any
     other live status, then ended; in each group, by when the agent entered it, so a newcomer goes
     last. pi-herd keeps those times, `byGroup`.)
-  - Keys: ↑↓ and PgUp/PgDn select, Enter opens a live agent in a popup (section 11), `x` twice
+  - Keys: ↑↓ and PgUp/PgDn select, Enter views a live agent (section 11), `x` twice
     stops a live agent below this one, `e` shows or hides the ended ones, Esc or `q` closes. In
     pi's fullscreen mode, a left click on an agent's row selects it and does what Enter does, and
     the mouse wheel moves the selection one agent per step, like ↑↓ but without wrapping around.
@@ -608,8 +610,8 @@ running agents`, and the hint line at the bottom `e show ended (2)`.
       - Colors: only `working` (accent) and `blocked` (warning) stand out. `idle` and
         `done` are dim, and the time is always dim.
       - 3 rows at a time; it scrolls with the selection (`3/12`).
-      - Keys, with the keys on the dashboard: ↑/↓ select, Enter opens a live agent in a popup
-        (`herd:attach`), `x` twice stops a live agent this session started (`herd:stop`), `e`
+      - Keys, with the keys on the dashboard: ↑/↓ select, Enter views a live agent
+        (`herd:attach`, section 11), `x` twice stops a live agent this session started (`herd:stop`), `e`
         shows or hides ended ones. A click selects a row, and a click on the selected row opens
         it. The hint reads `↑↓ select · enter view · x stop · e show ended (2)`, with only what
         applies.
@@ -633,7 +635,7 @@ caller passes in `POPUP_COMMAND`. herdr's popup has no close button and ignores 
 How to close it is shown by the started agent inside, in or above its prompt (below), so the pane's border title
 only names what it shows: `pi agent` (herdr requires a non-blank title).
 
-- **Attach.** Viewing an agent (the dashboard's Enter, pi-footer's Enter) runs:
+- **Attach.** Viewing an agent on another herdr server (the dashboard's Enter, pi-footer's Enter) runs:
 
   ```bash
   herdr plugin pane open --plugin pi-hkandala --entrypoint attach \
@@ -669,6 +671,15 @@ only names what it shows: `pi agent` (herdr requires a non-blank title).
   - Any other end of an attach (detach, `/detach`, the agent exits) leaves the marker as it was,
     so the loop ends and the popup closes.
 
+  - **Same server: no popup.** When the agent's pane is on the caller's own herdr server, viewing
+    calls `pane.focus` on it instead: herdr switches to its workspace and tab. Then the dashboard
+    closes and pi-herd emits `herd:focused`, so pi-footer closes its tabs. In a popup, the popup's
+    server is the opener's (its record's `herdr.socket`): an agent there closes the popup (the
+    attach ends with the marker unchanged) and herdr focuses its pane. The reason is herdr 0.9.3:
+    when one server hosts both the popup and the pane it attaches, it defers the user's frames
+    while the attach draws, so the popup scrolls at about 5 fps instead of 50. Agents in the
+    dedicated session keep the popup. Once herdr draws attach clients after the others
+    (`render_targets`, src/server/clients.rs), the focus can go.
   - The popup opens over the caller's herdr session, even when the agent lives in the dedicated
     session. herdr sets its own `HERDR_*` variables in the popup, which is why the command sets
     `HERDR_SOCKET_PATH`.

@@ -931,13 +931,28 @@ export default function (pi: ExtensionAPI) {
     }, 5000).unref();
   };
 
+  /** herdr shows the agent's pane (its workspace and tab); what the click came from closes. */
+  const focus = (sock: string, a: Agent) =>
+    rpc(sock, "pane.focus", { pane_id: a.herdr.pane }).then(
+      () => {
+        closeDashboard?.();
+        pi.events.emit("herd:focused", {}); // pi-footer closes its tabs
+      },
+      (e: Error) => ctx?.ui.notify(`herdr: ${e.message}`, "error"),
+    );
+
   /**
    * Views an agent: in a popup showing this agent, that popup switches to it (the marker names it,
    * and ending the current attach makes the popup's loop attach it), or closes when that agent
    * opened the popup (its pane is behind the popup: a 5th marker line, kept across switches; an
-   * older runtime's marker has none, and switches as before); otherwise it opens a popup,
-   * whichever herdr session the agent is in. Not from the hidden session outside a popup: nobody
-   * sees a popup there, and it would take the agent's pane away from wherever it shows.
+   * older runtime's marker has none, and switches as before), or closes and herdr focuses the
+   * agent's pane when it is on the popup's server. Otherwise herdr focuses its pane when it is on
+   * this agent's server, or it opens a popup (an agent in the hidden session). Not from the
+   * hidden session outside a popup: nobody sees a popup there, and it would take the agent's pane
+   * away from wherever it shows.
+   * ponytail: the focus is for herdr 0.9.3, which shows a popup that attaches a pane of its own
+   * server at about 5 fps while it scrolls. Drop it once herdr renders attach clients after the
+   * others (render_targets, src/server/clients.rs).
    */
   const attach = async (a: Agent) => {
     if (!ctx || !me) return;
@@ -945,6 +960,11 @@ export default function (pi: ExtensionAPI) {
       const path = join(ATTACHED, String(popupPid));
       const opener = marker(path)[4] ?? "";
       if (a.id === opener) return endAttach(); // the marker still names this agent: the popup closes
+      const host = readAgent(opener)?.herdr.socket; // the popup's server
+      if (a.herdr.socket === host) {
+        endAttach(); // the marker still names this agent: the popup closes
+        return focus(host, a);
+      }
       try {
         writeFileSync(
           path,
@@ -961,6 +981,7 @@ export default function (pi: ExtensionAPI) {
         `This agent runs in herdr session ${SESSION}, where a popup wouldn't show: open ${label(a)} from your main herdr session.`,
         "warning",
       );
+    if (a.herdr.socket === socket) return focus(socket, a);
     const command = popupCommand(ATTACHED, {
       ...a.herdr,
       id: a.id,

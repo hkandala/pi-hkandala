@@ -78,7 +78,7 @@ The columns are name, status, folder, messages, and time. The time column comes 
 
 Rows stay in the order the agents came (started or watched; other agents by when they started), with ended ones last at every level of the tree: only an agent ending moves a row. pi-footer's agents tab orders by status instead: working first.
 
-The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent in a herdr popup, `x` twice stops one of yours, `e` shows or hides the ended ones, Esc or `q` closes. In pi's fullscreen mode, a click on an agent does what Enter does, and the mouse wheel moves the selection.
+The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent (see Popups below), `x` twice stops one of yours, `e` shows or hides the ended ones, Esc or `q` closes. In pi's fullscreen mode, a click on an agent does what Enter does, and the mouse wheel moves the selection.
 
 ```
     agents
@@ -99,7 +99,7 @@ The keys sit at the bottom: ↑↓ (PgUp PgDn) select, Enter opens a live agent 
     ↑↓ select · e show ended (1) · esc close
 ```
 
-**Popups.** Every agent opens in the repo's herdr plugin popup (below), whichever herdr session it is in. Without the plugin, opening an agent prints the command to attach in a terminal. The popup shows a dim `opening <name>…` for a moment first: it sizes the agent's pane to the popup and lets pi redraw, so the attach shows a settled screen. In a popup, the agent shows `ctrl+b q or /detach to close` as its prompt's placeholder (with pi-footer; without it, in yellow above the prompt); ← does nothing special there and `/agents dashboard` is refused. Opening one of its agents from its footer replaces what the popup shows; opening the agent that opened the popup (the one behind it) closes the popup instead. The popup closes by itself when the agent ends. An agent in the `pi-herd` session viewed through a plain `herdr agent attach` (not a popup) can't open popups: nobody would see them there, so it says to open the agent from your main herdr session.
+**Popups.** An agent in the `pi-herd` session opens in the repo's herdr plugin popup (below). An agent in your own herdr session doesn't: herdr shows its pane (it switches to its workspace and tab), and the dashboard or pi-footer's tab closes. herdr 0.9.3 draws a popup of a pane on its own server at about 5 fps while it scrolls. Without the plugin, opening an agent prints the command to attach in a terminal. The popup shows a dim `opening <name>…` for a moment first: it sizes the agent's pane to the popup and lets pi redraw, so the attach shows a settled screen. In a popup, the agent shows `ctrl+b q or /detach to close` as its prompt's placeholder (with pi-footer; without it, in yellow above the prompt); ← does nothing special there and `/agents dashboard` is refused. Opening one of its agents from its footer replaces what the popup shows; opening the agent that opened the popup (the one behind it) closes the popup instead, and so does opening an agent in your own herdr session, whose pane herdr then shows. The popup closes by itself when the agent ends. An agent in the `pi-herd` session viewed through a plain `herdr agent attach` (not a popup) can't open popups: nobody would see them there, so it says to open the agent from your main herdr session.
 
 ## Works with
 
@@ -109,7 +109,7 @@ Optional; install any of them for the extra:
   - `󰫣 3` in the footer line while this session watches agents.
   - The cost of the agents you started (any depth, ended ones too) in the usage tab's total.
   - An agents tab (↓ opens it while watches run). It lists the live agents you started and the ones you watched; `e` shows the ended ones. Working ones come first. Each row shows how many live agents run below it (`auth-reviewer +2`) and the messages sent and received. `󱖡` marks agents you didn't start and `󰅐` the ones you wait on. The tab's label shows how many agents this session waits on (`agents 2`).
-  - In the tab, Enter opens an agent in a popup, and `x` twice stops one of yours.
+  - In the tab, Enter opens an agent (like the dashboard), and `x` twice stops one of yours.
   - In a popup, the close hint as the prompt box's placeholder.
 - [pi-working](../pi-working/README.md): `Waiting on 3 agents and 2 background jobs (1m 12s)` in the prompt's border while the agent waits.
 - [pi-content-layout](../pi-content-layout/README.md): agent messages and watch endings in its dashed frames (`agent message`, `agent watcher`; click to expand, markdown highlighted), messages in open tool calls as highlighted markdown, and tool groups that read `Started 2 agents, talked to 3 agents, stopped 2 agents`.
