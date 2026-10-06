@@ -932,10 +932,15 @@ function toolRow(t: Tool & Proto, width: number, theme: Theme) {
 
 /** Calls codemode scripts made in this session, by id, from pi's events (results and all). */
 const nested = new Map<string, Tool & Proto>();
-/** A codemode call's calls (cached: rows render every frame). */
+/**
+ * A codemode call's calls (cached: rows render every frame). Only a running call gets new ones: a
+ * settled call's result came after all its calls started.
+ */
 const kidsOf = (t: Tool): (Tool & Proto)[] =>
   t.toolName === "codemode"
-    ? memo(t as Proto, "clKids", [t.result, nested.size], () => nestedOf(t, nested))
+    ? memo(t as Proto, "clKids", [t.result, stateOf(t) === "running" && nested.size], () =>
+        nestedOf(t, nested),
+      )
     : [];
 
 /** A call under a codemode row: its lines, what a click on each does, and its stamp. */
