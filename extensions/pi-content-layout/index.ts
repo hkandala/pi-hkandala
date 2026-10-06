@@ -944,8 +944,11 @@ function toolRow(t: Tool & Proto, width: number, theme: Theme) {
   return { row, stamp, seconds };
 }
 
-/** Calls codemode scripts made in this session, by id, from pi's events (results and all). */
+/** Calls codemode scripts made in this session, by id, from pi's events (with args and results). */
 const nested = new Map<string, Tool & Proto>();
+/** The ids of the calls in `nested` that ended, oldest first. */
+const ended: string[] = [];
+const KEPT_RESULTS = 100;
 /**
  * A codemode call's calls (cached: rows render every frame). Only a running call gets new ones: a
  * settled call's result came after all its calls started.
@@ -1099,10 +1102,19 @@ export default function (pi: ExtensionAPI) {
     kid.result = { ...e.result!, isError: e.isError };
     kid.isPartial = false;
     kid.clEnd = Date.now();
+    // Only the last KEPT_RESULTS calls keep their results (they can be big). An older one that
+    // succeeded then reads like one from history: how it ended, and it doesn't open.
+    ended.push(e.toolCallId);
+    const old = nested.get(ended.length > KEPT_RESULTS ? ended.shift()! : "");
+    if (!old || old.result?.isError) return;
+    old.result = { content: [] };
+    old.clStatus = "ok";
+    for (const key of ["clInfo", "clBody", "clFit", "clKid"]) delete old[key]; // they hold it too
   });
 
   pi.on("session_start", (_event, ctx) => {
     nested.clear();
+    ended.length = 0;
     if (ctx.mode !== "tui" || restores.length) return;
     const config = readConfig() ?? {};
     collapseGroups = config.collapseGroups === true;
