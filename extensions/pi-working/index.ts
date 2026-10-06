@@ -5,7 +5,7 @@
  *   ╭── ⠋ Working (12s) ─────────────────────╮   while running; the time turns yellow when the
  *                                                model has been silent for 30s
  *   ╭── ✓ Worked for 4m 12s · 3m ago ────────╮   after the run; ■ interrupted, ✗ failed
- *   ╭── Waiting on 3 agents and 2 background jobs (1m 12s) ──╮   after the run, while pi-herd
+ *   ╭── Waiting on 3 agents and 2 background jobs (1m) ──╮   after the run, while pi-herd
  *        watches or pi-bash-bg jobs it watches run (their end wakes the agent)
  *
  * A run spans the first agent_start to agent_settled, so retries, compaction and follow-ups count.
@@ -114,7 +114,7 @@ export default function (pi: ExtensionAPI) {
     if (waiting) {
       const plural = (n: number, w: string) => n && `${n} ${w}${n === 1 ? "" : "s"}`;
       const what = [plural(agents, "agent"), plural(jobs, "background job")].filter(Boolean);
-      const time = t.fg("dim", `(${duration(Date.now() - waitingSince, true)})`);
+      const time = t.fg("dim", `(${duration(Date.now() - waitingSince)})`);
       return `${t.fg("muted", `Waiting on ${what.join(" and ")}`)} ${time}`;
     }
     if (!done) return "";

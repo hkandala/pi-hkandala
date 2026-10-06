@@ -6,7 +6,7 @@ Adds an elapsed timer to pi's working label. When the run ends, the spinner turn
  ╭── ⠋ Working (12s) ─────────────────────────────────╮    while running
  ╭── ✓ Worked for 4m 12s ─────────────────────────────╮    after the run
  ╭── ✓ Worked for 4m 12s · 3m ago ────────────────────╮    a minute or more later
- ╭── Waiting on 3 agents and 2 background jobs (1m 12s) ─╮    with pi-herd or pi-bash-bg
+ ╭── Waiting on 3 agents and 2 background jobs (1m) ─╮    with pi-herd or pi-bash-bg
 ```
 
 | State   | Shows                                                                                                                                                                |
@@ -15,7 +15,7 @@ Adds an elapsed timer to pi's working label. When the run ends, the spinner turn
 | Done    | `✓ Worked for 4m 12s` in muted text, with the ✓ in the theme's `success` color. `■` (`warning` color) if you interrupted it, `✗` (`error` color) if it failed        |
 | Cleared | When the next run starts or you press esc (esc still does whatever it normally does in pi)                                                                           |
 
-With [pi-herd](../pi-herd/README.md) or [pi-bash-bg](../pi-bash-bg/README.md), a run can end while the agent still waits on agents or background jobs that it watches. Then the label reads `Waiting on 3 agents and 2 background jobs (1m 12s)`. Agents come first, and parts that are zero are left out (`Waiting on 1 agent (40s)`). The time starts when the waiting starts. When a watched agent or job ends, it wakes the agent and a new run starts. If the waiting ends some other way, the done label comes back, unless you pressed esc.
+With [pi-herd](../pi-herd/README.md) or [pi-bash-bg](../pi-bash-bg/README.md), a run can end while the agent still waits on agents or background jobs that it watches. Then the label reads `Waiting on 3 agents and 2 background jobs (1m)`. Agents come first, and parts that are zero are left out (`Waiting on 1 agent (40s)`). The time starts when the waiting starts. When a watched agent or job ends, it wakes the agent and a new run starts. If the waiting ends some other way, the done label comes back, unless you pressed esc.
 
 A run lasts from sending a message until pi is fully done, so retries, compaction and queued follow-ups all count toward the time.
 
