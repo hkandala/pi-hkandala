@@ -98,6 +98,8 @@ export default function (pi: ExtensionAPI) {
   ) as typeof defaults;
   let ctx: ExtensionContext | undefined;
   let sessionId = "";
+  // This session's watched ids, reread only where this session writes its watch files.
+  let watched: string[] = [];
   let settings: SettingsManager | undefined;
   let tick: ReturnType<typeof setInterval> | undefined;
   let pokeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -119,7 +121,7 @@ export default function (pi: ExtensionAPI) {
     pi.events.emit("bash-cap:limits", l);
     return l;
   };
-  const watchedIds = () => (sessionId ? ids(`.watch.${sessionId}`) : []);
+  const watchedIds = () => watched;
   type Scope = "watching" | "all";
   type Status = "running" | "finished" | "any";
   /** bash_list's and /background list's filter: whose jobs, and in which state. */
@@ -292,6 +294,7 @@ export default function (pi: ExtensionAPI) {
           const meta: Meta = { pid: child.pid, command: shown, cwd, startedAt, sessionId };
           writeFileSync(file(id, "json"), JSON.stringify(meta));
           writeFileSync(file(id, `watch.${sessionId}`), "");
+          watched = ids(`.watch.${sessionId}`);
           seen().add(id);
           child.unref();
           const where = `as pid ${child.pid} (log: ${log})`;
@@ -463,6 +466,7 @@ export default function (pi: ExtensionAPI) {
           `pid ${pid} is not a pi-bash-bg background job. See bash_list({ jobs: "all" }).`,
         );
       writeFileSync(file(j.id, `watch.${sessionId}`), "");
+      watched = ids(`.watch.${sessionId}`);
       if (j.code === undefined) seen().add(j.id);
       else seen().delete(j.id); // this answer is its end message
       const text =
@@ -619,6 +623,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (event, c) => {
     ctx = c;
     sessionId = c.sessionManager.getSessionId();
+    watched = ids(`.watch.${sessionId}`);
     // Project settings only when pi trusts the project, as for pi's own bash.
     settings = SettingsManager.create(c.cwd, getAgentDir(), {
       projectTrusted: c.isProjectTrusted(),
