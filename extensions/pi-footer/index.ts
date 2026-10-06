@@ -708,7 +708,7 @@ export default function (pi: ExtensionAPI) {
   let g: Git = EMPTY_GIT;
   const tabs = new Tabs(); // the dashboard: open, focus, active tab
   let shown: Tab[] = []; // the tabs as last rendered (none while closed), for keys and clicks
-  let tabsNow = (): Tab[] => []; // the tabs, built now (while closed)
+  let tabsNow = (): Tab[] => []; // the tabs, built now
   let bg: Bg | undefined;
   let herd: Herd | undefined;
   // Watches or running jobs: open on their tab.
@@ -717,7 +717,7 @@ export default function (pi: ExtensionAPI) {
   let dashRow = 0; // the dashboard's first row there
   let spans: Span[] = []; // the footer line's pieces
   let requestRender = () => {};
-  let timers: ReturnType<typeof setInterval>[] = [];
+  let tick: ReturnType<typeof setInterval> | undefined;
   let debounce: ReturnType<typeof setTimeout> | undefined;
   let busy = false;
   let again = false;
@@ -776,8 +776,7 @@ export default function (pi: ExtensionAPI) {
   let stopInput = () => {};
   const stop = () => {
     stopInput();
-    timers.forEach(clearInterval);
-    timers = [];
+    clearInterval(tick);
     clearTimeout(debounce);
     debounce = undefined;
   };
@@ -786,7 +785,7 @@ export default function (pi: ExtensionAPI) {
   /** A click on the footer line: a piece opens its tab (see render); the rest of the line is inert. */
   const footerClick = (x: number) => {
     const tab = spans.find((sp) => x >= sp.x0 && x < sp.x1)?.tab;
-    if (!tab || !(tabs.expanded ? shown : tabsNow()).some((t) => t.id === tab)) return;
+    if (!tab || !tabsNow().some((t) => t.id === tab)) return;
     tabs.show(tab);
     requestRender();
   };
@@ -972,7 +971,8 @@ export default function (pi: ExtensionAPI) {
       if (Date.now() - lastRefreshAt > STALE_MS) void refresh();
       if (fetchPollMs > 0 && Date.now() - Math.max(g.fetchedAt ?? 0, fetchTriedAt) > fetchPollMs)
         void gitFetch();
-      if ((tabs.focus && !shown.length) || !tabs.input(data, shown, promptEnd, tuiHasOverlay())) {
+      if (tabs.focus && !shown.length) shown = tabsNow(); // ↓ opened it earlier in this batch
+      if (!tabs.input(data, shown, promptEnd, tuiHasOverlay())) {
         if (!tabs.focus) requestRender(); // typing may have handed the keys back
         return undefined;
       }
@@ -980,11 +980,9 @@ export default function (pi: ExtensionAPI) {
       return { consume: true };
     });
     // Time shows in the collapsed line only as "cold"; the open dashboard has countdowns.
-    timers.push(
-      setInterval(() => {
-        if (tabs.expanded || cacheState(ctx, sessionStats(ctx)).cold !== lastCold) requestRender();
-      }, 10_000),
-    );
+    tick = setInterval(() => {
+      if (tabs.expanded || cacheState(ctx, sessionStats(ctx)).cold !== lastCold) requestRender();
+    }, 10_000);
     // Not awaited: pi runs session_start handlers one at a time, so the git read would hold up
     // the extensions after this one.
     void refresh();
@@ -1017,20 +1015,13 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("footer", {
     description: "Open the footer dashboard, optionally at a tab (↓ at the end of the prompt too)",
     getArgumentCompletions: (prefix) => {
-      const items = (tabs.expanded ? shown : tabsNow()).filter((t) =>
-        t.id.startsWith(prefix.trim()),
-      );
+      const items = tabsNow().filter((t) => t.id.startsWith(prefix.trim()));
       return items.length ? items.map((t) => ({ value: t.id, label: t.id })) : null;
     },
     handler: async (args) => {
       const tab = args.trim();
       if (!tab && tabs.expanded) tabs.close();
-      else
-        tabs.show(
-          (tabs.expanded ? shown : tabsNow()).some((t) => t.id === tab)
-            ? tab
-            : (tabs.pick() ?? tabs.tab),
-        );
+      else tabs.show(tabsNow().some((t) => t.id === tab) ? tab : (tabs.pick() ?? tabs.tab));
       requestRender();
     },
   });
