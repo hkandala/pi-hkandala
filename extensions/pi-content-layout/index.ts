@@ -364,18 +364,20 @@ function unpadded(lines: string[]): string[] {
 function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
   if (!open) return [];
   const lang = getLanguageFromPath(str(t.args?.path ?? t.args?.file_path));
-  if (t.toolName === "write") {
-    const code = untab(str(t.args?.content).trimEnd()).split("\n");
-    // While the content streams in (it changes every frame), only the lines shown are colored.
-    const n = t.result || t.clFullBody || !maxLines ? code.length : maxLines;
-    const colored = highlighted(code.slice(0, n).join("\n"), lang, theme);
-    return numbered([...colored, ...code.slice(n).map((l) => theme.fg("text", l))], 1, theme);
-  }
+  // Only the lines shown are colored (the rest until ↓ more lines shows them): highlighting a long
+  // file or message is slow, and streaming content changes every frame.
+  const n = t.clFullBody || !maxLines ? Infinity : maxLines;
+  const colored = (code: string[], lang: string | undefined) => [
+    ...highlighted(code.slice(0, n).join("\n"), lang, theme),
+    ...code.slice(n).map((l) => theme.fg("text", l)),
+  ];
+  if (t.toolName === "write")
+    return numbered(colored(untab(str(t.args?.content).trimEnd()).split("\n"), lang), 1, theme);
   const text = HERD_MESSAGE.has(t.toolName) && str((t.args?.message as { text?: unknown })?.text);
   if (text) {
     const out = t.result ? unpadded(linesOf(t.result)).map((l) => theme.fg("muted", l)) : [];
     return [
-      ...highlighted(untab(text.trimEnd()), "markdown", theme),
+      ...colored(untab(text.trimEnd()).split("\n"), "markdown"),
       ...(out.length ? ["", ...out] : []),
     ];
   }
@@ -387,9 +389,11 @@ function bodyLines(t: Tool & Proto, open: boolean, theme: Theme): string[] {
     const lines = linesOf(t.result);
     const note =
       lines.at(-2) === "" && /^\[.*\]$/.test(lines.at(-1)!) ? lines.length - 2 : Infinity;
-    const code = highlighted(lines.slice(0, note).join("\n"), lang, theme);
     const first = Math.max(1, Math.floor(Number(t.args?.offset)) || 1);
-    return [...numbered(code, first, theme), ...lines.slice(note).map((l) => theme.fg("muted", l))];
+    return [
+      ...numbered(colored(lines.slice(0, note), lang), first, theme),
+      ...lines.slice(note).map((l) => theme.fg("muted", l)),
+    ];
   }
   const color = t.result.isError ? "error" : "text";
   let out = linesOf(t.result);
