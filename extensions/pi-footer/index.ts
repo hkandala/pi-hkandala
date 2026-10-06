@@ -53,8 +53,7 @@ const PIE = [
   ...Array.from({ length: 8 }, (_, i) => String.fromCodePoint(0xf0a9e + i)),
 ];
 const MARGIN = 3; // the dashboard's and statuses' right margin, like the box's and the transcript's
-// Tools that never change the work tree: no git refresh after them.
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const STALE_MS = 30_000; // git info older than this refreshes on terminal input; tools refresh at most this often
 
 type Color = Parameters<Theme["fg"]>[0];
 type Paint = (color: Color, s: string) => string;
@@ -63,7 +62,6 @@ type Config = {
   disableEffortColors?: boolean;
   style?: "color" | "white";
   iconColor?: string;
-  gitStatusPollMins?: number;
   gitFetchPollMins?: number;
 };
 /** A job from pi-bash-bg's bash-bg:update event. */
@@ -151,10 +149,6 @@ function readConfig(): Config {
     return {};
   }
 }
-
-/** A poll in minutes as ms; setInterval treats anything over 2^31-1 ms as 1 ms. */
-const pollMs = (mins: number | undefined, fallback: number) =>
-  Math.min(2 ** 31 - 1, (mins ?? fallback) * 60_000);
 
 /** When the running turn started (agent_start), while one runs. */
 let turnStartedAt: number | undefined;
@@ -706,8 +700,7 @@ function jobsTab(pi: ExtensionAPI, bg: Bg, paint: Paint, width: number): Tab | u
 
 export default function (pi: ExtensionAPI) {
   const config = readConfig();
-  const statusPollMs = pollMs(config.gitStatusPollMins, 0.5);
-  const fetchPollMs = pollMs(config.gitFetchPollMins, 30);
+  const fetchPollMs = (config.gitFetchPollMins ?? 30) * 60_000;
 
   let g: Git = EMPTY_GIT;
   const tabs = new Tabs(); // the dashboard: open, focus, active tab
@@ -724,6 +717,8 @@ export default function (pi: ExtensionAPI) {
   let debounce: ReturnType<typeof setTimeout> | undefined;
   let busy = false;
   let again = false;
+  let lastRefreshAt = 0;
+  let fetchTriedAt = 0;
   let session: ExtensionContext | undefined;
   // Git can run repo hooks, so only in trusted projects (re-checked each time: trust can change).
   const trusted = () => session?.isProjectTrusted() === true;
@@ -737,6 +732,7 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     busy = true;
+    lastRefreshAt = Date.now();
     try {
       g = await readGit(session.cwd);
       requestRender();
@@ -748,12 +744,16 @@ export default function (pi: ExtensionAPI) {
       return refresh();
     }
   };
-  const refreshSoon = () => {
+  const refreshSoon = (ms = 1000) => {
     clearTimeout(debounce);
-    debounce = setTimeout(refresh, 1000);
+    debounce = setTimeout(() => {
+      debounce = undefined;
+      void refresh();
+    }, ms);
   };
   const gitFetch = async () => {
     if (!session || !trusted() || !g.upstream) return;
+    fetchTriedAt = Date.now(); // also while it runs, and after a failed fetch left FETCH_HEAD old
     const cwd = session.cwd;
     // Never prompt for credentials: fail quietly and show an older "fetched" time instead. Batch
     // mode is added to the user's own ssh command, so their keys still apply.
@@ -775,6 +775,7 @@ export default function (pi: ExtensionAPI) {
     timers.forEach(clearInterval);
     timers = [];
     clearTimeout(debounce);
+    debounce = undefined;
   };
   const box = config.promptEditor !== "default";
   let footerLine: (width: number) => string = () => "";
@@ -878,7 +879,7 @@ export default function (pi: ExtensionAPI) {
       requestRender = () => tui.requestRender();
       let editor: Node | undefined; // pi's editor (or the box), once found
       let unpin = () => {};
-      const unsubscribe = footerData.onBranchChange(refreshSoon);
+      const unsubscribe = footerData.onBranchChange(() => refreshSoon());
       promptEnd = () => promptAtEnd(editor, tui);
       tuiHasOverlay = () => tui.hasOverlay() || editorUnfocused(editor);
       const draw = (w: number, withTabs?: boolean) =>
@@ -956,6 +957,10 @@ export default function (pi: ExtensionAPI) {
     if (box) pi.events.emit("footer:box", {}); // pi-herd: its popup hint goes in the placeholder
     // The dashboard's keys (see tabs.ts): ↓ at the end of the prompt opens it.
     stopInput = ctx.ui.onTerminalInput((data) => {
+      // Someone is looking: catch up on edits made outside pi, and fetch when the last one is old.
+      if (Date.now() - lastRefreshAt > STALE_MS) void refresh();
+      if (fetchPollMs > 0 && Date.now() - Math.max(g.fetchedAt ?? 0, fetchTriedAt) > fetchPollMs)
+        void gitFetch();
       if (!shown.length || !tabs.input(data, shown, promptEnd, tuiHasOverlay())) {
         if (!tabs.focus) requestRender(); // typing may have handed the keys back
         return undefined;
@@ -964,14 +969,9 @@ export default function (pi: ExtensionAPI) {
       return { consume: true };
     });
     timers.push(setInterval(() => requestRender(), 10_000)); // keeps the cache countdown current
-    if (statusPollMs > 0) timers.push(setInterval(refresh, statusPollMs));
-    if (fetchPollMs > 0) timers.push(setInterval(gitFetch, fetchPollMs));
     // Not awaited: pi runs session_start handlers one at a time, so the git read would hold up
-    // the extensions after this one. Fetch at start when the last fetch is older than the poll.
-    void refresh().then(() => {
-      if (session === ctx && fetchPollMs > 0 && Date.now() - (g.fetchedAt ?? 0) > fetchPollMs)
-        void gitFetch();
-    });
+    // the extensions after this one.
+    void refresh();
   });
   pi.on("session_shutdown", async () => {
     stop();
@@ -979,9 +979,11 @@ export default function (pi: ExtensionAPI) {
     turnStartedAt = undefined;
   });
 
-  // Anything that may have edited files or moved HEAD.
+  // Tools that edit files or move HEAD (codemode's nested calls arrive under their own names):
+  // at most one refresh per STALE_MS, at once when the last one is older.
   pi.on("tool_result", async (event) => {
-    if (!READ_ONLY_TOOLS.has(event.toolName)) refreshSoon();
+    if (["bash", "edit", "write"].includes(event.toolName) && !debounce)
+      refreshSoon(Math.max(0, lastRefreshAt + STALE_MS - Date.now()));
   });
   pi.on("user_bash", async () => refreshSoon());
   pi.on("message_update", async ({ message }) => {

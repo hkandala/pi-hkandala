@@ -151,7 +151,9 @@ The time row shows the length of the last turn (see [Cost](#cost) for when a tur
 
 ### Git
 
-The git info refreshes one second after tool calls that can change files, after `!` commands, after agent runs, and after branch changes. It also refreshes on a poll. `git fetch` runs on its own poll, and at start if the last fetch is older than that poll.
+The git info refreshes at start, after `!` commands, after agent runs, and after branch changes. During a run, `bash`, `edit`, and `write` calls refresh it at most once every 30 seconds. When you type or press a key, it refreshes if it is older than 30 seconds, so edits made outside pi show too. Nothing runs on a timer: an agent that nobody uses runs no git.
+
+`git fetch` runs only when you type or press a key, and only if the last fetch is older than `gitFetchPollMins`.
 
 - Git runs only in trusted projects, with fsmonitor off.
 - The fetch never asks for credentials. It adds `BatchMode=yes` to your own ssh command.
@@ -186,7 +188,6 @@ Optional file: `~/.pi/agent/extensions/pi-footer.json`
   "disableEffortColors": true,
   "style": "color",
   "iconColor": "accent",
-  "gitStatusPollMins": 0.5,
   "gitFetchPollMins": 30
 }
 ```
@@ -197,5 +198,4 @@ Optional file: `~/.pi/agent/extensions/pi-footer.json`
 | `disableEffortColors` | `true`, `false`                 | `true`     | keeps the prompt border gray (theme `muted`) and the footer's thinking level in `text`, instead of pi's thinking-level colors. In bash mode, the border still has the bash-mode color |
 | `style`               | `"color"`, `"white"`            | `"color"`  | `white` draws the footer and the dashboard text in the theme's text color. The box border and the active tab's background keep their colors                                           |
 | `iconColor`           | theme color name or `"#rrggbb"` | `"accent"` | the color of the folder, repo, branch, agents, and jobs icons. For example: `"border"`, `"mdHeading"`, `"#F05032"`                                                                    |
-| `gitStatusPollMins`   | minutes                         | `0.5`      | the git status poll (line changes, push and pull counts, last commit). `0` turns it off                                                                                               |
-| `gitFetchPollMins`    | minutes                         | `30`       | the `git fetch` poll. `0` turns it off                                                                                                                                                |
+| `gitFetchPollMins`    | minutes                         | `30`       | the least time between two `git fetch` runs. `0` turns fetch off                                                                                                                      |
