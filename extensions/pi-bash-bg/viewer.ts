@@ -120,12 +120,16 @@ export class LogViewer {
     this.command = highlightBash(this.now.command); // reopened per line, as pi-content-layout does
     this.load();
     let ticks = 0;
+    let loads = 0;
     this.timer = setInterval(() => {
       const was = this.now.running;
       this.now = info();
       // As the log grows, when the job ends, and the running time once a second.
       const ended = was !== this.now.running;
-      if (this.load() || ended || (this.now.running && ++ticks % 4 === 0)) tui.requestRender();
+      // A tail over 256 KB takes ms to reread and rewrap, so it's reread once a second.
+      const skip = this.size > 256 * 1024 && ++loads % 4 !== 0 && !ended;
+      if ((!skip && this.load()) || ended || (this.now.running && ++ticks % 4 === 0))
+        tui.requestRender();
     }, 250);
   }
 
