@@ -704,7 +704,8 @@ export default function (pi: ExtensionAPI) {
 
   let g: Git = EMPTY_GIT;
   const tabs = new Tabs(); // the dashboard: open, focus, active tab
-  let shown: Tab[] = []; // the tabs as last rendered, for keys and clicks
+  let shown: Tab[] = []; // the tabs as last rendered (none while closed), for keys and clicks
+  let tabsNow = (): Tab[] => []; // the tabs, built now (while closed)
   let bg: Bg | undefined;
   let herd: Herd | undefined;
   // Watches or running jobs: open on their tab.
@@ -782,7 +783,7 @@ export default function (pi: ExtensionAPI) {
   /** A click on the footer line: a piece opens its tab (see render); the rest of the line is inert. */
   const footerClick = (x: number) => {
     const tab = spans.find((sp) => x >= sp.x0 && x < sp.x1)?.tab;
-    if (!tab || !shown.some((t) => t.id === tab)) return;
+    if (!tab || !(tabs.expanded ? shown : tabsNow()).some((t) => t.id === tab)) return;
     tabs.show(tab);
     requestRender();
   };
@@ -896,6 +897,7 @@ export default function (pi: ExtensionAPI) {
           w,
           withTabs,
         );
+      tabsNow = () => draw(80).tabs; // only the ids are used
       // The box draws the collapsed line at its own width, so its clicks map onto that line.
       footerLine = (w) => {
         const drawn = draw(w, false);
@@ -923,7 +925,7 @@ export default function (pi: ExtensionAPI) {
             if (editor && config.disableEffortColors !== false)
               unpin = pinBorderColor(editor, theme);
           }
-          const drawn = draw(width);
+          const drawn = draw(width, tabs.expanded);
           if (!box) spans = drawn.spans;
           shown = drawn.tabs;
           // In box mode the collapsed line lives in the editor; the rest stays down here.
@@ -961,7 +963,7 @@ export default function (pi: ExtensionAPI) {
       if (Date.now() - lastRefreshAt > STALE_MS) void refresh();
       if (fetchPollMs > 0 && Date.now() - Math.max(g.fetchedAt ?? 0, fetchTriedAt) > fetchPollMs)
         void gitFetch();
-      if (!shown.length || !tabs.input(data, shown, promptEnd, tuiHasOverlay())) {
+      if ((tabs.focus && !shown.length) || !tabs.input(data, shown, promptEnd, tuiHasOverlay())) {
         if (!tabs.focus) requestRender(); // typing may have handed the keys back
         return undefined;
       }
@@ -1001,13 +1003,20 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("footer", {
     description: "Open the footer dashboard, optionally at a tab (↓ at the end of the prompt too)",
     getArgumentCompletions: (prefix) => {
-      const items = shown.filter((t) => t.id.startsWith(prefix.trim()));
+      const items = (tabs.expanded ? shown : tabsNow()).filter((t) =>
+        t.id.startsWith(prefix.trim()),
+      );
       return items.length ? items.map((t) => ({ value: t.id, label: t.id })) : null;
     },
     handler: async (args) => {
       const tab = args.trim();
       if (!tab && tabs.expanded) tabs.close();
-      else tabs.show(shown.some((t) => t.id === tab) ? tab : (tabs.pick() ?? tabs.tab));
+      else
+        tabs.show(
+          (tabs.expanded ? shown : tabsNow()).some((t) => t.id === tab)
+            ? tab
+            : (tabs.pick() ?? tabs.tab),
+        );
       requestRender();
     },
   });
