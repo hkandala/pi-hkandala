@@ -702,8 +702,9 @@ the command leaves a marker for the started agent, and removes it again:
 2. **Detection.** The started agent's pi-herd sees the file appear and disappear through `fs.watch` on
    `attached/`. It is **in a popup** while a marker names it and `kill(pid, 0)` succeeds for that
    marker's pid. A file left
-   by a shell that was SIGKILLed fails that check and is deleted. The popup never waits for this;
-   the hint may appear a moment after the agent's screen.
+   by a shell that was SIGKILLed fails that check and is deleted. Only a change in which popup
+   shows it updates the agent and redraws it; other agents' popups do nothing. The popup never
+   waits for this; the hint may appear a moment after the agent's screen.
 3. **While in a popup**, the started agent shows and enables:
    - `ctrl+b q or /detach to close`: with pi-footer's prompt box (it emits `footer:box`), as the
      prompt's dim placeholder (`herd:update`'s `placeholder`); otherwise in yellow, right-aligned

@@ -800,12 +800,14 @@ export default function (pi: ExtensionAPI) {
    */
   const onAttached = () => {
     if (!me || !ctx) return;
+    const was = popupPid;
     popupPid = undefined;
     for (const f of list(ATTACHED)) {
       const pid = parseInt(f);
       if (!alive(pid)) rm(join(ATTACHED, f));
       else if (marker(join(ATTACHED, f))[0] === me.id) popupPid = pid;
     }
+    if (popupPid === was) return; // another agent's popup
     refresh(); // the placeholder
     tui?.requestRender();
   };
