@@ -1105,7 +1105,8 @@ export default function (pi: ExtensionAPI) {
     // Only the last KEPT_RESULTS calls keep their results (they can be big). An older one that
     // succeeded then reads like one from history: how it ended, and it doesn't open.
     ended.push(e.toolCallId);
-    const old = nested.get(ended.length > KEPT_RESULTS ? ended.shift()! : "");
+    if (ended.length <= KEPT_RESULTS) return;
+    const old = nested.get(ended.shift()!);
     if (!old || old.result?.isError) return;
     old.result = { content: [] };
     old.clStatus = "ok";
