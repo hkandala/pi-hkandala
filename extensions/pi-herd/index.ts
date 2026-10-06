@@ -769,6 +769,7 @@ export default function (pi: ExtensionAPI) {
   const onAgents = () => {
     if (!me) return;
     if (!parentAlive()) return die();
+    if (!g.listed.size && !g.watches.size && !waiters.size) return; // nothing to update
     for (const id of g.watches.keys()) if (!isLive(readAgent(id))) void endExited(id);
     for (const w of waiters) w();
     refresh();

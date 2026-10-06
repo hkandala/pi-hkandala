@@ -482,6 +482,8 @@ Agents (agent_* tools):
 
 - **`session_start`**: register, start watching `messages/<myId>/`, `agents/` and `attached/`, then
   take in any messages already waiting.
+- **A change in `agents/`** (any agent's record write): an agent that lists, watches and waits on
+  no agent only checks its parent. The others read the records again.
 - **`/reload`**: the record stays. The queued ids and the watches live on `globalThis`.
 - **Any other `session_shutdown`** (quit, `/new`, `/resume`, `/fork`, SIGTERM/SIGHUP): mark the
   record ended (with the final cost) and drop the watches. Nothing asks for confirmation.
