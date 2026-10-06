@@ -273,7 +273,7 @@ export default function (pi: ExtensionAPI) {
   let rows: Row[] = []; // the listed agents in first-listed order, for the dashboard
   let dashboard: (() => void) | undefined; // redraws the open dashboard
   let closeDashboard: (() => void) | undefined; // closes it (on shutdown: its timers stop)
-  const waiters = new Set<() => void>(); // agent_start waits for a registration
+  const waiters = new Set<(all: Agent[]) => void>(); // agent_start waits for a registration
   /** herdr status of children and watched agents, from one event subscription each. */
   const follows = new Map<
     string,
@@ -451,10 +451,17 @@ export default function (pi: ExtensionAPI) {
     if (active !== g.herdr) emitHerdr(active);
   };
 
-  /** Tells herdr, pi-footer and pi-working; starts and stops follows. */
-  const refresh = () => {
+  /**
+   * Tells herdr, pi-footer and pi-working; starts and stops follows. all: the records, read once
+   * for this event. Without them, an agent that lists, watches and waits on nothing doesn't read
+   * them (it has nothing to list).
+   */
+  const refresh = (all?: Agent[]) => {
     if (!me) return;
-    const { live, subs } = updateListed(allAgents());
+    const leaf = !all && !g.listed.size && !g.watches.size && !waiters.size;
+    const { live, subs } = leaf
+      ? { live: new Map<string, Agent>(), subs: [] as Agent[] }
+      : updateListed(all ?? allAgents());
     syncFollows(live);
     // In first-listed order for the dashboard; herd:update sends them grouped (pi-footer's order).
     rows = [...g.listed.values()].map(listedRow);
@@ -770,9 +777,11 @@ export default function (pi: ExtensionAPI) {
     if (!me) return;
     if (!parentAlive()) return die();
     if (!g.listed.size && !g.watches.size && !waiters.size) return; // nothing to update
-    for (const id of g.watches.keys()) if (!isLive(readAgent(id))) void endExited(id);
-    for (const w of waiters) w();
-    refresh();
+    const all = allAgents();
+    for (const id of g.watches.keys())
+      if (!isLive(all.find((a) => a.id === id))) void endExited(id);
+    for (const w of waiters) w(all);
+    refresh(all);
   };
   const parentAlive = () => !parentId || isLive(readAgent(parentId));
   /** Agents die with the agent that started them: SIGTERM ourselves so pi shuts down cleanly. */
@@ -1180,8 +1189,8 @@ export default function (pi: ExtensionAPI) {
   /** The agent that registers from `target` on `sock`; undefined after 30 s or on abort. */
   const registration = (sock: string, target: string, signal?: AbortSignal) =>
     new Promise<Agent | undefined>((done) => {
-      const check = () => {
-        const a = liveAgents().find((x) => x.herdr.pane === target && x.herdr.socket === sock);
+      const check = (all = allAgents()) => {
+        const a = all.find((x) => isLive(x) && x.herdr.pane === target && x.herdr.socket === sock);
         if (a) finish(a);
       };
       const finish = (a?: Agent) => {
@@ -1608,6 +1617,7 @@ export default function (pi: ExtensionAPI) {
     scan();
     onAgents();
     onAttached();
+    refresh(old ? allAgents() : undefined); // a session with a record may have agents to list
     armDeadline();
     cleanupDaily();
   });

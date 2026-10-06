@@ -481,9 +481,12 @@ Agents (agent_* tools):
 ## 9. Lifecycle
 
 - **`session_start`**: register, start watching `messages/<myId>/`, `agents/` and `attached/`, then
-  take in any messages already waiting.
+  take in any messages already waiting. A session that already has a record (`/reload`, a resume)
+  then reads the other records to list its agents; a new session reads none.
 - **A change in `agents/`** (any agent's record write): an agent that lists, watches and waits on
-  no agent only checks its parent. The others read the records again.
+  no agent only checks its parent. The others read the records once per change (a stat each, and
+  only the changed files), for the watches, an `agent_start` waiting for a registration, and the
+  list.
 - **`/reload`**: the record stays. The queued ids and the watches live on `globalThis`.
 - **Any other `session_shutdown`** (quit, `/new`, `/resume`, `/fork`, SIGTERM/SIGHUP): mark the
   record ended (with the final cost) and drop the watches. Nothing asks for confirmation.
