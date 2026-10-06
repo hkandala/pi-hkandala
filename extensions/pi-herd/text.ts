@@ -167,7 +167,7 @@ function itemLine(it: Item, theme: Theme): { line: string; more?: string; previe
     return {
       line: `${theme.fg("accent", GLYPH.received)} ${who}${kind}`,
       more: it.msg.text,
-      preview: it.msg.text.replace(/\s+/g, " ").trim(),
+      preview: it.msg.text.replace(/\s+/g, " ").trim().slice(0, 2000), // over 2 rows up to 1000 columns
     };
   }
   const who = theme.fg("accent", label(it.agent));
