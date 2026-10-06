@@ -115,8 +115,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("context_with_system", (event, ctx) => {
     const messages = event.messages as Msg[];
     // A `context` handler that edits the list makes pi fold every system message into one
-    // before this runs: nothing to filter then. Say so once.
-    if (!warned && ctx.mode === "tui" && messages.filter((m) => m.role === "system").length === 1) {
+    // before this runs: nothing to filter then. Say so once, when it shows: the marker is gone.
+    if (
+      !warned &&
+      ctx.mode === "tui" &&
+      !(MARK in (messages[0]?.sections ?? {})) &&
+      messages.filter((m) => m.role === "system").length === 1
+    ) {
       const branch = ctx.sessionManager.getBranch();
       const since = branch.findLastIndex((e) => e.type === "compaction");
       const notes = branch
