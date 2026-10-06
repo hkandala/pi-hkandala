@@ -96,15 +96,17 @@ function cached<T>(compute: (r: Result) => T) {
 const UNSAFE =
   // oxlint-disable-next-line no-control-regex
   /\x1b\][\s\S]*?(?:\x07|\x1b\\|\x9c)|[\x1b\x9b][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]|[\x00-\x08\x0b-\x1f\ufff9-\ufffb]/g;
-const outputOf = cached((r) =>
+const clean = (r: Result) =>
   r.content
     .filter((c) => c.type === "text")
     .map((c) => (c.text ?? "").replace(UNSAFE, ""))
     .join("\n")
-    .trimEnd(),
-);
-const output = (t: Tool) => (t.result ? outputOf(t.result) : "");
-export const linesOf = cached((r) => (outputOf(r) ? untab(outputOf(r)).split("\n") : []));
+    .trimEnd();
+const output = (t: Tool) => (t.result ? clean(t.result) : "");
+export const linesOf = cached((r) => {
+  const s = clean(r);
+  return s ? untab(s).split("\n") : [];
+});
 
 function shortPath(path: string, cwd: string) {
   if (path.startsWith(`${cwd}/`)) return path.slice(cwd.length + 1);
