@@ -112,7 +112,7 @@ This tab needs pi-herd. It lists the live agents that this session started and t
 - After the name, a dim `+2` counts the live agents that run below it. A dim `󱖡` marks an agent that this session did not start. A dim `󰅐` shows while this session waits on the agent.
 - The column widths come from every row that `e` can show, so `e` does not move the columns. Only `working` and `blocked` have a color.
 - The list shows 3 rows at a time and is always 3 rows tall. If no agents run, it shows `no running agents`, and the hint line at the bottom shows `e show ended (2)`.
-- Enter opens the agent in a herdr popup. Inside a popup, Enter replaces what the popup shows. The popup needs the repo's herdr plugin (`herdr/plugin`, see the [pi-herd README](../pi-herd/README.md)). Without the plugin, pi-herd shows how to install it and how to attach in a terminal.
+- Enter opens the agent. An agent in your own herdr session doesn't open in a popup: herdr shows its pane (it switches to its workspace and tab), and the dashboard closes. An agent in the `pi-herd` session opens in a herdr popup. Inside a popup, Enter replaces what the popup shows. The popup needs the repo's herdr plugin (`herdr/plugin`, see the [pi-herd README](../pi-herd/README.md)). Without the plugin, pi-herd shows how to install it and how to attach in a terminal.
 
 pi-herd's full dashboard opens with ← on an empty prompt.
 

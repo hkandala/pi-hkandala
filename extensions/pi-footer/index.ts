@@ -853,6 +853,12 @@ export default function (pi: ExtensionAPI) {
     herd = next;
   });
 
+  // pi-herd showed an agent's pane in herdr instead of a popup: the dashboard has done its job.
+  pi.events.on("herd:focused", () => {
+    tabs.close();
+    requestRender();
+  });
+
   pi.events.on("bash-bg:update", (data) => {
     const u = data as { jobs: Job[]; running: number };
     if (!Array.isArray(u?.jobs)) return; // another pi-bash-bg version
