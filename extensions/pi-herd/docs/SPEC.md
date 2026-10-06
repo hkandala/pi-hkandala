@@ -70,7 +70,7 @@ watched.
 | `name`    | pi's session name, from `--name` or `/name`. Optional. Updated on `session_info_changed`.                                                                          |
 | `parent`  | set when `agent_start` started this agent (from `PI_HERD_PARENT`)                                                                                                  |
 | `herdr`   | from the agent's own `HERDR_SOCKET_PATH` and `HERDR_PANE_ID`. Every herdr command aimed at this agent goes to that socket: status, events, capture, attach, close. |
-| `cost`    | its own session's cost in $ (not its agents'), written after each turn                                                                                             |
+| `cost`    | its own session's cost in $ (not its agents'), written when each run settles                                                                                       |
 | `ended`   | when its session ended. The record stays (7 days): lists show it as ended, and the agents above it keep counting its cost. Live also needs no `ended`.             |
 | `session` | the pi session file (`ctx.sessionManager.getSessionFile()`). Absent with `--no-session`. Other agents read it for transcripts (section 8).                         |
 

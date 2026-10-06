@@ -1629,7 +1629,6 @@ export default function (pi: ExtensionAPI) {
       });
     refresh();
   });
-  pi.on("turn_end", (_e, c) => publishCost(c));
   // A prompt sent again as a steer, then run anyway (deferred, or from the editor): drop it.
   pi.on("input", (event) => {
     if (redelivered.delete(event.text)) return { action: "handled" };
@@ -1644,6 +1643,7 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     busy = false;
+    publishCost(c);
     // Not when it is still in its hooks: then it reaches the model next.
     if (
       pending &&
