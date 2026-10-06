@@ -25,7 +25,7 @@ Everything lives flat in `~/.pi/agent/bash-bg/`. `<id>` is `<startedAtMs>-<4 ran
 - Every file is written once. An empty `<id>.exit` means it is being written. Several pi processes share the folder without locks.
 - A pid resolves to the newest `<id>.json` with that pid, so a reused pid is harmless.
 
-**Cleanup:** once per pi process, after the first `session_start`, an async task that nobody awaits deletes the files of jobs that ended more than 7 days ago, and of foreground calls (no `.json`) whose log was last written more than a day ago, which a crash left behind. A foreground call can run longer than a day, so its start time is not used.
+**Cleanup:** once per pi process, after the first `session_start`, an async task that nobody awaits deletes the files of jobs that ended more than 7 days ago, and of foreground calls (no `.json`) whose log was last written more than a day ago, which a crash left behind. A foreground call can run longer than a day, so its start time is not used. A job whose id (its creation time) is younger than 7 days (a day without `.json`) is skipped without reading its files.
 
 ## 2. Running a command
 
@@ -187,7 +187,7 @@ Command exited with code 1
 **Log viewer** (`viewer.ts`): a full-screen page like pi-herd's dashboard, `ctx.ui.custom(…, { overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%" } })`. No border: it draws its own margin (2 rows on top, 1 below, 4 columns on each side) and pads every row to the full width and the page to the terminal's rows, so nothing of pi's screen shows.
 
 - The title line is `pid 12345` (accent, bold) and a dim `running · 27s · ~/proj`, then a rule. The body is `> ` and the command, colored as bash and wrapped (at most a third of the page), a blank line, then the log, wrapped (`(no output yet)` while it runs, `(no output)` once done, also for only whitespace). The keys are pinned to the bottom row, with a counter on the right when the log scrolls (`120-150/400`).
-- It shows the last 1 MB of the log, re-read every 250 ms when it grows (cleaned of control codes and wrapped again only then, or when the width changes); a running job's time updates once a second. It follows new output until you scroll up; then the view stays put (it keeps an absolute top line) until you scroll back to the bottom or press End.
+- It shows the last 1 MB of the log, re-read every 250 ms when it grows, once a second while the log is over 256 KB (cleaned of control codes and wrapped again only then, or when the width changes); a running job's time updates once a second. It follows new output until you scroll up; then the view stays put (it keeps an absolute top line) until you scroll back to the bottom or press End.
 - Each line shows only the text after its last `\r`, so a progress bar shows its last state. Tabs become 4 spaces. Color escapes stay. All other escapes (cursor moves, OSC titles and hyperlinks, charset switches) and control codes are removed, also when they are cut off.
 - ↑/↓, PgUp/PgDn and the mouse wheel scroll, Home jumps to the top, End follows, `x` twice kills (running jobs only), Esc or `q` closes.
 
@@ -211,7 +211,7 @@ Events on `pi.events` are the only link. Nothing imports another extension, and 
   - Once this session has jobs, the dashboard gets a `jobs` tab (`jobs 2`: the running count). It comes after `git` and before pi-herd's `agents` tab. The tab lists the running jobs by start time, then the finished ones by end time while `e` shows them, 3 rows at a time and always 3 rows tall (with none running and finished ones hidden: `no running jobs` on the first row, and `e show ended (2)` on the hint line at the bottom), scrolling with the selection (`3/12` when there are more). With the keys on the dashboard, ↑/↓ select, Enter opens the log viewer (`bash-bg:logs`), `x` twice kills a running one (`bash-bg:kill`), `e` shows or hides finished ones; a click selects a row, and a click on the selected row opens its log.
   - While an overlay is up, the keys go to it: `onTerminalInput` runs before overlay focus, so without that check the tab would eat the log viewer's keys. Raw input also carries key releases (kitty protocol); they are skipped, or each press would count twice.
   - The selection follows its job across updates while the tab is open, and starts at the top otherwise.
-- **pi-working:** while `waiting > 0` after a run, the prompt's top border shows `Waiting on 2 background jobs (1m 12s)` (text only) instead of `✓ Worked for …`, timed from when waiting started. This is the only place the waiting state shows.
+- **pi-working:** while `waiting > 0` after a run, the prompt's top border shows `Waiting on 2 background jobs (1m)` (text only) instead of `✓ Worked for …`, timed from when waiting started. This is the only place the waiting state shows.
 - **pi-content-layout:**
   - A click on an extension's framed message toggles it, like ctrl+o.
   - Framed messages show pi's `(ctrl+o to expand)` all dim (pi paints the parentheses and words in the message color, with only the key dim).

@@ -49,7 +49,7 @@ The agent stops a job with `kill <pid>`. Output always goes to a log file under 
 Each of these is optional. Install one to get its extra:
 
 - [pi-footer](../pi-footer/README.md): the job count in the footer line, and a jobs tab in the dashboard (↓ opens it while jobs run) to browse the running jobs (`e` shows finished ones), open their logs, and kill them.
-- [pi-working](../pi-working/README.md): `Waiting on 2 background jobs (1m 12s)` in the prompt's border while the agent waits.
+- [pi-working](../pi-working/README.md): `Waiting on 2 background jobs (1m)` in the prompt's border while the agent waits.
 - [pi-content-layout](../pi-content-layout/README.md): end messages in its dashed frame (click to expand), a `ctrl+shift+b to run in background` hint under a bash call running 30s or more, and exact durations for parallel bash calls loaded from history.
 - [pi-bash-cap](../pi-bash-cap/README.md): end messages use its limits instead of pi's.
 - [herdr](https://herdr.dev): an optional patch keeps the pane `working` while jobs run; see [herdr/](../../herdr/README.md).
