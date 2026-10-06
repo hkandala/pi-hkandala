@@ -1,0 +1,4 @@
+#!/bin/bash
+# Counts git spawns: logs "<end s> <parent pid> <subcommand> <user s> <sys s>" per run of the real git ($PIBENCH_GIT).
+TIMEFORMAT="$(/bin/date +%s) $PPID ${1//%/} %3U %3S"
+{ time "$PIBENCH_GIT" "$@" 2>&3 3>&-; } 3>&2 2>>"${PIBENCH_GITLOG:-/tmp/pi-bench/git.log}"

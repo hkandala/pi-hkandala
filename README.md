@@ -78,6 +78,7 @@ skills/
 herdr/
   patch/<version>/    # patch to herdr's pi integration, one folder per herdr version
   plugin/             # herdr plugin (popups), installed with `herdr plugin install` or `link`
+bench/                # performance benchmark: pi with no extensions vs. this checkout's (bench/README.md)
 ```
 
 See [AGENTS.md](AGENTS.md) for adding and publishing extensions.
