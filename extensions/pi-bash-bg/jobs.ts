@@ -184,6 +184,8 @@ export async function cleanup() {
   const files = await readdir(DIR).catch(() => [] as string[]);
   const byId = Map.groupBy(files, (f) => f.slice(0, f.indexOf(".")));
   for (const [id, names] of byId) {
+    // An id starts with its creation time, so a job this young can't be old enough yet.
+    if (Date.now() - parseInt(id) <= (names.includes(`${id}.json`) ? 7 * DAY : DAY)) continue;
     const j = names.includes(`${id}.json`) ? job(id) : undefined;
     // A foreground call ages from its log's last write: one can run for longer than a day.
     const lastWrite = j
