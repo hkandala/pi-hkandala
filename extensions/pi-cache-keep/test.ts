@@ -68,4 +68,20 @@ eq(
 );
 eq(keep([sys({ prompt_keep: "1" }), user])[0].role, "system");
 
+// A compaction after a woken run's patch saves the state without the hook sections. keep() reads
+// them back from the branch, with nothing in memory (as after a /reload).
+const entries = [P0, user, asst, wake, asst, tool, W].map((message) => ({
+  type: "message",
+  message,
+}));
+const branch = () => [...entries, { type: "compaction" }];
+const woken = [sys(base), { role: "compactionSummary" }, tool, asst, tool, wake, asst];
+eq(heads(keep(woken, branch)).at(-1), full);
+// The next prompt's re-add changes nothing that was sent.
+const next = keep([...woken, reAdd, user, asst], branch);
+eq(next.slice(0, -2), keep(woken, branch));
+eq(new Set(heads(next)).size, 1);
+// ponytail turned off at that prompt: its removal is still released.
+eq(JSON.parse(heads(keep([...woken, Poff, user], branch)).at(-1)!).pt, undefined);
+
 console.log("pi-cache-keep: ok");

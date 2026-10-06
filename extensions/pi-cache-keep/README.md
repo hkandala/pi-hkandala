@@ -22,6 +22,7 @@ When a model folds these changes into the start of the prompt, each change makes
 - When you send a prompt, it adds a hidden marker section. So each prompt change that pi records in such a run carries the marker. The removal that a message-started run records also removes the marker.
 - Before each model call, it sends a filtered copy of the prompt changes. A change recorded while the marker is missing is held back. Your next prompt's change replaces it. If that change does not set the same section, the held change is applied then, because it was a real change.
 - Changes to pi's own sections (`tools`, `rules`, `skills`, ...) apply at once, because the tool list can change in the middle of a run.
+- A compaction saves the prompt as pi recorded it. In a message-started run, that prompt lacks the sections. When the context starts with such a compaction, it sends the sections that pi last recorded with the marker before it. It reads them from the session file, so they also survive `/reload` and a restart.
 - The marker never reaches the model. The session file stays as pi wrote it. Sessions from before the extension pass through unchanged.
 
 ## Install

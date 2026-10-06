@@ -13,6 +13,9 @@
  * their hook-owned keys are held back until the next prompt run's patch, which re-sets every key
  * a held value got wrong; the rest (real changes) are released there. Only what is sent changes;
  * the session file keeps pi's patches.
+ *
+ * A compaction in a woken run saves the state without the sections; the session file still has
+ * them, so `keep()` reads them back from there (this survives a /reload).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -30,9 +33,36 @@ type Msg = {
   toolsAdded?: unknown[];
   toolsRemoved?: unknown[];
 };
+type Entry = { type: string; message?: Msg };
+
+const apply = (state: Record<string, string>, sections: Sections) => {
+  for (const [k, v] of Object.entries(sections)) {
+    if (v === null) delete state[k];
+    else state[k] = v;
+  }
+};
 
 /** The messages to send: untrusted section patches held back, no-op entries and the marker removed. */
-export function keep<T extends Msg>(messages: T[]): T[] {
+export function keep<T extends Msg>(messages: T[], branch?: () => Entry[]): T[] {
+  const first = messages[0];
+  const head = first?.sections;
+  // A compaction in a woken run saved the state without the hook sections and the marker. Undo
+  // that fold: send the state last marked before it, then the woken run's patch, which is held.
+  if (branch && head && !(MARK in head) && messages[1]?.role === "compactionSummary") {
+    const entries = branch();
+    const state: Record<string, string> = {};
+    let seed: Record<string, string> = {};
+    const compaction = entries.findLastIndex((e) => e.type === "compaction");
+    for (const e of entries.slice(0, compaction)) {
+      if (e.message?.role !== "system") continue;
+      apply(state, e.message.sections ?? {});
+      if (MARK in state)
+        seed = Object.fromEntries(Object.entries(state).filter(([k]) => !BASE.has(k)));
+    }
+    const back = Object.fromEntries(Object.keys(seed).map((k) => [k, head[k] ?? null]));
+    const woken = { role: "system", content: "", sections: back } as T;
+    messages = [{ ...first, sections: { ...head, ...seed } }, woken, ...messages.slice(1)];
+  }
   const raw: Record<string, string> = {}; // what pi's transcript says
   const sent: Record<string, string> = {}; // what the model gets
   let held: Sections = {};
@@ -43,10 +73,7 @@ export function keep<T extends Msg>(messages: T[]): T[] {
       out.push(m);
       continue;
     }
-    for (const [k, v] of Object.entries(m.sections)) {
-      if (v === null) delete raw[k];
-      else raw[k] = v;
-    }
+    apply(raw, m.sections);
     if (MARK in raw) marked = true;
     const trusted = !marked || MARK in raw; // before the marker (older history): pass through
     const patch: Sections = {};
@@ -103,6 +130,7 @@ export default function (pi: ExtensionAPI) {
         );
       }
     }
-    return { messages: keep(messages) as typeof event.messages };
+    const branch = () => ctx.sessionManager.getBranch() as Entry[];
+    return { messages: keep(messages, branch) as typeof event.messages };
   });
 }
