@@ -152,6 +152,8 @@ function readConfig(): Config {
 
 /** When the running turn started (agent_start), while one runs. */
 let turnStartedAt: number | undefined;
+/** Whether the last render showed a cold cache: the 10 s tick renders only when that changes. */
+let lastCold = false;
 
 function render(
   pi: ExtensionAPI,
@@ -211,6 +213,7 @@ function render(
   const approx = ctxUsage?.estimated ? "~" : "";
   // Only a cold cache shows: "cold (~$0.46)", what the next message costs over a warm cache.
   const { cold } = cacheState(ctx, s);
+  lastCold = cold;
   const coldExtra =
     ((ctxUsage?.tokens ?? 0) *
       ((cacheModel.cost?.cacheWrite ?? 0) - (cacheModel.cost?.cacheRead ?? 0))) /
@@ -970,7 +973,12 @@ export default function (pi: ExtensionAPI) {
       requestRender();
       return { consume: true };
     });
-    timers.push(setInterval(() => requestRender(), 10_000)); // keeps the cache countdown current
+    // Time shows in the collapsed line only as "cold"; the open dashboard has countdowns.
+    timers.push(
+      setInterval(() => {
+        if (tabs.expanded || cacheState(ctx, sessionStats(ctx)).cold !== lastCold) requestRender();
+      }, 10_000),
+    );
     // Not awaited: pi runs session_start handlers one at a time, so the git read would hold up
     // the extensions after this one.
     void refresh();
