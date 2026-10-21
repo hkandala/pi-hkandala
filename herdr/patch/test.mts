@@ -52,11 +52,15 @@ process.env.HERDR_ENV = "1";
 process.env.HERDR_SOCKET_PATH = sock;
 process.env.HERDR_PANE_ID = "w1:p1";
 let log: string[] = [];
+let resume: unknown; // resume_argv of the last state report
 const server = net.createServer((c) =>
   c.on("data", (d) => {
     for (const line of d.toString().split("\n").filter(Boolean)) {
       const r = JSON.parse(line);
-      if (r.method === "pane.report_agent") log.push(r.params.state);
+      if (r.method === "pane.report_agent") {
+        log.push(r.params.state);
+        resume = r.params.resume_argv;
+      }
     }
     c.write('{"ok":true}\n');
   }),
@@ -199,5 +203,24 @@ await scenario(
   },
   ["idle", "working", "|run ends", "idle"],
 );
+async function resumes(name, argv, expect) {
+  process.argv = [process.argv[0], "pi", ...argv];
+  resume = undefined;
+  await (await load()).fire("session_start", { reason: "startup" });
+  const got = JSON.stringify(resume ?? null);
+  const want = JSON.stringify(expect);
+  if (got !== want) failed = true;
+  console.log(
+    `${got === want ? "PASS" : "FAIL"} ${name}: ${got}${got === want ? "" : ` expected ${want}`}`,
+  );
+}
+const argv = process.argv;
+await resumes(
+  "started with -ne -> resumes with its own flags, not its old session",
+  ["-ne", "-e", "/ext", "--session", "/old.jsonl", "--name", "a", "-c"],
+  ["pi", "-ne", "-e", "/ext", "--name", "a", "--session", "/tmp/s.jsonl"],
+);
+await resumes("started without -ne -> herdr's default resume", ["--name", "a"], null);
+process.argv = argv;
 server.close();
 process.exit(failed ? 1 : 0);

@@ -1,6 +1,59 @@
 --- a/herdr-agent-state.ts
 +++ b/herdr-agent-state.ts
-@@ -187,12 +187,13 @@
+@@ -5,6 +5,7 @@
+ // HERDR_INTEGRATION_VERSION=9
+ // @ts-nocheck
+ 
++import { readFileSync } from "node:fs"; // patch
+ import net from "node:net";
+ import path from "node:path";
+ 
+@@ -111,6 +112,34 @@
+   return undefined;
+ }
+ 
++// patch: a pi started with -ne loads only the extensions it was given, so herdr's default resume
++// (a bare `pi --session`) would bring it back without them. Resume it with its own flags instead:
++// a `pi` launcher's args when one started this pi, else this process's.
++const startArgs = (() => {
++  try {
++    const parent = readFileSync(`/proc/${process.ppid}/cmdline`, "utf8").split("\0").filter(Boolean);
++    if (path.basename(parent[0] ?? "") === "pi") return parent.slice(1);
++  } catch {}
++  return process.argv.slice(2);
++})();
++
++function resumeArgv(session: string | undefined): string[] | undefined {
++  if (!session || (!startArgs.includes("-ne") && !startArgs.includes("--no-extensions"))) return undefined;
++  const kept = [];
++  for (let i = 0; i < startArgs.length; i++) {
++    if (["--session", "--fork", "--session-id"].includes(startArgs[i])) i++;
++    else if (!["--continue", "-c", "--resume", "-r", "--no-session"].includes(startArgs[i])) {
++      kept.push(startArgs[i]);
++    }
++  }
++  const argv = ["pi", ...kept, "--session", session];
++  // herdr drops the whole report for an argv past its limits
++  if (argv.length > 64 || Buffer.byteLength(argv.join(" ")) > 8192 || argv.some((a) => /['\x00-\x1f]/.test(a))) {
++    return undefined;
++  }
++  return argv;
++}
++
+ function reportSession(sessionStartSource?: string): Promise<void> {
+   const sessionRef = currentSessionRef();
+   if (!sessionRef) {
+@@ -142,6 +171,9 @@
+       state,
+       message,
+       seq,
++      // patch: on the state report, which holds the pane; herdr refuses it on a session report
++      // sent before any state report
++      resume_argv: resumeArgv(currentAgentSessionPath ?? currentAgentSessionId),
+     }),
+   });
+ }
+@@ -187,12 +219,13 @@
    let lastState: AgentState | undefined;
    let lastMessage: string | undefined;
    let rootSession = false;
@@ -15,7 +68,7 @@
        return { state: "working" as const, message: undefined };
      }
      return { state: "idle" as const, message: undefined };
-@@ -226,6 +227,13 @@
+@@ -226,6 +259,13 @@
      publishState();
    });
  
@@ -29,11 +82,10 @@
    pi.on("session_start", async (event, ctx) => {
      // TUI only: RPC/JSON/print modes are headless (no PTY herdr can display),
      // and RPC still reports hasUI=true, so mode is the reliable gate.
-@@ -257,5 +265,29 @@
- 
+@@ -258,4 +298,28 @@
      agentActive = false;
      publishState();
-+  });
+   });
 +
 +  // patch: the handler above skips an agent_settled while pi still compacts or summarizes a
 +  // branch (isIdle() is false). Check again every 100 ms until pi is idle, for up to 5 minutes.
@@ -55,7 +107,7 @@
 +      } else if (Date.now() < until) recheck = setTimeout(check, 100);
 +    };
 +    if (agentActive) check();
-   });
++  });
 +  pi.on("agent_start", stopRecheck);
 +  pi.on("session_shutdown", stopRecheck);
  }

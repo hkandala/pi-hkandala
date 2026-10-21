@@ -25,7 +25,7 @@ goes idle/done only when the turn has ended and nothing is pending.
 ### What it changes
 
 herdr installs its pi integration at `~/.pi/agent/extensions/herdr-agent-state.ts`. The patch
-makes three changes there:
+makes four changes there:
 
 - It listens for a `herdr:working` event on `pi.events`, shaped
   `{ source: string, active: boolean }`, and keeps a set of the sources that are active.
@@ -36,6 +36,13 @@ makes three changes there:
   `working` until the next run. The patch then checks again every 100 ms, for up to 5 minutes.
   Once pi is idle, it marks the run as ended and reports the state again. A new run or the end of
   the session stops the checks.
+- It resumes a pi started with `-ne` with the flags it started with. herdr resumes a pi after a
+  server restart with a bare `pi --session <file>`, which loads the default extensions, not the ones
+  that pi was given. So the session report carries a resume command: `pi`, the start flags minus the
+  ones that pick a session, then `--session <file>`. The flags come from a `pi` launcher's command
+  line when one started this pi. A pi started without `-ne` keeps herdr's default. herdr 0.9.2 and
+  newer take a resume command. Start such a pi without a message argument, or the resume sends it
+  again.
 
 Details:
 
@@ -92,7 +99,8 @@ apply. `patch --dry-run` shows whether it does.
 `patch/test.mts` gets a fresh, unpatched integration file from `herdr integration install pi` in a
 temporary HOME, and applies a patch to it. It then replays pi events against a fake herdr socket and
 checks the states that get reported: turn end, pending work waking the agent, reload order,
-blocked, repeated events, a turn settling while pi still compacts, and compaction during a run.
+blocked, repeated events, a turn settling while pi still compacts, compaction during a run, and
+the resume command.
 
 From the repo root:
 
@@ -105,9 +113,9 @@ Run the test before adding a folder for a new herdr version.
 
 ### Versions
 
-| Folder          | herdr        | pi integration |
-| --------------- | ------------ | -------------- |
-| `patch/v0.9.1/` | 0.9.1, 0.9.3 | v9             |
+| Folder          | herdr               | pi integration |
+| --------------- | ------------------- | -------------- |
+| `patch/v0.9.1/` | 0.9.1, 0.9.3, 0.9.5 | v9             |
 
 ### Known issues in herdr's pi integration (herdr 0.9.1 and 0.9.3, integration v9)
 

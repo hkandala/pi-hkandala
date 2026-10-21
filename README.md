@@ -32,7 +32,7 @@ Skills load with the root package only.
 
 ## herdr
 
-[herdr/](herdr/README.md) holds optional pieces for [herdr](https://herdr.dev), shared by the extensions: a patch to herdr's pi integration that keeps a pane `working` while pending work (background jobs, agent waits) will wake the agent, and a herdr plugin with a popup that runs any command (used to attach to another pane).
+[herdr/](herdr/README.md) holds optional pieces for [herdr](https://herdr.dev), shared by the extensions: a patch to herdr's pi integration that keeps a pane `working` while pending work (background jobs, agent waits) will wake the agent and resumes a pi started with `-ne` with its own flags, and a herdr plugin with a popup that runs any command (used to attach to another pane).
 
 ## Install
 
