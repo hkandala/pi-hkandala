@@ -7,7 +7,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 
 export const SESSION = "pi-herd"; // the dedicated herdr session for agents started hidden
 export const HIDDEN = join(homedir(), ".config", "herdr", "sessions", SESSION, "herdr.sock");
@@ -194,34 +194,52 @@ export const launcherFlags = (parent: string[], own: string[]) => {
   return parent.slice(1).filter((t) => !ours.has(t));
 };
 let launcher: string | undefined;
+let parentArgv: string[] | undefined;
 /**
- * The launcher's flags (launcherFlags), quoted for sh, each followed by a space; read once. Not
- * when the parent runs the same program as this pi (then it is another pi, not a launcher;
- * process.execPath can't tell: a compiled pi reports the launcher's path). Linux reads the
- * parent's exact argv; macOS has only ps's, joined with spaces: a launcher flag's value with a
- * space in it comes out split.
+ * The parent's argv, read once; empty when the parent runs the same program as this pi (then it
+ * is another pi, not a launcher; process.execPath can't tell: a compiled pi reports the launcher's
+ * path). Linux reads the parent's exact argv; macOS has only ps's, joined with spaces: a launcher
+ * flag's value with a space in it comes out split.
  */
 const program = (pid: number) =>
   execFileSync("ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf8" }).trim();
-const launcherArgs = () =>
-  (launcher ??= (() => {
+const parent = () =>
+  (parentArgv ??= (() => {
     try {
-      if (program(process.pid) === program(process.ppid)) return "";
-      const parent =
-        process.platform === "linux"
-          ? readFileSync(`/proc/${process.ppid}/cmdline`, "utf8").split("\0").filter(Boolean)
-          : execFileSync("ps", ["-ww", "-o", "args=", "-p", String(process.ppid)], {
-              encoding: "utf8",
-            })
-              .trim()
-              .split(/\s+/);
-      return launcherFlags(parent, process.argv)
-        .map((t) => `${q(t)} `)
-        .join("");
+      if (program(process.pid) === program(process.ppid)) return [];
+      return process.platform === "linux"
+        ? readFileSync(`/proc/${process.ppid}/cmdline`, "utf8").split("\0").filter(Boolean)
+        : execFileSync("ps", ["-ww", "-o", "args=", "-p", String(process.ppid)], {
+            encoding: "utf8",
+          })
+            .trim()
+            .split(/\s+/);
     } catch {
-      return "";
+      return [];
     }
   })());
+/** The launcher's flags (launcherFlags), quoted for sh, each followed by a space. */
+const launcherArgs = () =>
+  (launcher ??= launcherFlags(parent(), process.argv)
+    .map((t) => `${q(t)} `)
+    .join(""));
+/**
+ * The extension flags in `args`: `-ne`/`--no-extensions`, and `-e`/`--extension` with its source.
+ * A relative path is made absolute, as an agent can start in another folder.
+ */
+export const extensionFlags = (args: string[]) =>
+  args.flatMap((a, i) => {
+    if (a === "-ne" || a === "--no-extensions") return [a];
+    const v = args[i + 1];
+    if ((a !== "-e" && a !== "--extension") || v === undefined) return [];
+    return [a, isAbsolute(v) || v.includes(":") ? v : resolve(v)];
+  });
+/**
+ * This pi's extension flags, so the agents it starts load the same extensions: a `pi` launcher's
+ * args as given when one started this pi, else this pi's own.
+ */
+export const ownExtensionFlags = () =>
+  extensionFlags(basename(parent()[0] ?? "") === "pi" ? parent().slice(1) : process.argv.slice(2));
 
 /**
  * The line that starts pi in a placed pane: `exec pi …` in a created one; in a given one the env

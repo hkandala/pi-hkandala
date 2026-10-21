@@ -44,6 +44,7 @@ import {
   HIDDEN,
   launchCommand,
   openPane,
+  ownExtensionFlags,
   type Placed,
   PLUGIN,
   popupCommand,
@@ -1204,6 +1205,7 @@ export default function (pi: ExtensionAPI) {
       ...(trusted() ? ["--approve"] : []),
       ...(model ? ["--model", model] : []),
       ...(thinking ? ["--thinking", thinking] : []),
+      ...ownExtensionFlags(),
       ...config.args,
     ]
       .map(q)
