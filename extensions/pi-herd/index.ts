@@ -44,6 +44,7 @@ import {
   HIDDEN,
   launchCommand,
   openPane,
+  orielInFront,
   ownExtensionFlags,
   type Placed,
   PLUGIN,
@@ -52,6 +53,7 @@ import {
   releasePane,
   rpc,
   SESSION,
+  sessionOf,
   subscribePane,
 } from "./herdr.ts";
 import {
@@ -948,7 +950,8 @@ export default function (pi: ExtensionAPI) {
    * opened the popup (its pane is behind the popup: a 5th marker line, kept across switches; an
    * older runtime's marker has none, and switches as before), or closes and herdr focuses the
    * agent's pane when it is on the popup's server. Otherwise herdr focuses its pane when it is on
-   * this agent's server, or it opens a popup (an agent in the hidden session). Not from the
+   * this agent's server, or Oriel floats it when Oriel is in front, or it opens a popup (an agent
+   * in the hidden session). Not from the
    * hidden session outside a popup: nobody sees a popup there, and it would take the agent's pane
    * away from wherever it shows.
    * ponytail: the focus is for herdr 0.9.3, which shows a popup that attaches a pane of its own
@@ -983,6 +986,13 @@ export default function (pi: ExtensionAPI) {
         "warning",
       );
     if (a.herdr.socket === socket) return focus(socket, a);
+    // Oriel floats the agent's pane in a window of its own instead.
+    if (await orielInFront()) {
+      const session = encodeURIComponent(sessionOf(a.herdr.socket));
+      const url = `oriel://float?session=${session}&pane=${encodeURIComponent(a.herdr.pane)}`;
+      execFile("open", ["-g", url], (e) => e && ctx?.ui.notify(`Oriel: ${e.message}`, "error"));
+      return;
+    }
     const command = popupCommand(ATTACHED, {
       ...a.herdr,
       id: a.id,

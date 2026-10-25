@@ -3,7 +3,7 @@
  * herdr side of starting an agent, following its status, and showing it in a popup.
  */
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { homedir } from "node:os";
@@ -12,6 +12,23 @@ import { basename, isAbsolute, join, resolve } from "node:path";
 export const SESSION = "pi-herd"; // the dedicated herdr session for agents started hidden
 export const HIDDEN = join(homedir(), ".config", "herdr", "sessions", SESSION, "herdr.sock");
 export const PLUGIN = "pi-hkandala"; // the repo's herdr plugin (herdr/plugin/)
+
+/** The herdr session of a socket: `~/.config/herdr/sessions/<name>/herdr.sock`, else `default`. */
+export const sessionOf = (socket: string) =>
+  /\/sessions\/([^/]+)\/herdr\.sock$/.exec(socket)?.[1] ?? "default";
+
+/**
+ * Oriel (a native herdr client for macOS, which shows no herdr popups) is the frontmost app, so a
+ * click in pi came through it. Asked at click time; never over SSH.
+ */
+export const orielInFront = () =>
+  process.platform !== "darwin" || process.env.SSH_CONNECTION
+    ? Promise.resolve(false)
+    : new Promise<boolean>((ok) =>
+        execFile("sh", ["-c", 'lsappinfo info -only bundleid "$(lsappinfo front)"'], (e, out) =>
+          ok(!e && out.includes('"dev.hkandala.oriel"')),
+        ),
+      );
 
 /** `s` quoted for sh. */
 export const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
