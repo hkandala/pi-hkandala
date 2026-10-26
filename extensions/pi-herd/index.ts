@@ -949,9 +949,8 @@ export default function (pi: ExtensionAPI) {
    * and ending the current attach makes the popup's loop attach it), or closes when that agent
    * opened the popup (its pane is behind the popup: a 5th marker line, kept across switches; an
    * older runtime's marker has none, and switches as before), or closes and herdr focuses the
-   * agent's pane when it is on the popup's server. Otherwise, when Oriel shows this agent's pane
-   * (its mark on the pane), Oriel floats the agent's pane, on any machine (Oriel shows neither
-   * herdr's popups nor its focus). Otherwise herdr focuses its pane
+   * agent's pane when it is on the popup's server. Otherwise, when Oriel shows this pane (its mark),
+   * Oriel floats the agent's pane. Otherwise herdr focuses its pane
    * when it is on this agent's server, or it opens a popup (an agent in the hidden session). Not
    * from the hidden session outside a popup: nobody sees a popup there, and it would take the
    * agent's pane away from wherever it shows.
