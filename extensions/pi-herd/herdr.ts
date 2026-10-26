@@ -3,7 +3,8 @@
  * herdr side of starting an agent, following its status, and showing it in a popup.
  */
 
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { homedir } from "node:os";
@@ -21,17 +22,34 @@ export const sessionOf = (socket: string) =>
   /\/sessions\/([^/]+)\/herdr\.sock$/.exec(socket)?.[1] ?? "default";
 
 /**
- * Oriel (a native herdr client for macOS, which shows no herdr popups) is the frontmost app, so a
- * click in pi came through it. Asked at click time; never over SSH.
+ * Oriel (a native herdr client, which shows no herdr popups) shows the pane: it marks each pane in
+ * view with the token `oriel-shown` (rewritten every 10 s, gone 30 s after Oriel quits). Read on
+ * the pane's own herdr socket, so it holds for an agent on a remote machine too.
  */
-export const orielInFront = () =>
-  process.platform !== "darwin" || process.env.SSH_CONNECTION
-    ? Promise.resolve(false)
-    : new Promise<boolean>((ok) =>
-        execFile("sh", ["-c", 'lsappinfo info -only bundleid "$(lsappinfo front)"'], (e, out) =>
-          ok(!e && out.includes('"dev.hkandala.oriel"')),
-        ),
-      );
+export const orielShows = (socket: string, pane: string) =>
+  rpc(socket, "pane.get", { pane_id: pane }).then(
+    (r) => Boolean(r?.pane?.tokens?.["oriel-shown"]),
+    () => false,
+  );
+
+/**
+ * Asks Oriel to float a pane of a session on this machine: tokens on `pane`, which Oriel reads off
+ * herdr's pane.updated event (a nonce, as later changes of the pane send them again).
+ */
+export const orielFloat = (
+  socket: string,
+  pane: string,
+  target: { socket: string; pane: string },
+) =>
+  rpc(socket, "pane.report_metadata", {
+    pane_id: pane,
+    source: "pi-herd",
+    ttl_ms: 1000,
+    tokens: {
+      "oriel-float": `${sessionOf(target.socket)}/${target.pane}`,
+      "oriel-float-id": randomUUID(),
+    },
+  });
 
 /** `s` quoted for sh. */
 export const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
