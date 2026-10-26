@@ -13,7 +13,10 @@ export const SESSION = "pi-herd"; // the dedicated herdr session for agents star
 export const HIDDEN = join(homedir(), ".config", "herdr", "sessions", SESSION, "herdr.sock");
 export const PLUGIN = "pi-hkandala"; // the repo's herdr plugin (herdr/plugin/)
 
-/** The herdr session of a socket: `~/.config/herdr/sessions/<name>/herdr.sock`, else `default`. */
+/**
+ * The herdr session of a socket: `~/.config/herdr/sessions/<name>/herdr.sock`, else `default`
+ * (also for a custom HERDR_SOCKET_PATH, which names no session).
+ */
 export const sessionOf = (socket: string) =>
   /\/sessions\/([^/]+)\/herdr\.sock$/.exec(socket)?.[1] ?? "default";
 
