@@ -158,14 +158,15 @@ herdr's terminal streams. pi on another machine copies with OSC 52, and herdr ha
 its own TUI, so the copy never reaches Oriel's Mac. `oriel-copy.ts` asks Oriel instead, as
 pi-herd asks it to float a pane:
 
-- It acts only when pi is in a herdr pane, on another machine (`SSH_CONNECTION`, `SSH_CLIENT` or
-  `MOSH_CONNECTION` set, or not macOS; on the Mac, pi's `pbcopy` already works), and the pane
-  carries Oriel's `oriel-shown` token (`pane.get` on the pane's herdr socket).
+- It acts only when pi is in a herdr pane that Oriel shows from another machine: Oriel's token
+  `oriel-shown` is `remote` (`pane.get` on the pane's herdr socket). On Oriel's own Mac it is `1`,
+  and pi's `pbcopy` already works.
 - It writes the text to `/tmp/oriel-copy-<uuid>` (mode 0600) and reports the uuid as the pane
   token `oriel-copy` (source `pi-copy`, 1 s). herdr cuts a token value at 80 characters, so the
   text itself can't go in a token.
 - Oriel reads the token off herdr's `pane.updated` event, reads and deletes the file over its SSH
-  connection, and sets the Mac's clipboard. The helper deletes a file Oriel missed after 30 s.
+  connection, and sets the Mac's clipboard. While pi runs, the helper deletes a file Oriel missed
+  after 30 s.
 - Otherwise the caller copies as before: `if (!(await orielCopy(text))) await copyToClipboard(text)`.
 
 Test: `node --experimental-strip-types herdr/oriel-copy.test.mts` (a fake herdr socket).

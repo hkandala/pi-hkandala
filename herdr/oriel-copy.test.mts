@@ -4,7 +4,7 @@
  *   node --experimental-strip-types herdr/oriel-copy.test.mts
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,13 +12,13 @@ import { orielCopy } from "./oriel-copy.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "oriel-copy-"));
 const socket = join(dir, "herdr.sock");
-let shown = false;
+let mark: string | undefined;
 const reports: any[] = [];
 const server = net.createServer((c) =>
   c.on("data", (d) => {
     const { id, method, params } = JSON.parse(String(d));
     if (method === "pane.report_metadata") reports.push(params);
-    const tokens = shown ? { "oriel-shown": "1" } : {};
+    const tokens = mark ? { "oriel-shown": mark } : {};
     c.end(`${JSON.stringify({ id, result: { pane: { pane_id: params.pane_id, tokens } } })}\n`);
   }),
 );
@@ -26,12 +26,14 @@ await new Promise<void>((ok) => server.listen(socket, ok));
 Object.assign(process.env, { HERDR_SOCKET_PATH: socket, HERDR_PANE_ID: "w1:p2" });
 const text = "a long prompt ✓\n".repeat(500);
 
-// Not shown by Oriel: pi copies as before.
-process.env.SSH_CONNECTION = "10.0.0.1 1 10.0.0.2 22";
+// Not shown by Oriel, or shown on Oriel's own Mac (pbcopy works): pi copies as before.
 assert.equal(await orielCopy(text), false);
+mark = "1";
+assert.equal(await orielCopy(text), false);
+assert.equal(reports.length, 0);
 
-// Shown, on another machine: the text in Oriel's file, its id in the token.
-shown = true;
+// Shown from another machine: the text in Oriel's file, its id in the token.
+mark = "remote";
 assert.equal(await orielCopy(text), true);
 const [report] = reports;
 assert.equal(report.pane_id, "w1:p2");
@@ -42,18 +44,10 @@ assert.equal(readFileSync(file, "utf8"), text);
 assert.equal(statSync(file).mode & 0o777, 0o600);
 rmSync(file);
 
-// On this Mac (no SSH): pbcopy works, so no request.
-if (process.platform === "darwin") {
-  delete process.env.SSH_CONNECTION;
-  assert.equal(await orielCopy(text), false);
-  assert.equal(reports.length, 1);
-}
-
 // No herdr: no request.
-process.env.SSH_CONNECTION = "10.0.0.1 1 10.0.0.2 22";
 delete process.env.HERDR_PANE_ID;
 assert.equal(await orielCopy(text), false);
-assert.equal(existsSync(file), false);
+assert.equal(reports.length, 1);
 
 server.close();
 rmSync(dir, { recursive: true, force: true });

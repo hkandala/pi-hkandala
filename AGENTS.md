@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Personal pi resources. Each `extensions/<name>/` is a standalone pi package; the root package loads everything and is never published.
+Personal pi resources. Each `extensions/<name>/` is a standalone pi package (except that the ones that copy import `herdr/oriel-copy.ts`, so they load from the repo); the root package loads everything and is never published.
 
 The root `package.json` intentionally has no `pi` manifest: pi then auto-discovers top-level `extensions/`, `skills/`, `prompts/`, and `themes/`. Adding a manifest would stop new folders from loading.
 
