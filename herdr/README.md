@@ -2,10 +2,11 @@
 
 Optional pieces for [herdr](https://herdr.dev), shared by the extensions in this repo:
 
-| Folder              | What                                                                                                           | Used by                                                                                                                                |
-| ------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| [`patch/`](patch)   | A patch to herdr's pi integration: keeps a pane `working` while work that will wake the agent is still pending | [pi-bash-bg](../extensions/pi-bash-bg/README.md) (background jobs), [pi-herd](../extensions/pi-herd/README.md) (waits on other agents) |
-| [`plugin/`](plugin) | A herdr plugin with popups: attach to another pane's terminal in a floating window                             | [pi-herd](../extensions/pi-herd/README.md) (`/agents dashboard`, pi-footer's agents tab)                                               |
+| Folder                           | What                                                                                                           | Used by                                                                                                                                |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| [`patch/`](patch)                | A patch to herdr's pi integration: keeps a pane `working` while work that will wake the agent is still pending | [pi-bash-bg](../extensions/pi-bash-bg/README.md) (background jobs), [pi-herd](../extensions/pi-herd/README.md) (waits on other agents) |
+| [`oriel-copy.ts`](oriel-copy.ts) | Copies through Oriel when pi runs on another machine                                                           | [pi-prompt-clipboard](../extensions/pi-prompt-clipboard/README.md), [pi-content-layout](../extensions/pi-content-layout/README.md)     |
+| [`plugin/`](plugin)              | A herdr plugin with popups: attach to another pane's terminal in a floating window                             | [pi-herd](../extensions/pi-herd/README.md) (`/agents dashboard`, pi-footer's agents tab)                                               |
 
 Each extension works without them. The patch makes herdr's state right, and pi-herd's watches
 depend on that state. The plugin adds the popups.
@@ -149,6 +150,25 @@ The patch fixes only issue 4. The others are worth reporting to herdr.
 The patch leaves issue 3 alone. pi-herd uses herdr's status as herdr reports it. While a run waits
 on a dialog, the pane shows `working`, not `blocked`. So a watch on that agent doesn't end as
 blocked: it ends only at its timeout.
+
+## Oriel copy
+
+[Oriel](https://github.com/hkandala/oriel), a native herdr client for macOS, draws panes from
+herdr's terminal streams. pi on another machine copies with OSC 52, and herdr hands that only to
+its own TUI, so the copy never reaches Oriel's Mac. `oriel-copy.ts` asks Oriel instead, as
+pi-herd asks it to float a pane:
+
+- It acts only when pi is in a herdr pane, on another machine (`SSH_CONNECTION`, `SSH_CLIENT` or
+  `MOSH_CONNECTION` set, or not macOS; on the Mac, pi's `pbcopy` already works), and the pane
+  carries Oriel's `oriel-shown` token (`pane.get` on the pane's herdr socket).
+- It writes the text to `/tmp/oriel-copy-<uuid>` (mode 0600) and reports the uuid as the pane
+  token `oriel-copy` (source `pi-copy`, 1 s). herdr cuts a token value at 80 characters, so the
+  text itself can't go in a token.
+- Oriel reads the token off herdr's `pane.updated` event, reads and deletes the file over its SSH
+  connection, and sets the Mac's clipboard. The helper deletes a file Oriel missed after 30 s.
+- Otherwise the caller copies as before: `if (!(await orielCopy(text))) await copyToClipboard(text)`.
+
+Test: `node --experimental-strip-types herdr/oriel-copy.test.mts` (a fake herdr socket).
 
 ## Plugin
 

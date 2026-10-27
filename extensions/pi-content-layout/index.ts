@@ -38,6 +38,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { orielCopy } from "../../herdr/oriel-copy.ts";
 import { diffOf, highlighted, numbered, untab } from "./code.ts";
 import { copied } from "./copy.ts";
 import {
@@ -1138,7 +1139,8 @@ export default function (pi: ExtensionAPI) {
       tui = root as unknown as FullScreen;
       return { render: () => [], invalidate() {} };
     });
-    // pi hands a selection's text to copySelection; the layout's decoration comes off first. `tui`
+    // pi hands a selection's text to copySelection; the layout's decoration comes off first, and
+    // Oriel takes it when it shows this pane on another machine (herdr/oriel-copy.ts). `tui`
     // is pi's proxy to the current renderer, and a TUI mode switch makes a new one: each gets the
     // wrapper once (the marker says which), and only the one that has it is restored.
     const hookCopy = () => {
@@ -1147,13 +1149,13 @@ export default function (pi: ExtensionAPI) {
       if (!t || !copy) return;
       const marker = {};
       t.clCopy = marker;
-      t.copySelection = (text) => {
+      t.copySelection = async (text) => {
         let plain = text;
         try {
           const start = t.getSelectionBounds?.()?.start.col ?? 0;
           plain = copied(text, start, t.terminal?.columns ?? 80, reserve());
         } catch {} // copy it as drawn
-        return copy(plain);
+        return (await orielCopy(plain)) || copy(plain);
       };
       restores.push(() => {
         if (t.clCopy !== marker) return;
@@ -1544,14 +1546,16 @@ export default function (pi: ExtensionAPI) {
               .map((c) => c.text!.trim())
               .join("\n\n");
             if (source) {
-              copyToClipboard(source).then(
-                () => {
-                  this.clCopied = Date.now();
-                  requestRender();
-                  setTimeout(requestRender, 1250);
-                },
-                () => {}, // no clipboard: nothing to confirm
-              );
+              orielCopy(source)
+                .then((taken) => taken || copyToClipboard(source))
+                .then(
+                  () => {
+                    this.clCopied = Date.now();
+                    requestRender();
+                    setTimeout(requestRender, 1250);
+                  },
+                  () => {}, // no clipboard: nothing to confirm
+                );
               return { handled: true };
             }
           }

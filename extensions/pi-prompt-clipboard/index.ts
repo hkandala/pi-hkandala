@@ -14,6 +14,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { copyToClipboard, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { orielCopy } from "../../herdr/oriel-copy.ts";
 import { Editor, type KeyId } from "@earendil-works/pi-tui";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -92,7 +93,7 @@ export default function (pi: ExtensionAPI) {
       const text = ctx.ui.getEditorText();
       if (!text.trim()) return ctx.ui.notify("Nothing to copy", "info");
       try {
-        await copyToClipboard(text);
+        if (!(await orielCopy(text))) await copyToClipboard(text);
       } catch (error) {
         return ctx.ui.notify(`Copy failed: ${(error as Error).message}`, "error");
       }
