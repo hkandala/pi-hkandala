@@ -3,8 +3,8 @@ name: oriel-panes
 description: |
   Open a browser pane next to your own herdr pane, which the Oriel app shows as a web page. Use it to show the
   user an HTML report you wrote, a dev server you started (http://localhost:3000), or docs, without asking them
-  to open a browser. Needs herdr ($HERDR_PANE_ID is set) and works on This Mac and on remote machines that
-  Oriel connects to.
+  to open a browser. Needs herdr ($HERDR_PANE_ID is set). Works on This Mac and on the remote machines Oriel
+  connects to (a remote machine's `localhost` pages come with a later Oriel version).
 ---
 
 # Oriel panes
@@ -31,6 +31,8 @@ keys. Use the `placeholder.sh` next to this file (its absolute path):
 ```sh
 herdr pane run "$pane" "exec sh '/path/to/oriel-panes/placeholder.sh' Browser 'http://localhost:3000'"
 ```
+
+The address goes inside single quotes there: write a `'` in it as `%27`.
 
 To close it: `herdr pane close "$pane"`.
 
