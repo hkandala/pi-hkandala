@@ -14,7 +14,7 @@ browser card with that address. herdr's own TUI shows it as a plain pane with th
 
 ## Open a browser pane beside you
 
-Run these three steps. They split your pane to the right, without taking the keyboard from you.
+Run these four steps. They split your pane to the right, without taking the keyboard from you.
 
 ```sh
 # 1. An instance id: 6 random [a-z0-9] that no pane of the session has.
@@ -23,6 +23,8 @@ while iid=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 6); herdr pane list
 pane=$(herdr pane split "$HERDR_PANE_ID" --direction right --no-focus | sed -E 's/.*"pane_id":"([^"]+)".*/\1/')
 # 3. The label makes it a browser pane.
 herdr pane rename "$pane" "oriel:browser#$iid http://localhost:3000"
+# 4. Tell Oriel to read the layout again: herdr sends no event for a rename.
+echo '{"id":"1","method":"pane.report_metadata","params":{"pane_id":"'"$pane"'","source":"oriel-panes","tokens":{"oriel-label":"1"},"ttl_ms":1000}}' | herdr remote-api-bridge >/dev/null
 ```
 
 Optional: draw "Browser", the address and "Shown in Oriel" in the pane for herdr TUI users, and make it ignore
@@ -35,6 +37,20 @@ herdr pane run "$pane" "exec sh '/path/to/oriel-panes/placeholder.sh' Browser 'h
 The address goes inside single quotes there: write a `'` in it as `%27`.
 
 To close it: `herdr pane close "$pane"`.
+
+## Change the address
+
+Rename the same pane with the same iid and the new address, then run step 4 again. The card loads the new page
+as a new entry of its history (Back returns to the old one), and asks the user first unless its site is allowed
+(see Approval below).
+
+```sh
+herdr pane rename "$pane" "oriel:browser#$iid http://localhost:3000/settings"
+echo '{"id":"1","method":"pane.report_metadata","params":{"pane_id":"'"$pane"'","source":"oriel-panes","tokens":{"oriel-label":"1"},"ttl_ms":1000}}' | herdr remote-api-bridge >/dev/null
+```
+
+Lost the pane id or the iid? `herdr pane list` shows every pane with its `pane_id` and `label`; the iid is the 6
+characters after `oriel:browser#`. `herdr pane get "$pane"` shows one pane.
 
 ## The rules
 
@@ -49,5 +65,4 @@ To close it: `herdr pane close "$pane"`.
 - **No secrets** in the address (no `?token=`): every device and the TUI see the label.
 - **Approval:** Oriel opens `localhost`, `127.0.0.1` and This Mac's files at once. Another site that you put in
   a label waits for the user to click Open the first time.
-- To show a new address, rename the pane with the same iid. An open card keeps its page until Oriel builds it
-  again (after a relaunch, for example), so prefer a new pane for a new page.
+- The placeholder keeps the address it started with; the label (the TUI border) shows the current one.
