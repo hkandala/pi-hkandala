@@ -12,7 +12,7 @@ The root `package.json` intentionally has no `pi` manifest: pi then auto-discove
 
 ## Skills
 
-`skills/<name>/` holds skills copied unchanged from upstream repos. Add a row to the Skills table in the root `README.md` naming the source and commit, so it can be re-synced.
+`skills/<name>/` holds skills copied unchanged from upstream repos, and our own (`oriel-panes`). Add a row to the Skills table in the root `README.md`; for a copied skill, name the source and commit, so it can be re-synced.
 
 ## herdr
 
