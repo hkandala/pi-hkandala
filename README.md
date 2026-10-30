@@ -27,7 +27,7 @@ My [pi](https://pi.dev) resources. Each one is its own pi package, so you can in
 | Skill                                            | Description                                                                                                                                                                                                                    |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [simple-english](skills/simple-english/SKILL.md) | Plain, layman-readable English (ASD-STE100 style) for docs and replies. Copied from [AminBlg/SimpleEnglish](https://github.com/AminBlg/SimpleEnglish) (commit `79b590f`); update by copying its `skills/simple-english/` again |
-| [oriel-panes](skills/oriel-panes/SKILL.md)       | Open a browser pane beside the agent's herdr pane, which Oriel shows as a web page (an HTML report, a dev server, docs). Written here                                                                                          |
+| [oriel-panes](skills/oriel-panes/SKILL.md)       | Open any kind of Oriel pane beside the agent's herdr pane: a terminal, an agent, a browser page, or a plugin card (file, preview, markdown, diff, files). Written here                                                         |
 
 Skills load with the root package only.
 

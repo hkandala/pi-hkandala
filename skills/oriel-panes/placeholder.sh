@@ -1,5 +1,5 @@
 # Oriel's placeholder for a plugin pane: "$1" (the title) and "$2" (the address) centered, drawn again on a
-# resize; keys do nothing. Usage: sh placeholder.sh Browser http://localhost:3000
+# resize; keys do nothing. Usage: sh placeholder.sh Browser http://localhost:3000 (or File /repo/main.ts)
 draw() {
   set -- $(stty size 2>/dev/null || echo "24 80"); r=$1 c=$2
   printf '\033[?25l\033[2J'
