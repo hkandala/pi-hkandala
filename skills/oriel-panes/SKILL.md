@@ -3,7 +3,7 @@ name: oriel-panes
 description: |
   Open a pane next to your own herdr pane, as any kind of card the Oriel app shows: a terminal (with or without a
   command), a coding agent (Claude Code, Codex, pi, OpenCode), a browser page (an HTML report, a dev server, docs),
-  or, in Oriel builds with plugins, a file, preview, markdown, diff or file-tree card. Use it to show the user
+  or a file, preview, markdown, diff or file-tree card. Use it to show the user
   something without asking them to open it. Needs herdr ($HERDR_PANE_ID is set). Works on This Mac and on the
   remote machines Oriel connects to.
 ---
@@ -80,8 +80,7 @@ herdr --session "$HERDR_SESSION" pane report-metadata "$pane" --source oriel-pan
 | `diff` | a repository's root, a space, then `uncommitted` or a commit hash | `oriel:diff#j1k2l3 /repo uncommitted` |
 | `files` | a folder, as a file tree with git | `oriel:files#m4n5o6 /repo` |
 
-Only Oriel builds with plugins (the `plugins-native` and `plugins-web` branches, not yet `main`) show the five
-plugin kinds. Other builds show such a pane as a terminal card.
+Oriel builds from `main` show the five plugin kinds. Older builds show such a pane as a terminal card.
 
 Optional: for herdr TUI users, draw the kind, the argument and "Shown in Oriel" in the pane, and make it ignore
 keys. Use the `placeholder.sh` next to this file, by its absolute path:
