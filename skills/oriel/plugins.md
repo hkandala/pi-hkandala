@@ -5,7 +5,7 @@ A plugin is a package that adds a kind of card to Oriel. The kinds that come wit
 
 ```sh
 oriel plugins --json                      # id, name, opens, source, version, or the error of one that did not load
-oriel plugins --for ./data.csv            # only the plugins that open it, the default first
+oriel plugins --for ./data.csv            # only the plugins that open it, the default first. End a folder with /
 ```
 
 ## Make a plugin
@@ -13,9 +13,9 @@ oriel plugins --for ./data.csv            # only the plugins that open it, the d
 This works only from a pane on Oriel's Mac. A remote pane gets `other_machine`.
 
 ```sh
-oriel plugins new "CSV Table" --json      # the template, installed, built and trusted: id, folder, log
+oriel --timeout 300 plugins new "CSV Table" --json   # the template, installed, built and trusted: id, folder, log
 # edit the files in the folder, then:
-oriel plugins reload csv-table --json     # {"id":"csv-table","built":true,"ms":412,"cards":1}
+oriel --timeout 120 plugins reload csv-table --json  # {"id":"csv-table","built":true,"ms":412,"cards":1}
 oriel open csv-table ./data.csv
 tail -f <log>                             # the plugin's log
 ```
@@ -24,7 +24,9 @@ tail -f <log>                             # the plugin's log
   keep running the last good build.
 - If a card of the plugin has unsaved edits, `reload` stops with `dirty` and names the pane. Ask the user to
   save. Oriel never discards edits.
-- `oriel plugins reload` with no id reloads every plugin.
+- `new` and `reload` install and build, so pass a long `--timeout`.
+- `oriel plugins reload` with no id reloads every plugin that has an open card.
+- A plugin the user did not trust yet is `failed`: its card asks the user first.
 - The manifest, the API and the template: https://oriel-docs.vercel.app/docs/plugins/building
 
 ## Install a plugin

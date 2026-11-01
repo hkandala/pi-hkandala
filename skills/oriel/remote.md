@@ -10,6 +10,6 @@ all on your machine, and the command works the same as on Oriel's Mac.
   addresses).
 - `plugins new`, `reload` and `install` answer `other_machine`: plugins live on the Mac. `oriel plugins` and
   `oriel open <plugin>` work. To read a card's error, run `oriel card <pane> --json`.
-- A pane argument names only panes on your machine. Another machine's pane is `other_machine`.
+- A pane argument always names a pane on your machine.
 - If the SSH link drops (sleep, a network change), Oriel takes no requests until it connects again (exit 3).
   Try again later, or tell the user.

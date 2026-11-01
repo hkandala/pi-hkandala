@@ -21,7 +21,7 @@ oriel open git . 4f2a91c                  # one commit
 oriel open csv-table ./data.csv           # an installed plugin
 ```
 
-- A relative path is relative to your working folder.
+- A relative path is relative to your working folder. A path must exist (`bad_argument`).
 - If a path has the same name as a kind, write it as `./name`.
 - If the same kind and argument already show in a card of the session, that card is the answer
   (`"reused": true`) and nothing new opens. Add `--new` for a second card.
@@ -47,7 +47,7 @@ With `--replace`, a browser card adds a history entry, so Back returns. A termin
 ## Browser addresses
 
 - `localhost` is your pane's machine, also on a remote machine.
-- A `file://` address opens only on Oriel's Mac. On a remote machine, serve the file
+- A `file://` address, or `oriel open browser ./report.html`, opens only on Oriel's Mac. On a remote machine, serve the file
   (`python3 -m http.server 8000`) and open `http://localhost:8000/report.html`.
 - Oriel opens `localhost` and local files without asking. Another site waits until the user clicks Open.
 
