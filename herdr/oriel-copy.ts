@@ -3,16 +3,18 @@
  * copy there is OSC 52, which herdr hands only to its own TUI, so it never reaches Oriel's Mac.
  *
  * When Oriel shows this pane from another machine (its token `oriel-shown` = `remote`; `1` means
- * Oriel's own Mac, where pbcopy works), the text goes in `/tmp/oriel-copy-<uuid>`
- * (herdr cuts a token value at 80 characters) and the uuid in the token `oriel-copy`. Oriel reads it
- * off herdr's `pane.updated` event, reads and deletes the file, and sets the Mac's clipboard.
+ * Oriel's own Mac, where pbcopy works), the text goes to `oriel copy` on standard input: Oriel's
+ * command, which Oriel writes on each machine where it opens a session.
  *
  *   if (!(await orielCopy(text))) await copyToClipboard(text);
  */
 
-import { randomUUID } from "node:crypto";
-import { rmSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
 import net from "node:net";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+const ORIEL = join(homedir(), ".cache", "oriel", "bin", "oriel");
 
 /** Resolves true when Oriel takes the copy; false to copy as before (Oriel's Mac, no herdr, no Oriel). */
 export async function orielCopy(text: string): Promise<boolean> {
@@ -20,23 +22,11 @@ export async function orielCopy(text: string): Promise<boolean> {
   if (!socket || !pane) return false;
   const got = await rpc(socket, "pane.get", { pane_id: pane }).catch(() => undefined);
   if (got?.pane?.tokens?.["oriel-shown"] !== "remote") return false;
-  const id = randomUUID();
-  const file = `/tmp/oriel-copy-${id}`;
-  try {
-    writeFileSync(file, text, { mode: 0o600, flag: "wx" });
-    await rpc(socket, "pane.report_metadata", {
-      pane_id: pane,
-      source: "pi-copy",
-      ttl_ms: 1000,
-      tokens: { "oriel-copy": id },
-    });
-  } catch {
-    rmSync(file, { force: true });
-    return false;
-  }
-  // Oriel deletes it within a second; this is for an Oriel that missed the request (force: no throw).
-  setTimeout(() => rmSync(file, { force: true }), 30_000).unref();
-  return true;
+  return new Promise((ok) => {
+    const child = execFile(ORIEL, ["copy"], { timeout: 15_000 }, (e) => ok(!e));
+    child.stdin?.on("error", () => {}); // no command, or it ended early: the callback says false
+    child.stdin?.end(text);
+  });
 }
 
 /** One request to a herdr socket: its result, or a rejection with herdr's error. */

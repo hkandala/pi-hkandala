@@ -155,21 +155,20 @@ blocked: it ends only at its timeout.
 
 [Oriel](https://github.com/hkandala/oriel), a native herdr client for macOS, draws panes from
 herdr's terminal streams. pi on another machine copies with OSC 52, and herdr hands that only to
-its own TUI, so the copy never reaches Oriel's Mac. `oriel-copy.ts` asks Oriel instead, as
-pi-herd asks it to float a pane:
+its own TUI, so the copy never reaches Oriel's Mac. `oriel-copy.ts` asks Oriel instead, through
+Oriel's command `~/.cache/oriel/bin/oriel` (Oriel writes it on each machine where it opens a
+session):
 
 - It acts only when pi is in a herdr pane that Oriel shows from another machine: Oriel's token
   `oriel-shown` is `remote` (`pane.get` on the pane's herdr socket). On Oriel's own Mac it is `1`,
   and pi's `pbcopy` already works.
-- It writes the text to `/tmp/oriel-copy-<uuid>` (mode 0600) and reports the uuid as the pane
-  token `oriel-copy` (source `pi-copy`, 1 s). herdr cuts a token value at 80 characters, so the
-  text itself can't go in a token.
-- Oriel reads the token off herdr's `pane.updated` event, reads and deletes the file over its SSH
-  connection, and sets the Mac's clipboard. While pi runs, the helper deletes a file Oriel missed
-  after 30 s.
-- Otherwise the caller copies as before: `if (!(await orielCopy(text))) await copyToClipboard(text)`.
+- It pipes the text into `oriel copy`. The command carries it through herdr to the Oriel that
+  follows the session, which sets the Mac's clipboard (at most 1 MiB).
+- If the command is missing or exits with any code but 0, the caller copies as before:
+  `if (!(await orielCopy(text))) await copyToClipboard(text)`.
 
-Test: `node --experimental-strip-types herdr/oriel-copy.test.mts` (a fake herdr socket).
+Test: `node --experimental-strip-types herdr/oriel-copy.test.mts` (a fake herdr socket and a fake
+`oriel` command).
 
 ## Plugin
 
