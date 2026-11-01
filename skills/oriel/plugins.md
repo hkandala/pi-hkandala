@@ -20,8 +20,8 @@ oriel open csv-table ./data.csv
 tail -f <log>                             # the plugin's log
 ```
 
-- If the build fails, `reload` exits 1 with `build_failed` and prints the last 20 lines of the build. The open
-  cards keep the page that runs.
+- If the build fails, `reload` exits 1 with `build_failed` and prints the last 20 lines of the build. Open cards
+  keep running the last good build.
 - If a card of the plugin has unsaved edits, `reload` stops with `dirty` and names the pane. Ask the user to
   save. Oriel never discards edits.
 - `oriel plugins reload` with no id reloads every plugin.

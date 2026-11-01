@@ -22,7 +22,7 @@ const server = net.createServer((c) =>
   }),
 );
 await new Promise<void>((ok) => server.listen(socket, ok));
-// The fake command records its arguments and standard input, and exits with $CODE.
+// The fake command records its arguments and standard input, and exits with $CODE (3 at once with $EARLY).
 Object.assign(process.env, { HOME: dir, HERDR_SOCKET_PATH: socket, HERDR_PANE_ID: "w1:p2" });
 const { orielCopy } = await import("./oriel-copy.ts"); // after HOME: it names the command at load
 const text = "a long prompt ✓\n".repeat(500);
@@ -34,7 +34,7 @@ assert.equal(await orielCopy(text), false);
 mkdirSync(bin, { recursive: true });
 writeFileSync(
   join(bin, "oriel"),
-  `#!/bin/sh\necho "$@" >'${got}.args' && cat >'${got}.in' && exit \${CODE:-0}\n`,
+  `#!/bin/sh\n[ -n "$EARLY" ] && exit 3\necho "$@" >'${got}.args' && cat >'${got}.in' && exit \${CODE:-0}\n`,
   { mode: 0o755 },
 );
 
@@ -54,6 +54,10 @@ assert.equal(readFileSync(`${got}.in`, "utf8"), text);
 // No Oriel took it (exit 3): pi copies as before.
 process.env.CODE = "3";
 assert.equal(await orielCopy(text), false);
+
+// It exits before it reads a text bigger than a pipe holds: no crash on the broken pipe.
+process.env.EARLY = "1";
+assert.equal(await orielCopy("x".repeat(1 << 17)), false);
 
 // No herdr: no command.
 rmSync(`${got}.in`);

@@ -21,7 +21,7 @@ oriel open git . 4f2a91c                  # one commit
 oriel open csv-table ./data.csv           # an installed plugin
 ```
 
-- A relative path is relative to your working folder. For `git`, a folder turns into its repository's root.
+- A relative path is relative to your working folder.
 - If a path has the same name as a kind, write it as `./name`.
 - If the same kind and argument already show in a card of the session, that card is the answer
   (`"reused": true`) and nothing new opens. Add `--new` for a second card.
@@ -49,7 +49,7 @@ With `--replace`, a browser card adds a history entry, so Back returns. A termin
 - `localhost` is your pane's machine, also on a remote machine.
 - A `file://` address opens only on Oriel's Mac. On a remote machine, serve the file
   (`python3 -m http.server 8000`) and open `http://localhost:8000/report.html`.
-- Oriel opens `localhost` and local files at once. Another site waits until the user clicks Open.
+- Oriel opens `localhost` and local files without asking. Another site waits until the user clicks Open.
 
 ## Float, point, look
 
@@ -57,7 +57,7 @@ With `--replace`, a browser card adds a history entry, so Back returns. A termin
 oriel float w1:p3 [--on-top]              # its own window over Oriel. --on-top: Stay on Top
 oriel unfloat w1:p3                       # back into its tab
 oriel reveal w1:p3                        # a flash when in view, else a notice with Show
-oriel card w1:p3 --json                   # kind, arg, title, dirty (unsaved edits), floating, shown
+oriel card w1:p3 --json                   # kind, arg, title, dirty (unsaved edits), floating, shown, error
 oriel shown --json                        # your session's panes in view, and the ones that float
 ```
 

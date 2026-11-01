@@ -980,7 +980,6 @@ export default function (pi: ExtensionAPI) {
       endAttach();
       return;
     }
-    // Not shown, or no Oriel floated it: herdr focuses the pane, or the popup opens.
     if ((await orielShows(socket, pane)) && (await orielFloat(pane, a.herdr))) return;
     if (socket === HIDDEN)
       return ctx.ui.notify(
