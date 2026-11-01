@@ -55,7 +55,9 @@ git diff | oriel copy                     # the Mac's clipboard, at most 1 MiB
 - Oriel never moves the user's view for you. A card goes beside you, or in a tab the user does not see with
   a notice that offers Show. Do not call herdr's focus commands: they move the user's view.
 - Put no secrets in an argument (no `?token=`). Every device that follows the session sees it.
-- At most one `notify` per pane every 10 seconds (`rate_limited`).
+- `notify` sends at most one notification per pane every 10 seconds (`rate_limited`). It answers
+  `"notified": false` when the user turned off Oriel ▸ Notifications ▸ From Agents. A click on it brings Oriel to
+  the front and shows your pane, or the pane of `oriel notify <title> [<body>] --pane <pane>`.
 
 ## When you need more
 
@@ -63,5 +65,6 @@ git diff | oriel copy                     # the Mac's clipboard, at most 1 MiB
 - [plugins.md](plugins.md): list, make, reload and install plugins.
 - [agents.md](agents.md): start an agent with the chat view, relaunch an agent with chat.
 - [remote.md](remote.md): what is different on a remote machine.
+- Every command, option and answer: https://oriel-docs.vercel.app/docs/agent-control/cli
 - herdr (tabs, splits, terminals, running a command, reading output, agent status): the herdr skill. Run
   `herdr --skill` to print it.
