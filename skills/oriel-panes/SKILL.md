@@ -3,7 +3,8 @@ name: oriel-panes
 description: |
   Open a pane next to your own herdr pane, as any kind of card the Oriel app shows: a terminal (with or without a
   command), a coding agent (Claude Code, Codex, pi, OpenCode), a browser page (an HTML report, a dev server, docs),
-  or a file, preview, markdown, diff or file-tree card. Use it to show the user
+  or a plugin card: File Explorer (a folder's tree, a file, an image or PDF, Markdown), Git (a repository's
+  home or a diff) or any installed plugin. Use it to show the user
   something without asking them to open it. Needs herdr ($HERDR_PANE_ID is set). Works on This Mac and on the
   remote machines Oriel connects to.
 ---
@@ -74,13 +75,15 @@ herdr --session "$HERDR_SESSION" pane report-metadata "$pane" --source oriel-pan
 | Kind | Argument | Example label |
 |---|---|---|
 | `browser` | a web address | `oriel:browser#k3x9q2 http://localhost:3000` |
-| `file` | a file's absolute path, in a text editor | `oriel:file#a1b2c3 /repo/src/main.ts` |
-| `preview` | a file's absolute path: image, PDF, audio or video | `oriel:preview#d4e5f6 /repo/logo.png` |
-| `markdown` | a Markdown file's absolute path, to read and edit | `oriel:markdown#g7h8i9 /repo/README.md` |
-| `diff` | a repository's root, a space, then `uncommitted` or a commit hash | `oriel:diff#j1k2l3 /repo uncommitted` |
-| `files` | a folder, as a file tree with git | `oriel:files#m4n5o6 /repo` |
+| `explorer` | a folder's absolute path ending in `/`: its tree | `oriel:explorer#m4n5o6 /repo/` |
+| `explorer` | a file's absolute path: text opens in the editor, Markdown to read and edit, images, PDF, audio and video in a preview | `oriel:explorer#a1b2c3 /repo/src/main.ts` |
+| `git` | a repository's root ending in `/`: its home (changes, commit, pull, push, history) | `oriel:git#j1k2l3 /repo/` |
+| `git` | the root with its `/`, a space, then `uncommitted` or a commit hash: that diff | `oriel:git#j1k2l3 /repo/ uncommitted` |
+| `<plugin id>` | what that plugin opens (its `package.json`'s `oriel.opens`) | `oriel:csv-table#p7q8r9 /repo/data.csv` |
 
-Oriel builds from `main` show the five plugin kinds. Older builds show such a pane as a terminal card.
+File Explorer, Git and any plugin installed in `~/.config/oriel/plugins/` (Oriel ▸ Plugins…) are plugin kinds. The
+old words `file`, `preview`, `markdown`, `files` and `diff` still open in File Explorer and Git. A label naming a
+plugin that is not installed shows a card that says so.
 
 Optional: for herdr TUI users, draw the kind, the argument and "Shown in Oriel" in the pane, and make it ignore
 keys. Use the `placeholder.sh` next to this file, by its absolute path:
