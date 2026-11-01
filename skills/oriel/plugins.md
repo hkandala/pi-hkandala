@@ -5,7 +5,7 @@ A plugin is a package that adds a kind of card to Oriel. The kinds that come wit
 
 ```sh
 oriel plugins --json                      # id, name, opens, source, version, or the error of one that did not load
-oriel plugins --for ./data.csv            # only the plugins that open it, the default first. End a folder with /
+oriel plugins --for ./data.csv            # only the plugins that open it, the default first
 ```
 
 ## Make a plugin

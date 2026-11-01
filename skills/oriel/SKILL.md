@@ -41,8 +41,7 @@ git diff | oriel copy                     # the Mac's clipboard, at most 1 MiB
 
 - `oriel help` and `oriel help <command>` print the exact syntax of the Oriel that answers. If they differ
   from these files, trust them.
-- Add `--json` to any command for one JSON value, also for an error from Oriel. If the command itself
-  fails (exit 2 to 5), it prints one line on standard error only.
+- Add `--json` to any command for one JSON value, also for an error: `{"error":{"code":…,"message":…}}`.
 - `--pane <id>` (ask from another pane of your session) and `--timeout <seconds>` go before the command:
   `oriel --timeout 60 open …`. After the command, an option belongs to that command.
 - A pane is `w1:p3` in your session, or `<session>/<pane>` of another session on your machine.

@@ -6,8 +6,8 @@ all on your machine, and the command works the same as on Oriel's Mac.
 - While Oriel shows your pane, `oriel status --json` says `"remote": true`. Your own `pbcopy` does not
   reach the user's Mac, so use `oriel copy`.
 - Paths are your machine's. `oriel open ./notes.md` opens your file.
-- `localhost` in a browser card is your machine. A `file://` address does not open (cards.md, Browser
-  addresses).
+- `localhost` in a browser card is your machine. A `file:` URL, and so `oriel open browser ./page.html`, is
+  `bad_argument` (cards.md, Browser addresses).
 - `plugins new`, `reload` and `install` answer `other_machine`: plugins live on the Mac. `oriel plugins` and
   `oriel open <plugin>` work. To read a card's error, run `oriel card <pane> --json`.
 - A pane argument always names a pane on your machine.
