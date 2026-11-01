@@ -3,8 +3,7 @@
  * herdr side of starting an agent, following its status, and showing it in a popup.
  */
 
-import { execFileSync, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { homedir } from "node:os";
@@ -32,24 +31,22 @@ export const orielShows = (socket: string, pane: string) =>
     () => false,
   );
 
+/** Oriel's command, which Oriel writes on each machine where it opens a session. */
+const ORIEL = join(homedir(), ".cache", "oriel", "bin", "oriel");
+
 /**
- * Asks Oriel to float a pane of a session on this machine: tokens on `pane`, which Oriel reads off
- * herdr's pane.updated event (a nonce, as later changes of the pane send them again).
+ * Asks the Oriel that follows this pane's session (`$HERDR_SESSION`) to float a pane of a session on
+ * this machine. Resolves false when it did not float (no command here, no Oriel took it, an error).
  */
-export const orielFloat = (
-  socket: string,
-  pane: string,
-  target: { socket: string; pane: string },
-) =>
-  rpc(socket, "pane.report_metadata", {
-    pane_id: pane,
-    source: "pi-herd",
-    ttl_ms: 1000,
-    tokens: {
-      "oriel-float": `${sessionOf(target.socket)}/${target.pane}`,
-      "oriel-float-id": randomUUID(),
-    },
-  });
+export const orielFloat = (pane: string, target: { socket: string; pane: string }) =>
+  new Promise<boolean>((ok) =>
+    execFile(
+      ORIEL,
+      ["--pane", pane, "float", `${sessionOf(target.socket)}/${target.pane}`],
+      { timeout: 15_000 },
+      (e) => ok(!e),
+    ),
+  );
 
 /** `s` quoted for sh. */
 export const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;

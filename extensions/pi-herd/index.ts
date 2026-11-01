@@ -950,7 +950,7 @@ export default function (pi: ExtensionAPI) {
    * opened the popup (its pane is behind the popup: a 5th marker line, kept across switches; an
    * older runtime's marker has none, and switches as before), or closes and herdr focuses the
    * agent's pane when it is on the popup's server. Otherwise, when Oriel shows this pane (its mark),
-   * Oriel floats the agent's pane. Otherwise herdr focuses its pane
+   * Oriel floats the agent's pane (`oriel float`). If it does not, herdr focuses its pane
    * when it is on this agent's server, or it opens a popup (an agent in the hidden session). Not
    * from the hidden session outside a popup: nobody sees a popup there, and it would take the
    * agent's pane away from wherever it shows.
@@ -980,10 +980,8 @@ export default function (pi: ExtensionAPI) {
       endAttach();
       return;
     }
-    if (await orielShows(socket, pane))
-      return orielFloat(socket, pane, a.herdr).catch((e: Error) =>
-        ctx?.ui.notify(`herdr: ${e.message}`, "error"),
-      );
+    // Not shown, or no Oriel floated it: herdr focuses the pane, or the popup opens.
+    if ((await orielShows(socket, pane)) && (await orielFloat(pane, a.herdr))) return;
     if (socket === HIDDEN)
       return ctx.ui.notify(
         `This agent runs in herdr session ${SESSION}, where a popup wouldn't show: open ${label(a)} from your main herdr session.`,
