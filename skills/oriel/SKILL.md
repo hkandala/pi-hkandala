@@ -32,7 +32,7 @@ is not on `PATH`, so run it by its full path. In these files, `oriel` means that
 ## The commands you use most
 
 ```sh
-oriel open ./report.html                  # a file or URL in its default card, beside you
+oriel open browser ./report.html          # a page in a browser card, beside you (cards.md)
 oriel float w1:p3                         # a pane in its own window
 oriel reveal w1:p3                        # points the user at a pane: a flash, or a notice with Show
 oriel notify "Tests pass" "412 passed"    # a Mac notification. A click shows your pane
@@ -41,12 +41,13 @@ git diff | oriel copy                     # the Mac's clipboard, at most 1 MiB
 
 - `oriel help` and `oriel help <command>` print the exact syntax of the Oriel that answers. If they differ
   from these files, trust them.
-- Add `--json` to any command for one JSON value, also for an error.
-- `--pane <pane>` (ask from another pane) and `--timeout <seconds>` go before the command:
+- Add `--json` to any command for one JSON value, also for an error from Oriel. If the command itself
+  fails (exit 2 to 5), it prints one line on standard error only.
+- `--pane <id>` (ask from another pane of your session) and `--timeout <seconds>` go before the command:
   `oriel --timeout 60 open …`. After the command, an option belongs to that command.
 - A pane is `w1:p3` in your session, or `<session>/<pane>` of another session on your machine.
 - Exit codes: 0 done, 1 failed (the message says why), 2 usage, 3 no Oriel took the request, 4 no answer in
-  time (10 seconds by default), 5 not in a herdr pane, or herdr does not know the pane.
+  time (10 seconds by default), 5 not in a herdr pane, or herdr does not know your own pane.
 - If herdr does not know your own pane (exit 5), herdr gave it a new id after a move. Find its current id
   with herdr (the herdr skill) and pass `--pane <id>`.
 

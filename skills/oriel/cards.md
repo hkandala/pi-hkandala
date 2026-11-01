@@ -14,7 +14,7 @@ oriel open <path-or-url> [<place>]        # the default card for that file or UR
 ```sh
 oriel open browser http://localhost:3000
 oriel open explorer .                     # a folder's file tree
-oriel open ./src/main.ts                  # a file: text, Markdown, an image, a PDF
+oriel open ./src/main.ts                  # a file in File Explorer: text, Markdown, an image, a PDF
 oriel open git .                          # the repository's home: changes, commit, push, history
 oriel open git . uncommitted              # the uncommitted diff
 oriel open git . 4f2a91c                  # one commit
@@ -26,7 +26,7 @@ oriel open csv-table ./data.csv           # an installed plugin
 - If the same kind and argument already show in a card of the session, that card is the answer
   (`"reused": true`) and nothing new opens. Add `--new` for a second card.
 - The answer names the new pane. Keep it to change or close the card later:
-  `{"pane":"w1:p7","kind":"git","arg":"/repo/ uncommitted","reused":false,"shown":true}`. `shown` is true
+  `{"pane":"w1:p7","kind":"git","arg":"/repo/ uncommitted","label":"oriel:git#k3x9q2 /repo/ uncommitted","reused":false,"shown":true}`. `shown` is true
   when the user sees the card now.
 - To close a card, close its pane with herdr (the herdr skill).
 
@@ -42,14 +42,14 @@ oriel open csv-table ./data.csv           # an installed plugin
 | `--replace <pane>` | that browser or plugin card shows the new kind and argument |
 
 With `--replace`, a browser card adds a history entry, so Back returns. A terminal or an agent pane is
-`bad_argument`.
+`bad_argument`, a card with unsaved edits is `dirty`, and `--new` is `usage`.
 
 ## Browser addresses
 
 - `localhost` is your pane's machine, also on a remote machine.
-- A `file://` address, or `oriel open browser ./report.html`, opens only on Oriel's Mac. On a remote machine, serve the file
-  (`python3 -m http.server 8000`) and open `http://localhost:8000/report.html`.
-- Oriel opens `localhost` and local files without asking. Another site waits until the user clicks Open.
+- A `file://` address, or `oriel open browser ./report.html`, opens only on Oriel's Mac. On a remote
+  machine, serve the file (`python3 -m http.server 8000`) and open `http://localhost:8000/report.html`.
+- Oriel opens `localhost` and local files without asking. Most other sites wait until the user clicks Open.
 
 ## Float, point, look
 
@@ -58,6 +58,7 @@ oriel float w1:p3 [--on-top]              # its own window over Oriel. --on-top:
 oriel unfloat w1:p3                       # back into its tab
 oriel reveal w1:p3                        # a flash when in view, else a notice with Show
 oriel card w1:p3 --json                   # kind, arg, title, dirty (unsaved edits), floating, shown, error
+                                          # an agent pane adds agent, and chat (true with the chat view)
 oriel shown --json                        # your session's panes in view, and the ones that float
 ```
 

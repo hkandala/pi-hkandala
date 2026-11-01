@@ -3,8 +3,8 @@
 Your pane can be on a remote machine that Oriel connects to over SSH. The command, its files and herdr are
 all on your machine, and the command works the same as on Oriel's Mac.
 
-- `oriel status --json` says `"remote": true`. Your own `pbcopy` does not reach the user's Mac, so use
-  `oriel copy`.
+- While Oriel shows your pane, `oriel status --json` says `"remote": true`. Your own `pbcopy` does not
+  reach the user's Mac, so use `oriel copy`.
 - Paths are your machine's. `oriel open ./notes.md` opens your file.
 - `localhost` in a browser card is your machine. A `file://` address does not open (cards.md, Browser
   addresses).

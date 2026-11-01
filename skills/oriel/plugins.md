@@ -26,7 +26,7 @@ tail -f <log>                             # the plugin's log
   save. Oriel never discards edits.
 - `new` and `reload` install and build, so pass a long `--timeout`.
 - `oriel plugins reload` with no id reloads every plugin that has an open card.
-- A plugin the user did not trust yet is `failed`: its card asks the user first.
+- `reload <id>` of a plugin the user did not trust yet is `failed`: its card asks the user first.
 - The manifest, the API and the template: https://oriel-docs.vercel.app/docs/plugins/building
 
 ## Install a plugin
@@ -34,10 +34,10 @@ tail -f <log>                             # the plugin's log
 This works only from a pane on Oriel's Mac.
 
 ```sh
-oriel --timeout 600 plugins install npm:@acme/oriel-csv   # or git:<url>, or a folder
+oriel --timeout 600 plugins install npm:@acme/oriel-csv   # or git:<url>, or a folder: ./my-plugin, /path
 ```
 
 - Oriel asks the user on the Mac to trust it. If the user clicks Cancel, the answer is `declined`.
 - The answer comes after the install and the build, so pass a long `--timeout`. Exit 4 means that the wait
   ended and the install goes on. `oriel plugins` shows the plugin when it is ready.
-- The user removes and updates plugins in Oriel's Plugins panel.
+- The user removes and updates plugins in Oriel's Plugins panel. A source already installed is `bad_argument`.
