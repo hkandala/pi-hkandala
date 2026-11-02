@@ -61,9 +61,11 @@ git diff | oriel copy                     # the Mac's clipboard, at most 1 MiB
 
 ## When you need more
 
-- [cards.md](cards.md): `open` in each place, reuse, replace, browser addresses, `float`, `card`, `shown`.
+- [cards.md](cards.md): `open` in each place, reuse, replace, browser addresses, `float`, `card`, `shown`,
+  `balance`.
 - [plugins.md](plugins.md): list, make, reload and install plugins.
-- [agents.md](agents.md): start an agent with the chat view, relaunch an agent with chat.
+- [agents.md](agents.md): start an agent with the chat view, relaunch an agent with chat, switch a card
+  between chat and TUI.
 - [remote.md](remote.md): what is different on a remote machine.
 - Every command, option and answer: https://oriel-docs.vercel.app/docs/agent-control/cli
 - herdr (tabs, splits, terminals, running a command, reading output, agent status): the herdr skill. Run

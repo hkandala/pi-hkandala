@@ -8,6 +8,10 @@ oriel plugins --json                      # id, name, opens, source, version, or
 oriel plugins --for ./data.csv            # only the plugins that open it, the default first
 ```
 
+- `--for` lists the plugins that open the file, folder or URL, best first, with `"default": true` on the one
+  that `oriel open <path>` picks. For a file, the plugins that offer it only in Open With come after them.
+  `oriel open <id> <path>` opens it with any plugin in that list.
+
 ## Make a plugin
 
 This works only from a pane on Oriel's Mac. A remote pane gets `other_machine`.

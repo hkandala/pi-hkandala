@@ -58,8 +58,10 @@ oriel float w1:p3 [--on-top]              # its own window over Oriel. --on-top:
 oriel unfloat w1:p3                       # back into its tab
 oriel reveal w1:p3                        # a flash when in view, else a notice with Show
 oriel card w1:p3 --json                   # kind, arg, title, dirty (unsaved edits), floating, shown, error
-                                          # an agent pane adds agent, and chat (true with the chat view)
+                                          # an agent pane adds agent, chat (true with the chat view shown),
+                                          # and view ("chat" or "tui") when it has a chat view
 oriel shown --json                        # your session's panes in view, and the ones that float
+oriel balance [w1:p3]                     # evens out the splits of that pane's tab, yours by default
 ```
 
 - A pane that floats already comes to the front (`"existing": true`).
