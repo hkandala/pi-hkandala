@@ -37,7 +37,7 @@ oriel open csv-table ./data.csv           # an installed plugin
 | (none) | a split to the right of your pane |
 | `--down` | a split below your pane |
 | `--beside <pane>` | a split of that pane (add `--down` for below) |
-| `--tab` | a new tab after yours. Oriel does not show it, but offers a notice with Show |
+| `--tab` | a new tab at the end of your workspace. Oriel does not show it, but offers a notice with Show |
 | `--float` | a new tab, in its own window |
 | `--replace <pane>` | that browser or plugin card shows the new kind and argument |
 
