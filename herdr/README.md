@@ -2,11 +2,11 @@
 
 Optional pieces for [herdr](https://herdr.dev), shared by the extensions in this repo:
 
-| Folder                           | What                                                                                                           | Used by                                                                                                                                |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| [`patch/`](patch)                | A patch to herdr's pi integration: keeps a pane `working` while work that will wake the agent is still pending | [pi-bash-bg](../extensions/pi-bash-bg/README.md) (background jobs), [pi-herd](../extensions/pi-herd/README.md) (waits on other agents) |
-| [`oriel-copy.ts`](oriel-copy.ts) | Copies through Oriel when pi runs on another machine                                                           | [pi-prompt-clipboard](../extensions/pi-prompt-clipboard/README.md), [pi-content-layout](../extensions/pi-content-layout/README.md)     |
-| [`plugin/`](plugin)              | A herdr plugin with popups: attach to another pane's terminal in a floating window                             | [pi-herd](../extensions/pi-herd/README.md) (`/agents dashboard`, pi-footer's agents tab)                                               |
+| Folder                         | What                                                                                                           | Used by                                                                                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| [`patch/`](patch)              | A patch to herdr's pi integration: keeps a pane `working` while work that will wake the agent is still pending | [pi-bash-bg](../extensions/pi-bash-bg/README.md) (background jobs), [pi-herd](../extensions/pi-herd/README.md) (waits on other agents) |
+| [`ovvi-copy.ts`](ovvi-copy.ts) | Copies through Ovvi when pi runs on another machine                                                            | [pi-prompt-clipboard](../extensions/pi-prompt-clipboard/README.md), [pi-content-layout](../extensions/pi-content-layout/README.md)     |
+| [`plugin/`](plugin)            | A herdr plugin with popups: attach to another pane's terminal in a floating window                             | [pi-herd](../extensions/pi-herd/README.md) (`/agents dashboard`, pi-footer's agents tab)                                               |
 
 Each extension works without them. The patch makes herdr's state right, and pi-herd's watches
 depend on that state. The plugin adds the popups.
@@ -151,24 +151,24 @@ The patch leaves issue 3 alone. pi-herd uses herdr's status as herdr reports it.
 on a dialog, the pane shows `working`, not `blocked`. So a watch on that agent doesn't end as
 blocked: it ends only at its timeout.
 
-## Oriel copy
+## Ovvi copy
 
-[Oriel](https://github.com/hkandala/oriel), a native herdr client for macOS, draws panes from
+[Ovvi](https://ovvi.dev), a native herdr client for macOS, draws panes from
 herdr's terminal streams. pi on another machine copies with OSC 52, and herdr hands that only to
-its own TUI, so the copy never reaches Oriel's Mac. `oriel-copy.ts` asks Oriel instead, through
-Oriel's command `~/.cache/oriel/bin/oriel` (Oriel writes it on each machine where it opens a
+its own TUI, so the copy never reaches Ovvi's Mac. `ovvi-copy.ts` asks Ovvi instead, through
+Ovvi's command `~/.cache/ovvi/bin/ovvi` (Ovvi writes it on each machine where it opens a
 session):
 
-- It acts only when pi is in a herdr pane that Oriel shows from another machine: Oriel's token
-  `oriel-shown` is `remote` (`pane.get` on the pane's herdr socket). On Oriel's own Mac it is `1`,
+- It acts only when pi is in a herdr pane that Ovvi shows from another machine: Ovvi's token
+  `ovvi-shown` is `remote` (`pane.get` on the pane's herdr socket). On Ovvi's own Mac it is `1`,
   and pi's `pbcopy` already works.
-- It pipes the text into `oriel copy`. The command carries it through herdr to the Oriel that
+- It pipes the text into `ovvi copy`. The command carries it through herdr to the Ovvi that
   follows the session, which sets the Mac's clipboard (at most 1 MiB).
 - If the command is missing or exits with any code but 0, the caller copies as before:
-  `if (!(await orielCopy(text))) await copyToClipboard(text)`.
+  `if (!(await ovviCopy(text))) await copyToClipboard(text)`.
 
-Test: `node --experimental-strip-types herdr/oriel-copy.test.mts` (a fake herdr socket and a fake
-`oriel` command).
+Test: `node --experimental-strip-types herdr/ovvi-copy.test.mts` (a fake herdr socket and a fake
+`ovvi` command).
 
 ## Plugin
 

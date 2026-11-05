@@ -1,12 +1,12 @@
 /**
- * Copy through Oriel (a native herdr client for macOS) when pi runs on another machine: pi's own
- * copy there is OSC 52, which herdr hands only to its own TUI, so it never reaches Oriel's Mac.
+ * Copy through Ovvi (a native herdr client for macOS) when pi runs on another machine: pi's own
+ * copy there is OSC 52, which herdr hands only to its own TUI, so it never reaches Ovvi's Mac.
  *
- * When Oriel shows this pane from another machine (its token `oriel-shown` = `remote`; `1` means
- * Oriel's own Mac, where pbcopy works), the text goes to `oriel copy` on standard input: Oriel's
- * command, which Oriel writes on each machine where it opens a session.
+ * When Ovvi shows this pane from another machine (its token `ovvi-shown` = `remote`; `1` means
+ * Ovvi's own Mac, where pbcopy works), the text goes to `ovvi copy` on standard input: Ovvi's
+ * command, which Ovvi writes on each machine where it opens a session.
  *
- *   if (!(await orielCopy(text))) await copyToClipboard(text);
+ *   if (!(await ovviCopy(text))) await copyToClipboard(text);
  */
 
 import { execFile } from "node:child_process";
@@ -14,16 +14,16 @@ import net from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const ORIEL = join(homedir(), ".cache", "oriel", "bin", "oriel");
+const OVVI = join(homedir(), ".cache", "ovvi", "bin", "ovvi");
 
-/** Resolves true when Oriel takes the copy; false to copy as before (Oriel's Mac, no herdr, no Oriel). */
-export async function orielCopy(text: string): Promise<boolean> {
+/** Resolves true when Ovvi takes the copy; false to copy as before (Ovvi's Mac, no herdr, no Ovvi). */
+export async function ovviCopy(text: string): Promise<boolean> {
   const { HERDR_SOCKET_PATH: socket, HERDR_PANE_ID: pane } = process.env;
   if (!socket || !pane) return false;
   const got = await rpc(socket, "pane.get", { pane_id: pane }).catch(() => undefined);
-  if (got?.pane?.tokens?.["oriel-shown"] !== "remote") return false;
+  if (got?.pane?.tokens?.["ovvi-shown"] !== "remote") return false;
   return new Promise((ok) => {
-    const child = execFile(ORIEL, ["copy"], { timeout: 15_000 }, (e) => ok(!e));
+    const child = execFile(OVVI, ["copy"], { timeout: 15_000 }, (e) => ok(!e));
     child.stdin?.on("error", () => {}); // no command, or it ended early: the callback says false
     child.stdin?.end(text);
   });

@@ -21,27 +21,27 @@ export const sessionOf = (socket: string) =>
   /\/sessions\/([^/]+)\/herdr\.sock$/.exec(socket)?.[1] ?? "default";
 
 /**
- * Oriel (a native herdr client, which shows no herdr popups) shows the pane: it marks each pane in
- * view with the token `oriel-shown` (rewritten every 10 s, gone 30 s after Oriel quits). Read on
+ * Ovvi (a native herdr client, which shows no herdr popups) shows the pane: it marks each pane in
+ * view with the token `ovvi-shown` (rewritten every 10 s, gone 30 s after Ovvi quits). Read on
  * the pane's own herdr socket, so it holds for an agent on a remote machine too.
  */
-export const orielShows = (socket: string, pane: string) =>
+export const ovviShows = (socket: string, pane: string) =>
   rpc(socket, "pane.get", { pane_id: pane }).then(
-    (r) => Boolean(r?.pane?.tokens?.["oriel-shown"]),
+    (r) => Boolean(r?.pane?.tokens?.["ovvi-shown"]),
     () => false,
   );
 
-/** Oriel's command, which Oriel writes on each machine where it opens a session. */
-const ORIEL = join(homedir(), ".cache", "oriel", "bin", "oriel");
+/** Ovvi's command, which Ovvi writes on each machine where it opens a session. */
+const OVVI = join(homedir(), ".cache", "ovvi", "bin", "ovvi");
 
 /**
- * Asks the Oriel that follows this pane's session (`$HERDR_SESSION`) to float a pane of a session on
- * this machine. Resolves false when it did not float (no command here, no Oriel took it, an error).
+ * Asks the Ovvi that follows this pane's session (`$HERDR_SESSION`) to float a pane of a session on
+ * this machine. Resolves false when it did not float (no command here, no Ovvi took it, an error).
  */
-export const orielFloat = (pane: string, target: { socket: string; pane: string }) =>
+export const ovviFloat = (pane: string, target: { socket: string; pane: string }) =>
   new Promise<boolean>((ok) =>
     execFile(
-      ORIEL,
+      OVVI,
       ["--pane", pane, "float", `${sessionOf(target.socket)}/${target.pane}`],
       { timeout: 15_000 },
       (e) => ok(!e),

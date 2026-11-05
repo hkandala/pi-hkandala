@@ -5,7 +5,7 @@ Move prompts between pi's editor and your clipboard.
 - **`ctrl+shift+s`**: copies the whole prompt to the clipboard and clears the editor. Use it to set a half-written prompt aside: send something else, then paste it back. Pasted content is copied in full, not as `[paste #1]` markers. Undo (`ctrl+-` by default) brings the prompt back if you pressed it by accident.
 - **Paste twice to expand**: pi collapses long pastes (over 10 lines or 1000 characters) into a marker like `[paste #1 +40 lines]`. Paste the same text again with the cursor at that marker, and the marker becomes the full text, ready to edit. Pasting it elsewhere adds a second marker as usual. Short pastes are unchanged.
 
-With pi on another machine in a pane that [Oriel](https://github.com/hkandala/oriel) shows, the copy lands on Oriel's Mac ([herdr/](../../herdr/README.md#oriel-copy)).
+With pi on another machine in a pane that [Ovvi](https://ovvi.dev) shows, the copy lands on Ovvi's Mac ([herdr/](../../herdr/README.md#ovvi-copy)).
 
 Together they round-trip a long prompt: `ctrl+shift+s` to set it aside, then paste twice to get it back editable. A clipboard manager helps, because it keeps every prompt you set aside.
 

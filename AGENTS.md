@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Personal pi resources. Each `extensions/<name>/` is a standalone pi package (except that the ones that copy import `herdr/oriel-copy.ts`, so they load from the repo); the root package loads everything and is never published.
+Personal pi resources. Each `extensions/<name>/` is a standalone pi package (except that the ones that copy import `herdr/ovvi-copy.ts`, so they load from the repo); the root package loads everything and is never published.
 
 The root `package.json` intentionally has no `pi` manifest: pi then auto-discovers top-level `extensions/`, `skills/`, `prompts/`, and `themes/`. Adding a manifest would stop new folders from loading.
 
@@ -12,11 +12,11 @@ The root `package.json` intentionally has no `pi` manifest: pi then auto-discove
 
 ## Skills
 
-`skills/<name>/` holds skills copied unchanged from upstream repos, and our own (`oriel`). Add a row to the Skills table in the root `README.md`; for a copied skill, name the source and commit, so it can be re-synced.
+`skills/<name>/` holds skills copied unchanged from upstream repos, and our own. Add a row to the Skills table in the root `README.md`; for a copied skill, name the source and commit, so it can be re-synced.
 
 ## herdr
 
-`herdr/` holds what extensions share for herdr: `patch/<version>/` patches herdr's pi integration (one patch covering every extension's needs, with `patch/test.mts`), `oriel-copy.ts` copies through Oriel (every extension that copies calls it before pi's `copyToClipboard`), and `plugin/` is a herdr plugin (a manifest only) with popup panes that run `POPUP_COMMAND` (the caller shows how to close a popup; herdr requires each pane to have a non-blank title). Extensions must work without either. Extend the existing patch or plugin rather than adding one per extension.
+`herdr/` holds what extensions share for herdr: `patch/<version>/` patches herdr's pi integration (one patch covering every extension's needs, with `patch/test.mts`), `ovvi-copy.ts` copies through Ovvi (every extension that copies calls it before pi's `copyToClipboard`), and `plugin/` is a herdr plugin (a manifest only) with popup panes that run `POPUP_COMMAND` (the caller shows how to close a popup; herdr requires each pane to have a non-blank title). Extensions must work without either. Extend the existing patch or plugin rather than adding one per extension.
 
 ## Rules
 

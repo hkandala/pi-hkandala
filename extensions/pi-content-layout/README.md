@@ -116,7 +116,7 @@ In fullscreen TUI mode, click a reply's `●` to copy the reply as written, in m
 
 In fullscreen TUI mode, selecting text copies it without the layout's decoration: box edges and sides, tree lines, bullets, timestamps, and `↓`/`↑` lines. Text wrapped to fit (assistant text, boxes, thinking on its own) joins back into its original lines. Tool output and code keep their lines, dedented to column 0: a read or write copies without its line numbers, a diff as its code after the edit (no line numbers, `+`/`-`, or removed lines), wherever the selection starts and with wrapped lines joined back, and a code block in assistant text without its extra indent. Lines cut off with `…` copy as shown (`ctrl+shift+w` wraps them to show them whole).
 
-With pi on another machine in a pane that [Oriel](https://github.com/hkandala/oriel) shows, the copy lands on Oriel's Mac ([herdr/](../../herdr/README.md#oriel-copy)).
+With pi on another machine in a pane that [Ovvi](https://ovvi.dev) shows, the copy lands on Ovvi's Mac ([herdr/](../../herdr/README.md#ovvi-copy)).
 
 ## Timestamps
 

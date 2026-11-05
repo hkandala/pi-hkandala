@@ -38,7 +38,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { orielCopy } from "../../herdr/oriel-copy.ts";
+import { ovviCopy } from "../../herdr/ovvi-copy.ts";
 import { diffOf, highlighted, numbered, untab } from "./code.ts";
 import { copied } from "./copy.ts";
 import {
@@ -1140,7 +1140,7 @@ export default function (pi: ExtensionAPI) {
       return { render: () => [], invalidate() {} };
     });
     // pi hands a selection's text to copySelection; the layout's decoration comes off first, and
-    // Oriel takes it when it shows this pane on another machine (herdr/oriel-copy.ts). `tui`
+    // Ovvi takes it when it shows this pane on another machine (herdr/ovvi-copy.ts). `tui`
     // is pi's proxy to the current renderer, and a TUI mode switch makes a new one: each gets the
     // wrapper once (the marker says which), and only the one that has it is restored.
     const hookCopy = () => {
@@ -1155,7 +1155,7 @@ export default function (pi: ExtensionAPI) {
           const start = t.getSelectionBounds?.()?.start.col ?? 0;
           plain = copied(text, start, t.terminal?.columns ?? 80, reserve());
         } catch {} // copy it as drawn
-        return (await orielCopy(plain)) || copy(plain);
+        return (await ovviCopy(plain)) || copy(plain);
       };
       restores.push(() => {
         if (t.clCopy !== marker) return;
@@ -1546,7 +1546,7 @@ export default function (pi: ExtensionAPI) {
               .map((c) => c.text!.trim())
               .join("\n\n");
             if (source) {
-              orielCopy(source)
+              ovviCopy(source)
                 .then((taken) => taken || copyToClipboard(source))
                 .then(
                   () => {
