@@ -42,14 +42,14 @@ follow from it: the folder `~/.pi/agent/pi-herd/`, the env prefix `PI_HERD_`, th
 Everything lives in `~/.pi/agent/pi-herd/`. The folders are created (`mkdir -p`) before they are
 watched.
 
-| File                           | Written by                                                                                                                               | Contents                                                                                              |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `agents/<id>.json`             | the agent, on `session_start` (atomic write: temp file + rename), again when its name changes, and when the session ends (`ended`).      | the agent record                                                                                      |
-| `messages/<toId>/<msgId>.json` | the sender, once. The temp file is `.<msgId>.tmp`, then renamed.                                                                         | one message. It is never moved or changed, so it can always be read back.                             |
-| `attached/<pid>`               | the attach popup's shell (named by its pid), removed by the same shell when the popup closes (section 11)                                | the agent the popup shows: its id, socket, pane and name, then the agent that opened it, one per line |
-| `stopped/<id>`                 | whoever stops the agent (`agent_stop`), or the agent itself when it ends with the agent that started it; removed when it resumes         | the time; lists show the ended agent as `stopped`, not `exited`                                       |
-| `tree.jsonl`                   | the agent, appended on `session_start` when it has a parent (`PI_HERD_PARENT`: started or resumed with `agent_start`). Never cleaned up. | `{parent, id, session}` per line: who started whom, and its session file                              |
-| `costs.json`                   | whichever agent counts its subagents, at most every 30 s                                                                                 | a cache: each session file's cost and how many bytes of it were read (pi only appends)                |
+| File                           | Written by                                                                                                                          | Contents                                                                                              |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `agents/<id>.json`             | the agent, on `session_start` (atomic write: temp file + rename), again when its name changes, and when the session ends (`ended`). | the agent record                                                                                      |
+| `messages/<toId>/<msgId>.json` | the sender, once. The temp file is `.<msgId>.tmp`, then renamed.                                                                    | one message. It is never moved or changed, so it can always be read back.                             |
+| `attached/<pid>`               | the attach popup's shell (named by its pid), removed by the same shell when the popup closes (section 11)                           | the agent the popup shows: its id, socket, pane and name, then the agent that opened it, one per line |
+| `stopped/<id>`                 | whoever stops the agent (`agent_stop`), or the agent itself when it ends with the agent that started it; removed when it resumes    | the time; lists show the ended agent as `stopped`, not `exited`                                       |
+| `children/<id>.jsonl`          | each agent that `<id>` started or resumed (`PI_HERD_PARENT`), appending on its own `session_start`. Never cleaned up.               | `{id, session}` per line: the agent and its session file                                              |
+| `costs.json`                   | whichever agent counts its subagents, at most every 30 s                                                                            | a cache: each session file's cost and how many bytes of it were read (pi only appends)                |
 
 **Ids.** `<id>` is the pi session id.
 
@@ -530,7 +530,7 @@ The only link to other extensions is the event bus.
   { agents: { id, name, state, since, live, cwd, parent, mine, watched, sent, received }[],
     watching: number, // watches running
     waiting: number, // watches running while this agent is idle, else 0
-    // the agents below this one in tree.jsonl (any depth, ended ones too, each once): how many,
+    // the agents below this one in children/ (any depth, ended ones too, each once): how many,
     // and their session files' costs summed (as pi-footer sums its own)
     subagents: { cost: number, count: number },
     placeholder?: string } // while a popup shows this agent: "ctrl+b q or /detach to close"

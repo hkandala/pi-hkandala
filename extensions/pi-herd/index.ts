@@ -62,6 +62,7 @@ import {
   alive,
   allAgents,
   ATTACHED,
+  CHILDREN,
   cleanupDaily,
   derived,
   isJson,
@@ -1553,6 +1554,7 @@ export default function (pi: ExtensionAPI) {
   const register = (c: ExtensionContext, id: string, old?: Agent) => {
     mkdirSync(AGENTS, { recursive: true });
     mkdirSync(STOPPED, { recursive: true });
+    mkdirSync(CHILDREN, { recursive: true });
     unmarkStopped(id); // live again (resumed)
     me = {
       id,
@@ -1565,7 +1567,7 @@ export default function (pi: ExtensionAPI) {
       session: c.sessionManager.getSessionFile(),
     };
     writeAgent(me);
-    if (parentId) addStarted(parentId, me); // the tree: counts it and its cost above it, for good
+    if (parentId) addStarted(parentId, me); // its parent's list: counts it and its cost, for good
   };
   /**
    * The widget: right-aligned above the prompt while a popup shows this agent. It also hands over

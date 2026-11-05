@@ -3,7 +3,7 @@
  * ended), messages/<toId>/<msgId>.json (one file per message), attached/<pid> (a popup shell and
  * the agent it shows), stopped/<id> (it was stopped, or ended with the agent that started it),
  * sessions/ (the pi sessions of the agents agent_start starts: out of the user's /resume list),
- * tree.jsonl (who started whom, never cleaned up), costs.json (a cache of session files' costs),
+ * children/<id>.jsonl (the agents an agent started or resumed, never cleaned up), costs.json (a cache of session files' costs),
  * .cleanup (when the daily cleanup last ran).
  * Also the agents' derived names, the agents below one and their costs, and the cleanup.
  */
@@ -35,7 +35,7 @@ export const MESSAGES = join(DIR, "messages");
 export const ATTACHED = join(DIR, "attached");
 export const STOPPED = join(DIR, "stopped");
 export const SESSIONS = join(DIR, "sessions");
-const TREE = join(DIR, "tree.jsonl");
+export const CHILDREN = join(DIR, "children");
 const COSTS = join(DIR, "costs.json");
 const STAMP = join(DIR, ".cleanup");
 const DAY = 86_400_000;
@@ -126,30 +126,38 @@ const linesFrom = (path: string, at: number) => {
   }
 };
 
-/** `a` started (or resumed) under `parent`: a line in tree.jsonl, which only grows. */
+/** `a` started (or resumed) under `parent`: a line in children/<parent>.jsonl, which only grows. */
 export const addStarted = (parent: string, a: Agent) =>
-  appendFileSync(TREE, `${JSON.stringify({ parent, id: a.id, session: a.session })}\n`);
-// tree.jsonl as read so far: each agent's children, and its session file.
-const tree = { at: 0, kids: new Map<string, Set<string>>(), session: new Map<string, string>() };
-/** The session files of every agent started below `id` (any depth, live or ended, each once). */
-const startedBelow = (id: string) => {
-  const r = linesFrom(TREE, tree.at);
-  tree.at = r.at;
+  appendFileSync(
+    join(CHILDREN, `${parent}.jsonl`),
+    `${JSON.stringify({ id: a.id, session: a.session })}\n`,
+  );
+// Each children file as read so far: its agents' session files, by id.
+const read = new Map<string, { at: number; kids: Map<string, string> }>();
+const childrenOf = (id: string) => {
+  const path = join(CHILDREN, `${id}.jsonl`);
+  const c = read.get(path) ?? { at: 0, kids: new Map<string, string>() };
+  let size = 0;
+  try {
+    size = statSync(path).size;
+  } catch {}
+  if (size <= c.at) return c.kids;
+  const r = linesFrom(path, c.at);
   for (const l of r.lines) {
     const e = parse(l);
-    if (typeof e?.parent !== "string" || typeof e.id !== "string") continue;
-    tree.kids.set(e.parent, (tree.kids.get(e.parent) ?? new Set()).add(e.id));
-    if (typeof e.session === "string") tree.session.set(e.id, e.session);
+    if (typeof e?.id === "string") c.kids.set(e.id, typeof e.session === "string" ? e.session : "");
   }
-  const seen = new Set<string>([id]);
-  const todo = [id];
-  for (const p of todo)
-    for (const k of tree.kids.get(p) ?? [])
-      if (!seen.has(k)) {
-        seen.add(k);
-        todo.push(k);
-      }
-  return todo.slice(1).map((k) => tree.session.get(k) ?? "");
+  c.at = r.at;
+  read.set(path, c);
+  return c.kids;
+};
+/** The session files of every agent started below `id` (any depth, live or ended, each once). */
+const startedBelow = (id: string) => {
+  const found = new Map<string, string>([[id, ""]]);
+  for (const p of found.keys())
+    for (const [k, session] of childrenOf(p)) if (!found.has(k)) found.set(k, session);
+  found.delete(id);
+  return [...found.values()];
 };
 // Each session file's cost and how far it was read (pi only appends), kept in costs.json, a cache
 // every agent shares: a big tree's files add up to gigabytes.
