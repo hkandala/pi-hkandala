@@ -58,6 +58,7 @@ import {
 } from "./herdr.ts";
 import {
   AGENTS,
+  addStarted,
   alive,
   allAgents,
   ATTACHED,
@@ -76,8 +77,8 @@ import {
   rm,
   SESSIONS,
   short,
+  subagents,
   STOPPED,
-  SUBAGENTS,
   unmarkStopped,
   writeAgent,
   writeAtomic,
@@ -312,7 +313,7 @@ export default function (pi: ExtensionAPI) {
   };
   const children = (agents = liveAgents()) => agents.filter((a) => me && a.parent === me.id);
   /** Whether `a` is below this agent in the tree of agents started with agent_start (byId: the tree). */
-  const below = (a: Agent, byId: Map<string, { parent?: string }>) => {
+  const below = (a: Agent, byId: Map<string, Agent>) => {
     for (let p = a.parent, n = 0; p && n < 100; p = byId.get(p)?.parent, n++)
       if (p === me?.id) return true;
     return false;
@@ -336,47 +337,6 @@ export default function (pi: ExtensionAPI) {
     ...r,
   });
 
-  /** This session's cost so far, counted as pi-footer does: every response and usage entry. */
-  const ownCost = (c: ExtensionContext) => {
-    type Usage = { cost?: { total?: number } };
-    type E = { type: string; usage?: Usage; message?: { role: string; usage?: Usage } };
-    let sum = 0;
-    for (const e of c.sessionManager.getEntries() as E[]) {
-      const m = e.type === "message" && e.message?.role !== "user" ? e.message : undefined;
-      sum += (e.type === "usage" ? e.usage : m?.usage)?.cost?.total ?? 0;
-    }
-    return sum;
-  };
-  /**
-   * The ended agents below this one, by id, with their parent and cost: subagents/<id>.json keeps
-   * them once the daily cleanup deletes their records, so the count and cost stay complete.
-   */
-  type Settled = { parent?: string; cost?: number };
-  let settled = new Map<string, Settled>();
-  const settle = (list: Agent[]) => {
-    let changed = false;
-    for (const a of list) {
-      const s = settled.get(a.id);
-      if (s && s.cost === a.cost && s.parent === a.parent) continue;
-      settled.set(a.id, { parent: a.parent, cost: a.cost });
-      changed = true;
-    }
-    if (changed && me) writeAtomic(SUBAGENTS, `${me.id}.json`, Object.fromEntries(settled));
-  };
-  /** The records below this one (any depth), linked also through settled agents without one. */
-  const subsOf = (all: Agent[]) => {
-    const chain = new Map<string, { parent?: string }>(settled);
-    for (const a of all) chain.set(a.id, a);
-    return all.filter((a) => below(a, chain));
-  };
-  /** Puts this session's cost in its record, for the agents above it to add up. */
-  const publishCost = (c: ExtensionContext) => {
-    const cost = ownCost(c);
-    if (!me || cost === me.cost) return;
-    me.cost = cost;
-    writeAgent(me);
-  };
-
   // herdr (optional patch, see herdr/README.md): working while watches run. On every working →
   // idle change herdr's pane goes idle at once, and an agent watching this one takes that as
   // finished: herdr must never see a gap.
@@ -389,16 +349,12 @@ export default function (pi: ExtensionAPI) {
   /**
    * Lists the agents this one started and the ones it has watched, and below them the agents they
    * started (any depth). Listed ones that are gone stay listed, as stopped or exited (like
-   * finished jobs). Returns the live ones (to follow), and every agent started below this one
-   * (any depth), live or ended, and the settled ones (also those whose records are gone): their
-   * costs add to this one's.
+   * finished jobs). Returns the live ones (to follow).
    */
   const updateListed = (all: Agent[]) => {
     const agents = all.filter(isLive);
     const byId = new Map(all.map((a) => [a.id, a]));
-    const subs = subsOf(all);
-    const liveIds = new Set(agents.map((a) => a.id));
-    settle(subs.filter((a) => !liveIds.has(a.id)));
+    const subs = all.filter((a) => below(a, byId));
     const live = new Map(
       agents.filter((a) => a.parent === me!.id || g.watched.has(a.id)).map((a) => [a.id, a]),
     );
@@ -425,10 +381,7 @@ export default function (pi: ExtensionAPI) {
         const at = byId.get(id)?.ended ?? Date.now();
         g.ended.set(id, { at, stopped: isStopped(id) });
       }
-    // Settled stays counted (also one resumed elsewhere since), with its record's cost if it has one.
-    const ids = new Set(subs.map((a) => a.id));
-    const gone = [...settled].filter(([id]) => !ids.has(id)).map(([id, s]) => byId.get(id) ?? s);
-    return { live, subs: [...subs, ...gone] };
+    return live;
   };
   /** Follows the live listed agents, and only them. */
   const syncFollows = (live: Map<string, Agent>) => {
@@ -452,18 +405,15 @@ export default function (pi: ExtensionAPI) {
       watched: g.watches.has(a.id),
     });
   };
-  /** Sends herd:update (pi-footer, pi-working) when it changed. subs: the agents below this one. */
-  const publish = (subs: { cost?: number }[]) => {
+  /** Sends herd:update (pi-footer, pi-working) when it changed. */
+  const publish = () => {
     const n = [...g.watches.values()].filter((w) => !w.ending).length;
     const update = {
       agents: byGroup(rows),
       watching: n,
       waiting: busy ? 0 : n,
       // The agents below this one, ended ones too: what they cost, and how many.
-      subagents: {
-        cost: subs.reduce((sum, a) => sum + (typeof a.cost === "number" ? a.cost : 0), 0),
-        count: subs.length,
-      },
+      subagents: subagents(me!.id),
       // While a popup shows this agent: pi-footer's prompt box shows it as its placeholder.
       placeholder: inPopup() ? CLOSE_HINT : undefined,
     };
@@ -490,14 +440,12 @@ export default function (pi: ExtensionAPI) {
    */
   const refresh = (all?: Agent[]) => {
     if (!me) return;
-    const leaf = !all && !g.listed.size && !g.watches.size && !waiters.size && !settled.size;
-    const { live, subs } = leaf
-      ? { live: new Map<string, Agent>(), subs: [] }
-      : updateListed(all ?? allAgents());
+    const leaf = !all && !g.listed.size && !g.watches.size && !waiters.size;
+    const live = leaf ? new Map<string, Agent>() : updateListed(all ?? allAgents());
     syncFollows(live);
     // In first-listed order for the dashboard; herd:update sends them grouped (pi-footer's order).
     rows = [...g.listed.values()].map(listedRow);
-    publish(subs);
+    publish();
     dashboard?.();
     syncHerdr();
   };
@@ -1605,10 +1553,6 @@ export default function (pi: ExtensionAPI) {
   const register = (c: ExtensionContext, id: string, old?: Agent) => {
     mkdirSync(AGENTS, { recursive: true });
     mkdirSync(STOPPED, { recursive: true });
-    mkdirSync(SUBAGENTS, { recursive: true });
-    settled = new Map(
-      Object.entries(readJson<Record<string, Settled>>(join(SUBAGENTS, `${id}.json`)) ?? {}),
-    );
     unmarkStopped(id); // live again (resumed)
     me = {
       id,
@@ -1619,9 +1563,9 @@ export default function (pi: ExtensionAPI) {
       parent: parentId,
       herdr: { socket, pane },
       session: c.sessionManager.getSessionFile(),
-      cost: ownCost(c),
     };
     writeAgent(me);
+    if (parentId) addStarted(parentId, me); // the tree: counts it and its cost above it, for good
   };
   /**
    * The widget: right-aligned above the prompt while a popup shows this agent. It also hands over
@@ -1719,7 +1663,6 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     busy = false;
-    publishCost(c);
     // Not when it is still in its hooks: then it reaches the model next.
     if (
       pending &&
@@ -1769,7 +1712,7 @@ export default function (pi: ExtensionAPI) {
     pending = undefined;
     clearTimeout(pendingTimer);
   };
-  pi.on("session_shutdown", (event, c) => {
+  pi.on("session_shutdown", (event) => {
     closeDashboard?.();
     stopInput?.();
     stopInput = undefined;
@@ -1785,11 +1728,8 @@ export default function (pi: ExtensionAPI) {
     clearInterval(parentTimer);
     waking = undefined;
     if (me && event.reason !== "reload") {
-      // The agents below it end with it: keep their costs now, in case their records go first.
-      settle(subsOf(allAgents()));
-      // The record stays, ended: the agents above it still list it and count its cost.
-      if (readAgent(me.id)?.pid === process.pid)
-        writeAgent({ ...me, cost: ownCost(c), ended: Date.now() });
+      // The record stays, ended: the agents above it still list it.
+      if (readAgent(me.id)?.pid === process.pid) writeAgent({ ...me, ended: Date.now() });
       reset();
       g.me = undefined;
       g.herdr = undefined; // the next session's runtime starts with nothing pending

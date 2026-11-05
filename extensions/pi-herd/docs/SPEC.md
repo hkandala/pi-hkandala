@@ -42,13 +42,14 @@ follow from it: the folder `~/.pi/agent/pi-herd/`, the env prefix `PI_HERD_`, th
 Everything lives in `~/.pi/agent/pi-herd/`. The folders are created (`mkdir -p`) before they are
 watched.
 
-| File                           | Written by                                                                                                                                  | Contents                                                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `agents/<id>.json`             | the agent, on `session_start` (atomic write: temp file + rename), again when its name or cost changes, and when the session ends (`ended`). | the agent record                                                                                                                                 |
-| `messages/<toId>/<msgId>.json` | the sender, once. The temp file is `.<msgId>.tmp`, then renamed.                                                                            | one message. It is never moved or changed, so it can always be read back.                                                                        |
-| `attached/<pid>`               | the attach popup's shell (named by its pid), removed by the same shell when the popup closes (section 11)                                   | the agent the popup shows: its id, socket, pane and name, then the agent that opened it, one per line                                            |
-| `stopped/<id>`                 | whoever stops the agent (`agent_stop`), or the agent itself when it ends with the agent that started it; removed when it resumes            | the time; lists show the ended agent as `stopped`, not `exited`                                                                                  |
-| `subagents/<id>.json`          | the agent, when an agent below it (any depth) has ended or its cost changed since, and for all of them when it ends                         | the agents below it that ended, by id: their parent and cost. herd:update's `subagents` counts them too, after the cleanup deletes their records |
+| File                           | Written by                                                                                                                               | Contents                                                                                              |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `agents/<id>.json`             | the agent, on `session_start` (atomic write: temp file + rename), again when its name changes, and when the session ends (`ended`).      | the agent record                                                                                      |
+| `messages/<toId>/<msgId>.json` | the sender, once. The temp file is `.<msgId>.tmp`, then renamed.                                                                         | one message. It is never moved or changed, so it can always be read back.                             |
+| `attached/<pid>`               | the attach popup's shell (named by its pid), removed by the same shell when the popup closes (section 11)                                | the agent the popup shows: its id, socket, pane and name, then the agent that opened it, one per line |
+| `stopped/<id>`                 | whoever stops the agent (`agent_stop`), or the agent itself when it ends with the agent that started it; removed when it resumes         | the time; lists show the ended agent as `stopped`, not `exited`                                       |
+| `tree.jsonl`                   | the agent, appended on `session_start` when it has a parent (`PI_HERD_PARENT`: started or resumed with `agent_start`). Never cleaned up. | `{parent, id, session}` per line: who started whom, and its session file                              |
+| `costs.json`                   | whichever agent counts its subagents, at most every 30 s                                                                                 | a cache: each session file's cost and how many bytes of it were read (pi only appends)                |
 
 **Ids.** `<id>` is the pi session id.
 
@@ -57,7 +58,7 @@ watched.
   or a name.
 - **Message ids** are `<epochMs>-<4 base36 chars>`, so a folder's files sort by send time.
 
-**Agent record.** Its identity, its own cost (what the agents above it add up), and once it ended, when:
+**Agent record.** Its identity, and once it ended, when:
 
 ```json
 { "id": "01a0e7…", "name": "auth-reviewer", "pid": 4242, "cwd": "/repo", "startedAt": 1790…,
@@ -71,8 +72,7 @@ watched.
 | `name`    | pi's session name, from `--name` or `/name`. Optional. Updated on `session_info_changed`.                                                                          |
 | `parent`  | set when `agent_start` started this agent (from `PI_HERD_PARENT`)                                                                                                  |
 | `herdr`   | from the agent's own `HERDR_SOCKET_PATH` and `HERDR_PANE_ID`. Every herdr command aimed at this agent goes to that socket: status, events, capture, attach, close. |
-| `cost`    | its own session's cost in $ (not its agents'), written when each run settles                                                                                       |
-| `ended`   | when its session ended. The record stays (7 days): lists show it as ended, and the agents above it keep counting its cost. Live also needs no `ended`.             |
+| `ended`   | when its session ended. The record stays (7 days): lists show it as ended, and the agents above it keep listing it. Live also needs no `ended`.                    |
 | `session` | the pi session file (`ctx.sessionManager.getSessionFile()`). Absent with `--no-session`. Other agents read it for transcripts (section 8).                         |
 
 **Liveness and cleanup:**
@@ -494,7 +494,7 @@ Agents (agent_* tools):
   list.
 - **`/reload`**: the record stays. The queued ids and the watches live on `globalThis`.
 - **Any other `session_shutdown`** (quit, `/new`, `/resume`, `/fork`, SIGTERM/SIGHUP): mark the
-  record ended (with the final cost) and drop the watches. Nothing asks for confirmation.
+  record ended and drop the watches. Nothing asks for confirmation.
 - **Started agents die with their parent.**
   - A clean parent exit marks the parent's record ended. The started agent sees that through `fs.watch` on
     `agents/`.
@@ -530,7 +530,8 @@ The only link to other extensions is the event bus.
   { agents: { id, name, state, since, live, cwd, parent, mine, watched, sent, received }[],
     watching: number, // watches running
     waiting: number, // watches running while this agent is idle, else 0
-    // the agents below this one (any depth, ended ones too): their own costs summed, and how many
+    // the agents below this one in tree.jsonl (any depth, ended ones too, each once): how many,
+    // and their session files' costs summed (as pi-footer sums its own)
     subagents: { cost: number, count: number },
     placeholder?: string } // while a popup shows this agent: "ctrl+b q or /detach to close"
   ```
