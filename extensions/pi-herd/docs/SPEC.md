@@ -697,7 +697,15 @@ only names what it shows: `pi agent` (herdr requires a non-blank title).
     `ui_busy` until that agent exits.
   - The popup takes all keyboard input and closes when the attach detaches (`ctrl+b q`).
   - If another popup, Settings or copy mode is up, herdr returns `ui_busy`, and viewing shows that
-    error as it is.
+    error as it is. One exception: while a live popup shell's marker names an opener on this
+    server, the open popup is that pi-herd popup, and the user isn't in it (opens from inside a
+    popup switch it). It shows on no client they use, so viewing calls `popup.close` and opens
+    again. Measured on 0.9.5: the popup's process runs with no client attached, it closes when its
+    process exits, `popup.close` kills it, and the next open succeeds. Only there is the popup known
+    to be ours, so `/detach` still ends the attach instead (§11.4).
+  - When Ovvi (a native herdr client that shows neither popups nor herdr's focus) shows the clicked
+    pane (its token `ovvi-shown`), viewing runs `ovvi float <session>/<pane>`. If that fails, it
+    says why and opens nothing: a popup there would be unseen and keep the session `ui_busy`.
 
 - **Install.** The user installs the plugin once (`herdr plugin install hkandala/pi-hkandala/herdr/plugin`,
   or `herdr plugin link` from a checkout). The npm package doesn't ship it, and pi-herd never

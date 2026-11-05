@@ -36,15 +36,25 @@ const OVVI = join(homedir(), ".cache", "ovvi", "bin", "ovvi");
 
 /**
  * Asks the Ovvi that follows this pane's session (`$HERDR_SESSION`) to float a pane of a session on
- * this machine. Resolves false when it did not float (no command here, no Ovvi took it, an error).
+ * this machine. Resolves with why it did not float (no command here, no Ovvi took it, Ovvi's error),
+ * or undefined when it floated.
  */
 export const ovviFloat = (pane: string, target: { socket: string; pane: string }) =>
-  new Promise<boolean>((ok) =>
+  new Promise<string | undefined>((ok) =>
     execFile(
       OVVI,
       ["--pane", pane, "float", `${sessionOf(target.socket)}/${target.pane}`],
       { timeout: 15_000 },
-      (e) => ok(!e),
+      (e, _out, err) =>
+        ok(
+          !e
+            ? undefined
+            : (e as NodeJS.ErrnoException).code === "ENOENT"
+              ? "no Ovvi command on this machine"
+              : e.killed
+                ? "Ovvi didn't answer in 15 s"
+                : (err.trim() || `ovvi exited with ${e.code}`).replace(/^ovvi: /, ""),
+        ),
     ),
   );
 

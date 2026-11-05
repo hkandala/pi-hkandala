@@ -928,8 +928,8 @@ export default function (pi: ExtensionAPI) {
    * opened the popup (its pane is behind the popup: a 5th marker line, kept across switches; an
    * older runtime's marker has none, and switches as before), or closes and herdr focuses the
    * agent's pane when it is on the popup's server. Otherwise, when Ovvi shows this pane (its mark),
-   * Ovvi floats the agent's pane (`ovvi float`). If it does not, herdr focuses its pane
-   * when it is on this agent's server, or it opens a popup (an agent in the hidden session). Not
+   * Ovvi floats the agent's pane (`ovvi float`), or says why it can't. Otherwise herdr focuses its
+   * pane when it is on this agent's server, or it opens a popup (an agent in the hidden session). Not
    * from the hidden session outside a popup: nobody sees a popup there, and it would take the
    * agent's pane away from wherever it shows.
    * ponytail: the focus is for herdr 0.9.3, which shows a popup that attaches a pane of its own
@@ -958,7 +958,12 @@ export default function (pi: ExtensionAPI) {
       endAttach();
       return;
     }
-    if ((await ovviShows(socket, pane)) && (await ovviFloat(pane, a.herdr))) return;
+    if (await ovviShows(socket, pane)) {
+      // Ovvi shows neither herdr's popups nor its focus: a popup would open unseen and block the next.
+      const error = await ovviFloat(pane, a.herdr);
+      if (error) ctx.ui.notify(`Ovvi didn't float ${label(a)}: ${error}`, "warning");
+      return;
+    }
     if (socket === HIDDEN)
       return ctx.ui.notify(
         `This agent runs in herdr session ${SESSION}, where a popup wouldn't show: open ${label(a)} from your main herdr session.`,
@@ -971,11 +976,29 @@ export default function (pi: ExtensionAPI) {
       name: label(a),
       opener: me.id,
     });
-    try {
-      await rpc(socket, "plugin.pane.open", {
+    const open = () =>
+      rpc(socket, "plugin.pane.open", {
         plugin_id: PLUGIN,
         entrypoint: "attach",
         env: { POPUP_COMMAND: command },
+      });
+    try {
+      await open().catch(async (e) => {
+        // herdr shows one popup at a time. While a popup shell of ours that an agent on this server
+        // opened lives, the open popup is that one, and the user at this pane isn't in it (opens from
+        // inside a popup switch it, above): it shows on no client of theirs. Close it, open this one.
+        if (
+          e.code !== "ui_busy" ||
+          !list(ATTACHED).some((f) => {
+            const opener = marker(join(ATTACHED, f))[4];
+            return alive(parseInt(f)) && opener && readAgent(opener)?.herdr.socket === socket;
+          })
+        )
+          throw e;
+        await rpc(socket, "popup.close").catch(() => {
+          throw e;
+        });
+        return open();
       });
     } catch (err) {
       const e = err as Error & { code?: string };
