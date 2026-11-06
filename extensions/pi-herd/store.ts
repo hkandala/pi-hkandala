@@ -95,9 +95,10 @@ export const rm = (path: string) => {
     unlinkSync(path);
   } catch {}
 };
-/** Writes a file atomically: a dot-named temp file, then rename. */
+/** Writes a file atomically: a dot-named temp file of this process, then rename (many pi processes write
+ * the same file: a shared temp name lets one rename another's file away). */
 export const writeAtomic = (path: string, name: string, data: unknown) => {
-  const tmp = join(path, `.${name}.tmp`);
+  const tmp = join(path, `.${name}.${process.pid}.tmp`);
   writeFileSync(tmp, JSON.stringify(data));
   renameSync(tmp, join(path, name));
 };
@@ -192,7 +193,9 @@ export const subagents = (id: string) => {
   const files = startedBelow(id);
   const cost = files.reduce((sum, f) => sum + sessionCost(f), 0);
   if (dirty && Date.now() - saved > 30_000) {
-    writeAtomic(DIR, "costs.json", Object.fromEntries(costs));
+    try {
+      writeAtomic(DIR, "costs.json", Object.fromEntries(costs)); // a cache: a failed write only costs a reread
+    } catch {}
     saved = Date.now();
     dirty = false;
   }
