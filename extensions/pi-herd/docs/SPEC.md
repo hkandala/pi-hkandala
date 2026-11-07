@@ -72,7 +72,7 @@ watched.
 | `name`    | pi's session name, from `--name` or `/name`. Optional. Updated on `session_info_changed`.                                                                          |
 | `parent`  | set when `agent_start` started this agent (from `PI_HERD_PARENT`)                                                                                                  |
 | `herdr`   | from the agent's own `HERDR_SOCKET_PATH` and `HERDR_PANE_ID`. Every herdr command aimed at this agent goes to that socket: status, events, capture, attach, close. |
-| `ended`   | when its session ended. The record stays (7 days): lists show it as ended, and the agents above it keep listing it. Live also needs no `ended`.                    |
+| `ended`   | when its session ended. The record stays: lists show it as ended, and the agents above it keep listing it. Live also needs no `ended`.                             |
 | `session` | the pi session file (`ctx.sessionManager.getSessionFile()`). Absent with `--no-session`. Other agents read it for transcripts (section 8).                         |
 
 **Liveness and cleanup:**
@@ -102,7 +102,7 @@ watched.
 - **Created names must be unique** among live agents' names. Otherwise `agent_start` fails, so the caller
   picks another name.
 - **Session switches.** `/new`, `/resume` and `/fork` end one agent and start another: the old
-  record is marked ended (it stays 7 days) and the new id registers. `PI_HERD_PARENT` stays in the env, so a spawned agent
+  record is marked ended (it stays) and the new id registers. `PI_HERD_PARENT` stays in the env, so a spawned agent
   keeps its parent.
 
 ## 3. Status
@@ -189,7 +189,7 @@ and `pane.agent_status_changed` events). pi-herd adds no status logic.
   pi-cache-keep keeps the hook sections in their runs.
 - **Delivered marker.** When pi hands the message to the model (pi's `message_start` for the
   custom message, or for that first user prompt), the recipient writes an empty `messages/<myId>/<msgId>.delivered`. A watch on
-  that message arms only then (section 6). The daily cleanup deletes markers with their messages.
+  that message arms only then (section 6). Messages and their markers are kept.
 - **Model-facing `content`**, one block per message:
 
   ```
@@ -507,9 +507,9 @@ Agents (agent_* tools):
 - **Daily cleanup.** At most once a day, the first pi-herd session to start after the last run
   starts it in the background. A stamp file, `~/.pi/agent/pi-herd/.cleanup`, records when it last
   ran. It:
-  1. deletes records of dead agents (ended ones after 7 days; checking the pid again just before
-     `unlink`), messages older than 7 days, popup markers whose pid is gone, and stop markers of
-     dead agents older than 7 days
+  1. deletes records of crashed agents (dead, with no end time: its pid may be reused; checking
+     the pid again just before `unlink`) and popup markers whose pid is gone. Ended records,
+     messages and stop markers are kept.
   2. closes orphaned panes in the dedicated `pi-herd` session (`herdr --session pi-herd pane list`,
      if its server is running). A pane is an orphan when no live agent is registered for it (a pi
      that hung before it registered, or a leftover shell), or when its agent's parent isn't live (the

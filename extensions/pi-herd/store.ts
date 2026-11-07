@@ -22,7 +22,6 @@ import {
   statSync,
   readFileSync,
   renameSync,
-  rmdirSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -81,13 +80,6 @@ export const list = (dir: string) => {
     return readdirSync(dir);
   } catch {
     return [];
-  }
-};
-const mtime = (path: string) => {
-  try {
-    return statSync(path).mtimeMs;
-  } catch {
-    return Date.now();
   }
 };
 export const rm = (path: string) => {
@@ -261,32 +253,18 @@ export const allAgents = () => {
 export const liveAgents = () => allAgents().filter(isLive);
 
 /**
- * Daily: deletes dead records (an ended session's after 7 days), old messages, stale popup markers,
- * and stop markers of dead agents older than 7 days; closes orphaned panes.
+ * Daily: deletes crashed agents' records and stale popup markers; closes orphaned panes. Ended
+ * records, messages and stop markers stay.
  */
 export async function cleanup() {
   for (const f of list(AGENTS)) {
     const a = readJson<Agent>(join(AGENTS, f));
-    const old = !a?.ended || Date.now() - a.ended > 7 * DAY; // a crash leaves no end time
-    // Re-read just before unlink, so a record a restarted session just wrote survives.
-    if (a && old && !isLive(a) && readJson<Agent>(join(AGENTS, f))?.pid === a.pid)
+    // A crash leaves no end time, and its pid may be reused. Re-read just before unlink, so a
+    // record a restarted session just wrote survives.
+    if (a && !a.ended && !isLive(a) && readJson<Agent>(join(AGENTS, f))?.pid === a.pid)
       rm(join(AGENTS, f));
   }
-  const live = liveAgents();
-  for (const to of list(MESSAGES)) {
-    const dir = join(MESSAGES, to);
-    // Named <epochMs>-…; a write's leftover temp file starts with a dot.
-    for (const f of list(dir))
-      if (Date.now() - parseInt(f.replace(/^\./, "")) > 7 * DAY) rm(join(dir, f));
-    try {
-      // Fails unless empty. Read again: an agent may have registered since `live` was read.
-      if (!live.some((a) => a.id === to) && !isLive(readAgent(to))) rmdirSync(dir);
-    } catch {}
-  }
   for (const f of list(ATTACHED)) if (!alive(parseInt(f))) rm(join(ATTACHED, f)); // named by pid
-  for (const id of list(STOPPED))
-    if (!live.some((a) => a.id === id) && Date.now() - mtime(join(STOPPED, id)) > 7 * DAY)
-      rm(join(STOPPED, id));
   // A pane in the dedicated session is an orphan when no live agent is registered for it, or its
   // agent's parent isn't live. Only what is an orphan on two checks a minute apart is closed.
   const orphans = async () => {
