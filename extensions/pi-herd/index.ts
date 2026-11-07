@@ -211,6 +211,7 @@ const loadConfig = () => {
     thinking: null as string | null,
     args: [] as string[],
     watchTimeoutMinutes: 30,
+    idleStopHours: 6,
     transcriptMessages: 20,
     captureLines: 100,
     detachKey: "ctrl+shift+q",
@@ -269,6 +270,7 @@ export default function (pi: ExtensionAPI) {
   let flushTimer: ReturnType<typeof setTimeout> | undefined;
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   let parentTimer: ReturnType<typeof setInterval> | undefined;
+  let idleSince = Date.now(); // a started agent's last moment of work, for idleStopHours
   let watchers: FSWatcher[] = [];
   let warned = false;
   let popupPid: number | undefined; // the popup shell showing this agent
@@ -1364,7 +1366,7 @@ export default function (pi: ExtensionAPI) {
     description:
       "Send a message to other pi agents. With message.needsReply, you're woken when they reply or stop working.",
     promptSnippet: "Message other pi agents",
-    promptGuidelines: [brief(config.watchTimeoutMinutes)],
+    promptGuidelines: [brief(config.watchTimeoutMinutes, config.idleStopHours)],
     parameters: Type.Object({
       to: ToList,
       message: MessageParam(false, "The message"),
@@ -1619,8 +1621,22 @@ export default function (pi: ExtensionAPI) {
     setTimeout(() => {
       if (me?.id === id) stopInput = c.ui.onTerminalInput(onKey);
     });
-    // A crashed parent leaves its record, and fs.watch can't see a process die.
-    if (parentId) parentTimer = setInterval(() => parentAlive() || die(), 2000);
+    // A crashed parent leaves its record, and fs.watch can't see a process die. The same poll
+    // stops an agent idle for idleStopHours (wall clock, so sleep counts) once its own children
+    // have stopped.
+    if (parentId) {
+      idleSince = Date.now();
+      parentTimer = setInterval(() => {
+        if (!parentAlive()) return die();
+        if (busy || !ctx?.isIdle()) idleSince = Date.now();
+        else if (
+          config.idleStopHours > 0 &&
+          Date.now() - idleSince > config.idleStopHours * 3_600_000 &&
+          !children().length
+        )
+          die();
+      }, 2000);
+    }
   };
   pi.on("session_start", (event, c) => {
     ctx = c;

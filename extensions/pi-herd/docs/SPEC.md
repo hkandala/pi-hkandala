@@ -501,6 +501,9 @@ Agents (agent_* tools):
   - A crashed or SIGKILLed parent leaves its record behind, and `fs.watch` can't see a process die.
     So a spawned agent also checks `kill(parent pid, 0)` every 2 s: pi-herd's only poll, apart from
     the open dashboard's status read of other sessions' agents.
+  - The same 2 s poll stops a started agent idle for `idleStopHours` (default 6, wall clock, so
+    sleep counts; `0`: never), once no agent it started is live, so a long-lived parent doesn't
+    keep idle agents in memory. Its record is marked stopped; `agent_start({ session })` resumes it.
   - Either way, the started agent sends itself `SIGTERM`, so pi shuts down cleanly. In a pane pi-herd
     created, the pane closes with it (`exec`), and herdr removes the tab and, if it was the last
     one, the workspace. A given pane goes back to its shell. The parent closes nothing itself.
@@ -777,6 +780,7 @@ default applies).
   "thinking": null,
   "args": [],
   "watchTimeoutMinutes": 30,
+  "idleStopHours": 6,
   "transcriptMessages": 20,
   "captureLines": 100,
   "detachKey": "ctrl+shift+q"
@@ -789,6 +793,7 @@ default applies).
 | `model`, `thinking`   | `null`           | defaults for spawned agents. `null` means inherit from the caller.                                                                  |
 | `args`                | `[]`             | extra pi flags for spawned agents, appended last (a launcher's flags and this pi's extension flags come without it: section 7)      |
 | `watchTimeoutMinutes` | `30`             | the default watch timeout. `0` means none.                                                                                          |
+| `idleStopHours`       | `6`              | a started agent idle this long stops itself, once no agent it started is live (section 9). `0` means never.                         |
 | `transcriptMessages`  | `20`             | entries in a transcript (`agent_read` with `transcript`, and timeout endings)                                                       |
 | `captureLines`        | `100`            | lines of an agent's screen read: `agent_read` with `screen`, `blocked` endings, and the transcript of an agent with no session file |
 | `detachKey`           | `"ctrl+shift+q"` | in an agent shown in a popup: closes the popup, like `/detach` (section 11)                                                         |

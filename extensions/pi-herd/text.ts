@@ -58,14 +58,14 @@ export const tilde = (p: string) =>
  * (before_agent_start doesn't run for those). One guideline, so it can be one heading with
  * nested bullets.
  */
-export const brief = (timeout: number) =>
+export const brief = (timeout: number, idleHours: number) =>
   `Agents (agent_* tools):
     - pi agents you reach through these tools each run in their own herdr pane. herdr organizes terminals into workspaces, tabs and panes and recognizes the coding agents in them; \`herdr --skill\` prints its guide. Each agent has an id and a name; the tools accept either.
     - Starting agents:
         - agent_start starts an agent and sends it a message. Put everything it needs in that message, including where to write any files.
         - Name it for what it works on, in 2 to 4 words of kebab-case: auth-test-fixer or api-docs-reviewer, not reviewer, so the user's agent lists say what each one does.
         - Leave placement unset unless the user asks for a tab or names a pane.
-        - Agents you start stop when your session ends, and so do the agents they start. Agents from other sessions are never stopped by you.
+        - Agents you start stop when your session ends${idleHours > 0 ? `, or by themselves after ${idleHours} hours idle` : ""}, and so do the agents they start. Agents from other sessions are never stopped by you.
     - Sending messages:
         - Set message.needsReply: true when you want an answer. Only then is the other agent asked to reply, and only then are you woken.
         - Use needsReply: false for FYIs and for your own replies.

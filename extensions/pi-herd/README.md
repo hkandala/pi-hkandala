@@ -139,21 +139,23 @@ Optional: `~/.pi/agent/extensions/pi-herd.json`. Every key has a default, and a 
   "thinking": null,
   "args": [],
   "watchTimeoutMinutes": 30,
+  "idleStopHours": 6,
   "transcriptMessages": 20,
   "captureLines": 100,
   "detachKey": "ctrl+shift+q"
 }
 ```
 
-| Key                   | Meaning                                                                                                                                |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `placement`           | default placement for `agent_start`: `hidden` or `tab`                                                                                 |
-| `model`, `thinking`   | defaults for agents you start; `null` inherits yours                                                                                   |
-| `args`                | extra pi flags for agents you start, appended last (a launcher's flags and your extension flags come without it: see below)            |
-| `watchTimeoutMinutes` | default watch timeout; `0` means none                                                                                                  |
-| `transcriptMessages`  | entries in a transcript (`agent_read` with `transcript`, and timeout endings)                                                          |
-| `captureLines`        | lines of an agent's screen read: `agent_read` with `screen`, `blocked` endings, and for an agent with no session file (`--no-session`) |
-| `detachKey`           | closes the popup showing this agent, like `/detach`                                                                                    |
+| Key                   | Meaning                                                                                                                                                                    |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `placement`           | default placement for `agent_start`: `hidden` or `tab`                                                                                                                     |
+| `model`, `thinking`   | defaults for agents you start; `null` inherits yours                                                                                                                       |
+| `args`                | extra pi flags for agents you start, appended last (a launcher's flags and your extension flags come without it: see below)                                                |
+| `watchTimeoutMinutes` | default watch timeout; `0` means none                                                                                                                                      |
+| `idleStopHours`       | an agent you started stops itself after this many hours idle (wall clock, so sleep counts), once its own agents have stopped; `0` means never; resume it by its session id |
+| `transcriptMessages`  | entries in a transcript (`agent_read` with `transcript`, and timeout endings)                                                                                              |
+| `captureLines`        | lines of an agent's screen read: `agent_read` with `screen`, `blocked` endings, and for an agent with no session file (`--no-session`)                                     |
+| `detachKey`           | closes the popup showing this agent, like `/detach`                                                                                                                        |
 
 **A launcher's flags.** When this pi was started by a launcher named `pi` on your `PATH` (a program that runs the real pi with its own args and doesn't pass its own flags on, such as `pi --dangerously-disable-osx-sandbox`), agents get those flags too: right after `pi`, before pi-herd's flags. pi-herd reads the launcher's command line once (its parent process) and keeps the args this pi didn't get. Without such a launcher, nothing is added. On macOS the command line comes from `ps`, joined with spaces, so a launcher flag's value that contains a space comes out split; then pass the flag in `args` instead.
 
